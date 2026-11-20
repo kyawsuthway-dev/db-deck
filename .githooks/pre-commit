@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Checks before every commit (.ai/rules/git-workflow.md), defined in `task pre-commit`.
+# Enabled by `task link:hooks` (part of `task setup`).
+# Skip only in an emergency: `git commit --no-verify`.
+cd "$(git rev-parse --show-toplevel)" && exec task pre-commit

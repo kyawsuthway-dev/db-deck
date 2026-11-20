@@ -1,0 +1,121 @@
+{
+  "name": "db-deck",
+  "displayName": "DB Deck",
+  "description": "Free, open-source database explorer for VS Code. Browse local and remote databases and run SQL without leaving the editor.",
+  "version": "0.0.1",
+  "publisher": "kyawsuthway-dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kyawsuthway-dev/db-deck"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "database",
+    "sql",
+    "sqlite",
+    "postgresql",
+    "mysql",
+    "mariadb"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dbDeck",
+          "title": "DB Deck",
+          "icon": "media/database.svg"
+        }
+      ]
+    },
+    "views": {
+      "dbDeck": [
+        {
+          "id": "dbDeck.connections",
+          "name": "Connections"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "dbDeck.connections",
+        "contents": "No database connections yet.\n[Add Connection](command:dbDeck.addConnection)\nSupports SQLite, PostgreSQL, MySQL and MariaDB."
+      }
+    ],
+    "commands": [
+      { "command": "dbDeck.addConnection", "title": "Add Connection", "category": "DB Deck", "icon": "$(add)" },
+      { "command": "dbDeck.removeConnection", "title": "Remove Connection", "category": "DB Deck", "icon": "$(trash)" },
+      { "command": "dbDeck.refresh", "title": "Refresh", "category": "DB Deck", "icon": "$(refresh)" },
+      { "command": "dbDeck.disconnect", "title": "Disconnect", "category": "DB Deck", "icon": "$(debug-disconnect)" },
+      { "command": "dbDeck.newQuery", "title": "New Query", "category": "DB Deck", "icon": "$(new-file)" },
+      { "command": "dbDeck.previewTable", "title": "Show First 100 Rows", "category": "DB Deck", "icon": "$(table)" },
+      { "command": "dbDeck.runQuery", "title": "Run Query", "category": "DB Deck", "icon": "$(play)" },
+      { "command": "dbDeck.selectConnection", "title": "Select Connection for This Editor", "category": "DB Deck", "icon": "$(database)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "dbDeck.addConnection", "when": "view == dbDeck.connections", "group": "navigation@1" },
+        { "command": "dbDeck.newQuery", "when": "view == dbDeck.connections", "group": "navigation@2" },
+        { "command": "dbDeck.refresh", "when": "view == dbDeck.connections", "group": "navigation@3" }
+      ],
+      "view/item/context": [
+        { "command": "dbDeck.newQuery", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "inline@1" },
+        { "command": "dbDeck.refresh", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "inline@2" },
+        { "command": "dbDeck.newQuery", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "1_query@1" },
+        { "command": "dbDeck.refresh", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "2_manage@1" },
+        { "command": "dbDeck.disconnect", "when": "view == dbDeck.connections && viewItem == connection.connected", "group": "2_manage@2" },
+        { "command": "dbDeck.removeConnection", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "3_remove@1" },
+        { "command": "dbDeck.previewTable", "when": "view == dbDeck.connections && viewItem == table", "group": "inline@1" },
+        { "command": "dbDeck.previewTable", "when": "view == dbDeck.connections && viewItem == table", "group": "1_query@1" },
+        { "command": "dbDeck.newQuery", "when": "view == dbDeck.connections && viewItem == table", "group": "1_query@2" },
+        { "command": "dbDeck.refresh", "when": "view == dbDeck.connections && viewItem == table", "group": "2_manage@1" }
+      ],
+      "editor/title": [
+        { "command": "dbDeck.runQuery", "when": "editorLangId == sql", "group": "navigation@1" }
+      ],
+      "commandPalette": [
+        { "command": "dbDeck.previewTable", "when": "false" },
+        { "command": "dbDeck.disconnect", "when": "false" },
+        { "command": "dbDeck.runQuery", "when": "editorLangId == sql" },
+        { "command": "dbDeck.selectConnection", "when": "editorLangId == sql" }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "dbDeck.runQuery",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && editorLangId == sql"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run typecheck && node esbuild.mjs --production",
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/pg": "^8.23.1",
+    "@types/sql.js": "^1.16.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "mysql2": "^3.24.6",
+    "pg": "^8.23.1",
+    "sql.js": "^1.17.0"
+  }
+}

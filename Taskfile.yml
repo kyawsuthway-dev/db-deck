@@ -1,0 +1,146 @@
+# https://taskfile.dev — install: `brew install go-task` / `npm i -g @go-task/cli` / see taskfile.dev/installation
+# Needs only Docker and Task. Node.js runs inside the `node` container, never on your machine.
+# Windows: run everything from WSL2, with the project inside the WSL filesystem (not /mnt/c).
+version: '3'
+
+vars:
+    EXEC: docker compose exec node
+
+tasks:
+    default:
+        desc: List available tasks
+        cmds:
+            - task --list
+        silent: true
+
+    setup:
+        desc: First-time setup — .env, npm install, containers (watch build + test databases), local links and git hook
+        cmds:
+            - task: env
+            - docker compose run --rm --no-deps node npm install
+            - docker compose up -d
+            - task: link
+            - echo 'Ready. Open the folder in VS Code and press F5 to launch the Extension Development Host.'
+
+    env:
+        desc: Create .env with your user and group ids, so files the container writes are owned by you
+        status:
+            - test -e .env
+        cmds:
+            - printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" > .env
+
+    up:
+        desc: Start the watch build and the test databases
+        cmds:
+            - docker compose up -d
+
+    down:
+        desc: Stop all containers (database volumes are kept)
+        cmds:
+            - docker compose down
+
+    restart:
+        desc: Restart the watch build — needed after changing esbuild.mjs
+        cmds:
+            - docker compose restart node
+
+    logs:
+        desc: Follow container logs — pass services after --, e.g. `task logs -- node`
+        cmds:
+            - docker compose logs -f {{.CLI_ARGS}}
+
+    shell:
+        desc: Open a shell in the node container
+        interactive: true
+        cmds:
+            - '{{.EXEC}} bash'
+
+    npm:
+        desc: Run an npm command in the node container, e.g. `task npm -- install <package>`
+        interactive: true
+        cmds:
+            - '{{.EXEC}} npm {{.CLI_ARGS}}'
+
+    typecheck:
+        desc: Type check with tsc (strict)
+        cmds:
+            - '{{.EXEC}} npm run typecheck'
+
+    build:
+        desc: One-off development build into dist/
+        cmds:
+            - '{{.EXEC}} npm run build'
+
+    check:
+        desc: Type check and build — run before every commit (the pre-commit hook does)
+        preconditions:
+            - sh: docker compose ps --status running --services | grep -qx node
+              msg: 'The node container is not running — start it with `task up`'
+        cmds:
+            - task: typecheck
+            - task: build
+
+    check:bundle:
+        desc: Check dist/extension.js loads in plain Node (catches bundling problems after dependency changes)
+        cmds:
+            - >-
+                {{.EXEC}} node -e 'const M = require("module"), load = M._load;
+                M._load = function (r, ...a) { return r === "vscode" ? {} : load.call(this, r, ...a); };
+                console.log(Object.keys(require("/app/dist/extension.js")));'
+
+    package:
+        desc: 'Build a production .vsix — install it with "Extensions: Install from VSIX…"'
+        cmds:
+            - '{{.EXEC}} npm run package'
+
+    psql:
+        desc: Open psql on the PostgreSQL test database
+        interactive: true
+        cmds:
+            - docker compose exec postgres psql -U postgres sample
+
+    mysql:
+        desc: Open the mysql client on the MySQL test database
+        interactive: true
+        cmds:
+            - docker compose exec mysql mysql -uroot -pmysql sample
+
+    db:reset:
+        desc: Delete the test database volumes and reseed them from docker/seed/
+        prompt: This deletes all data in the PostgreSQL and MySQL test databases. Continue?
+        cmds:
+            - docker compose rm -sf postgres mysql
+            - docker volume rm -f db-deck_pgdata db-deck_mysqldata
+            - docker compose up -d postgres mysql
+
+    link:
+        desc: Create local links — .claude/rules → .ai/rules and the pre-commit hook
+        cmds:
+            - task: link:rules
+            - task: link:hooks
+
+    link:rules:
+        desc: Link .claude/rules to .ai/rules so Claude Code loads the project rules natively
+        status:
+            - test -e .claude/rules
+        cmds:
+            - mkdir -p .claude
+            - cmd: cmd /c mklink /J "{{fromSlash ".claude/rules"}}" "{{fromSlash .ROOT_DIR}}\.ai\rules"
+              platforms: [windows]
+            - cmd: ln -s ../.ai/rules .claude/rules
+              platforms: [darwin, linux]
+
+    link:hooks:
+        desc: Use .githooks/ for git hooks — runs `task pre-commit` before each commit
+        status:
+            - test "$(git config core.hooksPath)" = .githooks
+        preconditions:
+            - sh: git rev-parse --git-dir
+              msg: 'Not a git repository yet — run `git init` (or clone the repo), then `task link:hooks`'
+        cmds:
+            - git config core.hooksPath .githooks
+
+    pre-commit:
+        desc: Checks the git hook runs before each commit
+        cmds:
+            - task: check

@@ -1,0 +1,61 @@
+# DB Deck
+
+A free, open-source database explorer for VS Code. Browse local and remote databases and run SQL without leaving the editor.
+
+**SQLite · PostgreSQL · MySQL · MariaDB**
+
+> **Status:** early development. The first version (Phase 1) works; it isn't on the Marketplace yet.
+
+## Features
+
+- **Connections sidebar** — a database icon in the activity bar lists your saved connections. Add, remove, refresh, and disconnect.
+- **Add Connection wizard** — pick a database type, then a file (SQLite) or host, port, user, password, and database. The connection is tested before it's saved.
+- **Browse your schema** — Connection → Tables / Views → Columns, with each column's type and primary keys marked.
+- **Click a table** to see its first 100 rows.
+- **Run SQL** — **New Query** opens a SQL editor tied to a connection. Press **Ctrl+Enter** (**Cmd+Enter** on macOS), or click ▶, to run the selection, or the whole editor if nothing is selected. Several `;`-separated statements each get their own result.
+- **Pick the connection per editor** — the status bar shows which connection a SQL editor uses; click it to change. Saved `.sql` files remember their connection.
+- **Works everywhere VS Code does** — no native modules, so it runs the same on Windows, macOS, Linux, WSL, and remote hosts.
+
+## Install
+
+The extension isn't published yet. To try it, build a `.vsix` (see [CONTRIBUTING.md](CONTRIBUTING.md)) with `task package`, then in VS Code run **Extensions: Install from VSIX…** and choose the file.
+
+## Usage
+
+1. Click the **database icon** in the activity bar, then **Add Connection**.
+2. Choose the database type and fill in the details. If the test fails you can edit the settings or save anyway.
+3. Expand the connection to browse tables, views, and columns. Click a table to see its rows.
+4. Click the **New Query** icon on a connection, write SQL, and press **Ctrl+Enter** / **Cmd+Enter**.
+
+| Command | Where |
+| --- | --- |
+| Add Connection | Connections view toolbar, Command Palette |
+| New Query | Connections toolbar, connection or table (inline / right-click) |
+| Show First 100 Rows | Click a table, or right-click it |
+| Run Query | `Ctrl+Enter` / `Cmd+Enter` in a SQL editor, ▶ in the editor title |
+| Select Connection for This Editor | Status bar, Command Palette |
+| Refresh / Disconnect / Remove Connection | Right-click a connection |
+
+All commands are in the Command Palette under **DB Deck**.
+
+## Security and privacy
+
+- Passwords are stored only in VS Code's **SecretStorage** (your OS keychain), never in settings files.
+- Browsing and table previews only read. The extension writes to a database only when you run SQL that does.
+- No telemetry. The extension only talks to the databases you configure.
+
+## Good to know
+
+- Results keep up to 10,000 rows per statement.
+- **SQLite** runs in WebAssembly on an in-memory copy of the file. The file is reloaded when it changes on disk, and written back after each run that might change it. A transaction left open at the end of a run is not kept open.
+- **PostgreSQL and MySQL** keep one connection open per saved connection, so `BEGIN` … `COMMIT` across several runs works.
+- Encrypted connections: choose **SSL** (verifies the certificate) or **SSL, allow self-signed** in the wizard.
+- MySQL `DELIMITER` scripts aren't supported yet.
+
+## Contributing
+
+Contributions are welcome. You only need Docker, [Task](https://taskfile.dev) and VS Code — no local Node.js. See [CONTRIBUTING.md](CONTRIBUTING.md) to get set up in one command (`task setup`).
+
+## License
+
+[MIT](LICENSE)

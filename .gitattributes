@@ -1,0 +1,2 @@
+# Keep Linux line endings so scripts work inside the Docker container on Windows.
+* text=auto eol=lf
