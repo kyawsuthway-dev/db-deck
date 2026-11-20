@@ -46,6 +46,18 @@ export interface StatementResult {
   error?: string;
 }
 
+export interface SortKey {
+  column: string;
+  direction: 'asc' | 'desc';
+}
+
+/** One page of a table view. An empty `orderBy` leaves the order to the database. */
+export interface TablePage {
+  limit: number;
+  offset: number;
+  orderBy: SortKey[];
+}
+
 export interface Driver {
   /** Opens the connection. Throws with a readable message when it can't. */
   connect(): Promise<void>;
@@ -53,7 +65,7 @@ export interface Driver {
   listColumns(table: TableInfo): Promise<ColumnInfo[]>;
   /** Runs one or more `;`-separated statements in order, stopping at the first error. */
   query(sql: string): Promise<StatementResult[]>;
-  /** SQL that selects the first `limit` rows of a table, quoted for this database. */
-  previewSql(table: TableInfo, limit: number): string;
+  /** SQL that selects one page of a table, quoted for this database. Read-only. */
+  previewSql(table: TableInfo, page: TablePage): string;
   close(): Promise<void>;
 }

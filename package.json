@@ -56,7 +56,7 @@
       { "command": "dbDeck.refresh", "title": "Refresh", "category": "DB Deck", "icon": "$(refresh)" },
       { "command": "dbDeck.disconnect", "title": "Disconnect", "category": "DB Deck", "icon": "$(debug-disconnect)" },
       { "command": "dbDeck.newQuery", "title": "New Query", "category": "DB Deck", "icon": "$(new-file)" },
-      { "command": "dbDeck.previewTable", "title": "Show First 100 Rows", "category": "DB Deck", "icon": "$(table)" },
+      { "command": "dbDeck.previewTable", "title": "Show Rows", "category": "DB Deck", "icon": "$(table)" },
       { "command": "dbDeck.runQuery", "title": "Run Query", "category": "DB Deck", "icon": "$(play)" },
       { "command": "dbDeck.selectConnection", "title": "Select Connection for This Editor", "category": "DB Deck", "icon": "$(database)" }
     ],

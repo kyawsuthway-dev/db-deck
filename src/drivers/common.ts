@@ -1,4 +1,4 @@
-import type { Cell, StatementResult } from '../types';
+import type { Cell, StatementResult, TablePage } from '../types';
 
 /** Rows kept per statement; the grid shows a "truncated" note beyond this. */
 export const MAX_ROWS = 10_000;
@@ -73,4 +73,17 @@ export function errorMessage(err: unknown): string {
 
 export function quoteIdent(name: string, quote: '"' | '`'): string {
   return quote + name.split(quote).join(quote + quote) + quote;
+}
+
+/**
+ * `SELECT * … ORDER BY … LIMIT … OFFSET …` for a table view. `from` is the already-quoted table name.
+ * LIMIT/OFFSET is the same in every supported database; a database that differs builds its own.
+ */
+export function selectPageSql(from: string, quote: '"' | '`', page: TablePage): string {
+  const limit = Math.max(0, Math.trunc(page.limit));
+  const offset = Math.max(0, Math.trunc(page.offset));
+  const orderBy = page.orderBy.length
+    ? ` ORDER BY ${page.orderBy.map((k) => `${quoteIdent(k.column, quote)} ${k.direction === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`
+    : '';
+  return `SELECT * FROM ${from}${orderBy} LIMIT ${limit}${offset ? ` OFFSET ${offset}` : ''};`;
 }

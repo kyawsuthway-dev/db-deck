@@ -2,10 +2,26 @@ import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
 import { errorMessage } from '../drivers/common';
 import { typeLabel } from '../drivers';
-import type { StatementResult, TableInfo } from '../types';
-import type { ResultsPanel } from '../views/ResultsPanel';
+import type { ColumnInfo, Driver, SortKey, StatementResult, TableInfo } from '../types';
+import type { ResultsPanel, ResultsRequest, TableViewState } from '../views/ResultsPanel';
 
 const FILE_CONNECTIONS_KEY = 'dbDeck.documentConnections';
+
+/** Rows per page in a table view. */
+export const PAGE_SIZE = 100;
+
+/** The table shown in the Results panel, so its page and sort controls know what to query. */
+interface TableView {
+  connectionId: string;
+  table: TableInfo;
+  label: string;
+  /** Column names, to check sort requests coming from the webview. */
+  columns: string[];
+  /** Primary key order; empty when the table or view has none. */
+  keyOrder: SortKey[];
+  offset: number;
+  sort?: SortKey;
+}
 
 /**
  * Links SQL editors to connections and runs their contents.
@@ -15,6 +31,7 @@ export class QueryController implements vscode.Disposable {
   private readonly untitled = new Map<string, string>();
   private readonly statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   private readonly disposables: vscode.Disposable[] = [];
+  private tableView?: TableView;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -28,6 +45,7 @@ export class QueryController implements vscode.Disposable {
       vscode.window.onDidChangeActiveTextEditor(() => this.updateStatus()),
       manager.onDidChange(() => this.updateStatus()),
       vscode.workspace.onDidCloseTextDocument((doc) => this.untitled.delete(doc.uri.toString())),
+      panel.onDidRequest((request) => this.onPanelRequest(request)),
     );
     this.updateStatus();
   }
@@ -66,15 +84,24 @@ export class QueryController implements vscode.Disposable {
     await this.execute(connectionId, sql, `Query · ${name}`, vscode.ViewColumn.Beside);
   }
 
+  /** Opens a table view at its first page, ordered by primary key when there is one. */
   async previewTable(connectionId: string, table: TableInfo, label: string): Promise<void> {
-    let sql: string;
+    let columns: ColumnInfo[];
     try {
-      sql = (await this.manager.getDriver(connectionId)).previewSql(table, 100);
+      columns = await (await this.manager.getDriver(connectionId)).listColumns(table);
     } catch (err) {
       void vscode.window.showErrorMessage(`DB Deck: ${errorMessage(err)}`);
       return;
     }
-    await this.execute(connectionId, sql, label, vscode.ViewColumn.Active);
+    this.tableView = {
+      connectionId,
+      table,
+      label,
+      columns: columns.map((c) => c.name),
+      keyOrder: columns.filter((c) => c.primaryKey).map((c): SortKey => ({ column: c.name, direction: 'asc' })),
+      offset: 0,
+    };
+    await this.showTablePage(this.tableView, true);
   }
 
   /** Lets the user pick the connection for the active SQL editor. */
@@ -89,7 +116,56 @@ export class QueryController implements vscode.Disposable {
     vscode.Disposable.from(...this.disposables).dispose();
   }
 
+  /** Page and sort requests come from the webview, so they're checked against the open table view. */
+  private onPanelRequest(request: Exclude<ResultsRequest, { type: 'ready' }>): void {
+    const view = this.tableView;
+    if (!view) return;
+    if (request.type === 'page') {
+      if (!Number.isSafeInteger(request.offset) || request.offset < 0) return;
+      view.offset = request.offset;
+    } else {
+      const sort = request.sort;
+      if (sort && (!view.columns.includes(sort.column) || (sort.direction !== 'asc' && sort.direction !== 'desc'))) return;
+      view.sort = sort && { column: sort.column, direction: sort.direction };
+      view.offset = 0;
+    }
+    void this.showTablePage(view, false);
+  }
+
+  /** Fetches one extra row to know whether there's a next page, without a COUNT(*). */
+  private async showTablePage(view: TableView, firstLoad: boolean): Promise<void> {
+    let driver: Driver;
+    try {
+      driver = await this.manager.getDriver(view.connectionId);
+    } catch (err) {
+      if (firstLoad) {
+        void vscode.window.showErrorMessage(`DB Deck: ${errorMessage(err)}`);
+      } else {
+        // Show it in the grid so the webview leaves its busy state and the user can retry.
+        const failed: StatementResult = { sql: '', columns: [], rows: [], durationMs: 0, error: errorMessage(err) };
+        this.panel.showResults(this.panel.startRun(), view.label, [failed], tableState(view, false));
+      }
+      return;
+    }
+    const orderBy = view.sort ? [view.sort] : view.keyOrder;
+    const sql = driver.previewSql(view.table, { limit: PAGE_SIZE + 1, offset: view.offset, orderBy });
+    // A first load shows "Running…"; paging keeps the grid on screen while the webview shows it's busy.
+    const token = firstLoad ? this.panel.showLoading(view.label, sql, vscode.ViewColumn.Active) : this.panel.startRun();
+    let results: StatementResult[];
+    try {
+      results = await driver.query(sql);
+    } catch (err) {
+      results = [{ sql, columns: [], rows: [], durationMs: 0, error: errorMessage(err) }];
+    }
+    const [result] = results;
+    const hasMore = !!result && result.rows.length > PAGE_SIZE;
+    if (hasMore) result.rows = result.rows.slice(0, PAGE_SIZE);
+    this.panel.showResults(token, view.label, results, tableState(view, hasMore));
+  }
+
   private async execute(connectionId: string, sql: string, title: string, column: vscode.ViewColumn) {
+    // The panel now shows query results, so page and sort requests no longer apply to a table.
+    this.tableView = undefined;
     const token = this.panel.showLoading(title, sql, column);
     let results: StatementResult[];
     try {
@@ -144,4 +220,8 @@ export class QueryController implements vscode.Disposable {
     this.statusItem.text = `$(database) ${id ? this.manager.get(id)!.name : 'No connection'}`;
     this.statusItem.show();
   }
+}
+
+function tableState(view: TableView, hasMore: boolean): TableViewState {
+  return { offset: view.offset, pageSize: PAGE_SIZE, hasMore, sort: view.sort, orderedByKey: view.keyOrder.length > 0 };
 }
