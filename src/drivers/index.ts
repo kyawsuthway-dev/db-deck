@@ -3,7 +3,7 @@ import { MysqlDriver } from './mysql';
 import { PostgresDriver } from './postgres';
 import { SqliteDriver } from './sqlite';
 
-/** To add a database: write a Driver in this folder, add its DbType, and add it here and to DB_KINDS. */
+/** To add a database: write a Driver in this folder, add its DbType, and add it here, to DB_KINDS and to SQL_DIALECTS. */
 export function createDriver(config: ConnectionConfig, password: string | undefined): Driver {
   switch (config.type) {
     case 'sqlite':
@@ -35,3 +35,27 @@ export const DB_KINDS: DbKind[] = [
 export function typeLabel(type: DbType): string {
   return DB_KINDS.find((k) => k.type === type)?.label ?? type;
 }
+
+/** sql-formatter languages DB Deck uses (see query/formatSql.ts). */
+export type FormatLanguage = 'postgresql' | 'mysql' | 'sqlite';
+
+/** How the SQL editor treats each database's SQL: the formatter language and keywords beyond the common ones. */
+export interface SqlDialect {
+  format: FormatLanguage;
+  keywords: string[];
+}
+
+export const SQL_DIALECTS: Record<DbType, SqlDialect> = {
+  postgres: {
+    format: 'postgresql',
+    keywords: ['ILIKE', 'RETURNING', 'ON CONFLICT', 'DO NOTHING', 'DO UPDATE', 'IS DISTINCT FROM', 'FETCH FIRST', 'SERIAL', 'JSONB'],
+  },
+  mysql: {
+    format: 'mysql',
+    keywords: ['REPLACE INTO', 'ON DUPLICATE KEY UPDATE', 'AUTO_INCREMENT', 'ENGINE', 'DUAL', 'SHOW TABLES', 'DESCRIBE', 'REGEXP'],
+  },
+  sqlite: {
+    format: 'sqlite',
+    keywords: ['INSERT OR REPLACE', 'INSERT OR IGNORE', 'AUTOINCREMENT', 'WITHOUT ROWID', 'PRAGMA', 'GLOB', 'VACUUM'],
+  },
+};

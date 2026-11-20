@@ -13,6 +13,9 @@
 - Edit table data (tables with a primary key): edit cells, add and delete rows, set NULL. Changes stay pending until Save…, which shows a summary and Review SQL, then applies everything in one transaction on a separate connection, with a conflict check against the loaded values.
 - Select cells, ranges and rows in the grid; Ctrl/Cmd+C copies them as tab-separated text, and the right-click menu copies with headers, as CSV or as JSON.
 - New Query editor with Run Query (Ctrl/Cmd+Enter), multi-statement results grid.
+- SQL editor: Ctrl/Cmd+Enter now runs the statement at the cursor when nothing is selected (it used to run the whole editor); **Run All** (Ctrl/Cmd+Shift+Enter, ▶ in the editor title) runs everything; a **▶ Run** link above each statement runs just that one.
+- SQL editor autocomplete for tables, columns (including aliases) and keywords, once the connection is open.
+- Format SQL with Format Document / Format Selection, in the connection's dialect (`sql-formatter`).
 - Contributor setup: `Taskfile.yml` (`task setup`), pre-commit check, `CONTRIBUTING.md`, shared rules in `.ai/rules/` and `AGENTS.md`.
 
 ## 0.0.1
