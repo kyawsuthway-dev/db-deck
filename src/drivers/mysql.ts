@@ -1,7 +1,7 @@
 import mysql from 'mysql2/promise';
 import { splitSql } from '../query/splitSql';
-import type { ColumnInfo, ConnectionConfig, Driver, StatementResult, TableInfo } from '../types';
-import { quoteIdent, runEach } from './common';
+import type { ColumnInfo, ConnectionConfig, Driver, StatementResult, TableInfo, TablePage } from '../types';
+import { quoteIdent, runEach, selectPageSql } from './common';
 
 const SYSTEM_SCHEMAS = ['mysql', 'information_schema', 'performance_schema', 'sys'];
 
@@ -69,9 +69,9 @@ export class MysqlDriver implements Driver {
     });
   }
 
-  previewSql(table: TableInfo, limit: number): string {
+  previewSql(table: TableInfo, page: TablePage): string {
     const name = quoteIdent(table.name, '`');
-    return `SELECT * FROM ${table.schema ? `${quoteIdent(table.schema, '`')}.${name}` : name} LIMIT ${limit};`;
+    return selectPageSql(table.schema ? `${quoteIdent(table.schema, '`')}.${name}` : name, '`', page);
   }
 
   async close(): Promise<void> {

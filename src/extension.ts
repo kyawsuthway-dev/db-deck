@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
 import { runConnectionWizard, type WizardResult } from './connectionWizard';
 import { errorMessage } from './drivers/common';
-import { QueryController } from './query/runQuery';
+import { PAGE_SIZE, QueryController } from './query/runQuery';
 import { ConnectionNode, ConnectionsTree, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
 import { ResultsPanel } from './views/ResultsPanel';
 
@@ -45,7 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
     command('newQuery', async (node?: ConnectionNode | TableNode) => {
       if (node instanceof TableNode) {
         const driver = await manager.getDriver(node.connectionId);
-        await queries.newQuery(node.connectionId, driver.previewSql(node.table, 100));
+        await queries.newQuery(node.connectionId, driver.previewSql(node.table, { limit: PAGE_SIZE, offset: 0, orderBy: [] }));
       } else {
         await queries.newQuery(node?.config.id);
       }

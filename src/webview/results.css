@@ -128,3 +128,73 @@ tbody tr:hover td {
   color: var(--vscode-descriptionForeground);
   font-style: italic;
 }
+
+/* Column headers are buttons so they can be sorted with the keyboard too. */
+th button.sort {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+th button.sort .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+th button.sort .arrow {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.8em;
+}
+th button.sort:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.pager .range {
+  color: var(--vscode-descriptionForeground);
+}
+.pager .note {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+.pager-button {
+  padding: 2px 10px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  font: inherit;
+  cursor: pointer;
+}
+.pager-button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+.pager-button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.pager-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* While the next page loads, the old one stays visible but dimmed. */
+#root.busy .table-wrap {
+  opacity: 0.5;
+}
+#root.busy button {
+  cursor: progress;
+}

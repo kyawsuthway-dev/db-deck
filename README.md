@@ -11,8 +11,8 @@ A free, open-source database explorer for VS Code. Browse local and remote datab
 - **Connections sidebar** — a database icon in the activity bar lists your saved connections. Add, remove, refresh, and disconnect.
 - **Add Connection wizard** — pick a database type, then a file (SQLite) or host, port, user, password, and database. The connection is tested before it's saved.
 - **Browse your schema** — Connection → Tables / Views → Columns, with each column's type and primary keys marked.
-- **Click a table** to see its first 100 rows.
-- **Run SQL** — **New Query** opens a SQL editor tied to a connection. Press **Ctrl+Enter** (**Cmd+Enter** on macOS), or click ▶, to run the selection, or the whole editor if nothing is selected. Several `;`-separated statements each get their own result.
+- **Click a table** to see its rows, 100 per page. Use **Previous** / **Next** to page through, and click a column header to sort (ascending, descending, then back to the default). Pages are ordered by primary key unless you sort.
+- **Run SQL** — **New Query** opens a SQL editor tied to a connection. Press **Ctrl+Enter** (**Cmd+Enter** on macOS), or click ▶, to run the selection, or the whole editor if nothing is selected. Several `;`-separated statements each get their own result. Click a column header to sort the loaded rows; your SQL isn't run again.
 - **Pick the connection per editor** — the status bar shows which connection a SQL editor uses; click it to change. Saved `.sql` files remember their connection.
 - **Works everywhere VS Code does** — no native modules, so it runs the same on Windows, macOS, Linux, WSL, and remote hosts.
 
@@ -31,7 +31,7 @@ The extension isn't published yet. To try it, build a `.vsix` (see [CONTRIBUTING
 | --- | --- |
 | Add Connection | Connections view toolbar, Command Palette |
 | New Query | Connections toolbar, connection or table (inline / right-click) |
-| Show First 100 Rows | Click a table, or right-click it |
+| Show Rows | Click a table, or right-click it |
 | Run Query | `Ctrl+Enter` / `Cmd+Enter` in a SQL editor, ▶ in the editor title |
 | Select Connection for This Editor | Status bar, Command Palette |
 | Refresh / Disconnect / Remove Connection | Right-click a connection |

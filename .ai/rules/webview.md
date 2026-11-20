@@ -16,7 +16,7 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 - No inline `<script>`, `<style>`, `style="…"`, or `on…=` attributes. Styles go in `src/webview/*.css`; behavior in `src/webview/*.ts`.
 - Insert data with `textContent` or `document.createElement` only. Never `innerHTML`, `outerHTML`, `insertAdjacentHTML`, or `document.write` with anything derived from data.
 - `localResourceRoots` stays limited to `dist/webview`.
-- Values cross the boundary as `Cell` (`string | null`) — already converted in the driver layer. The webview never parses or evaluates them.
+- Values cross the boundary as `Cell` (`string | null`) — already converted in the driver layer. The webview never changes how a value is displayed; client-side sorting may compare them as numbers, but always shows the original text.
 
 ## Build
 
@@ -28,6 +28,7 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 - Message shapes are the `ResultsMessage` union in `src/views/ResultsPanel.ts`. Add new messages there so both sides share the type.
 - The webview posts `{ type: 'ready' }` when its script loads; the panel replies with the last message. This covers first load and reload after the panel was hidden — keep the handshake when changing either side.
 - `ResultsPanel` tokens (`showLoading` → `showResults`) drop results from an older run. Keep that guarantee for anything asynchronous.
+- Messages from the webview are the `ResultsRequest` union in the same file. They are untrusted: the service checks every field (offsets, column names) before using it. Paging uses `startRun()` instead of `showLoading()`, so the grid stays on screen while the webview shows its own busy state.
 
 ## Look and feel
 

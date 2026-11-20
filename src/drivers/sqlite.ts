@@ -2,8 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
-import type { ColumnInfo, Driver, StatementResult, TableInfo } from '../types';
-import { MAX_ROWS, quoteIdent, runEach } from './common';
+import type { ColumnInfo, Driver, StatementResult, TableInfo, TablePage } from '../types';
+import { MAX_ROWS, quoteIdent, runEach, selectPageSql } from './common';
 
 let sqlJs: Promise<SqlJsStatic> | undefined;
 
@@ -76,8 +76,8 @@ export class SqliteDriver implements Driver {
     return results;
   }
 
-  previewSql(table: TableInfo, limit: number): string {
-    return `SELECT * FROM ${quoteIdent(table.name, '"')} LIMIT ${limit};`;
+  previewSql(table: TableInfo, page: TablePage): string {
+    return selectPageSql(quoteIdent(table.name, '"'), '"', page);
   }
 
   async close(): Promise<void> {

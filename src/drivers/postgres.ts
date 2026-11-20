@@ -1,7 +1,7 @@
 import { Client, type CustomTypesConfig, type QueryResult } from 'pg';
 import { splitSql } from '../query/splitSql';
-import type { ColumnInfo, ConnectionConfig, Driver, SslMode, StatementResult, TableInfo } from '../types';
-import { quoteIdent, runEach } from './common';
+import type { ColumnInfo, ConnectionConfig, Driver, SslMode, StatementResult, TableInfo, TablePage } from '../types';
+import { quoteIdent, runEach, selectPageSql } from './common';
 
 const BOOL_OID = 16;
 
@@ -69,8 +69,8 @@ export class PostgresDriver implements Driver {
     });
   }
 
-  previewSql(table: TableInfo, limit: number): string {
-    return `SELECT * FROM ${qualifiedName(table)} LIMIT ${limit};`;
+  previewSql(table: TableInfo, page: TablePage): string {
+    return selectPageSql(qualifiedName(table), '"', page);
   }
 
   async close(): Promise<void> {
