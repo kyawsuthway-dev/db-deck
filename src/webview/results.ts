@@ -2,6 +2,7 @@
 // Values are only ever inserted with textContent, never as HTML.
 import type { Cell, SortKey, StatementResult } from '../types';
 import type { ResultsMessage, ResultsRequest, TableViewState } from '../views/ResultsPanel';
+import { attachAutocomplete } from './autocomplete';
 import './results.css';
 
 declare function acquireVsCodeApi(): { postMessage(message: ResultsRequest): void };
@@ -13,6 +14,10 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'bas
 /** In-memory sort of query results, per result index. Reset whenever new results arrive. */
 let localSorts = new Map<number, SortKey>();
 let current: Extract<ResultsMessage, { type: 'results' }> | undefined;
+/** What's typed in the WHERE box but not applied yet, so paging or sorting doesn't lose it. Reset when a table opens. */
+let draftWhere: string | undefined;
+/** Caret to restore in the WHERE box once the filtered page arrives. */
+let pendingFocus: { start: number | null; end: number | null } | undefined;
 
 window.addEventListener('message', (event: MessageEvent<ResultsMessage>) => {
   localSorts = new Map();
@@ -23,6 +28,8 @@ vscode.postMessage({ type: 'ready' });
 function render(msg: ResultsMessage): void {
   if (msg.type === 'loading') {
     current = undefined;
+    draftWhere = undefined;
+    pendingFocus = undefined;
     root.className = '';
     root.replaceChildren(el('div', 'status', 'Running…'), el('pre', 'sql', msg.sql));
     return;
@@ -35,6 +42,7 @@ function render(msg: ResultsMessage): void {
   }
   root.className = msg.results.length === 1 ? 'single' : '';
   root.replaceChildren(...msg.results.map((result, i) => renderResult(result, i, msg.table)));
+  restoreFocus();
 }
 
 function renderResult(result: StatementResult, index: number, table: TableViewState | undefined): HTMLElement {
@@ -45,7 +53,8 @@ function renderResult(result: StatementResult, index: number, table: TableViewSt
   sql.title = result.sql;
   header.append(sql);
   section.append(header);
-  if (table) section.append(renderPager(result, table));
+  // The filter bar stays above an error too, so a bad condition can be fixed in place.
+  if (table) section.append(renderFilterBar(table), renderPager(result, table));
 
   if (result.error) {
     section.append(el('pre', 'error', result.error));
@@ -66,6 +75,79 @@ function summary(r: StatementResult): string {
   return `Done · ${time}`;
 }
 
+/**
+ * One SQL condition for the whole table, like DBeaver's filter box. Enter applies it, Escape or ✕ clears it,
+ * and column names and operators are suggested as you type (autocomplete.ts).
+ * Nothing is queried per keystroke. The database checks the SQL; the driver makes sure it's one statement.
+ */
+function renderFilterBar(table: TableViewState): HTMLElement {
+  const bar = el('div', 'filter-bar');
+  const label = el('label', 'filter-label', 'WHERE');
+  const input = el('input', 'filter-input');
+  input.type = 'text';
+  input.id = 'filter-where';
+  input.spellcheck = false;
+  input.autocomplete = 'off';
+  input.maxLength = 10_000;
+  input.placeholder = "e.g. id > 10 AND status = 'paid' (Enter to apply)";
+  input.value = draftWhere ?? table.where ?? '';
+  label.htmlFor = input.id;
+
+  const clear = el('button', 'filter-clear', '✕');
+  clear.type = 'button';
+  clear.title = 'Clear filter (Escape)';
+  clear.setAttribute('aria-label', 'Clear filter');
+
+  const clearFilter = () => {
+    input.value = '';
+    draftWhere = undefined;
+    if (table.where) applyWhere(input);
+  };
+  // The field wraps the input so the suggestion list can sit right under it.
+  const field = el('div', 'filter-field');
+  const suggestions = el('ul', 'suggestions');
+  suggestions.id = 'filter-suggestions';
+  field.append(input, suggestions);
+  const autocomplete = attachAutocomplete(input, suggestions, table.hints, (value) => (draftWhere = value));
+
+  input.addEventListener('input', () => (draftWhere = input.value));
+  input.addEventListener('keydown', (event) => {
+    // While suggestions are open, Enter / Tab / Escape / arrows belong to the list.
+    if (autocomplete(event)) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      applyWhere(input);
+    } else if (event.key === 'Escape' && (input.value !== '' || table.where)) {
+      event.preventDefault();
+      clearFilter();
+    }
+  });
+  clear.addEventListener('click', () => {
+    clearFilter();
+    input.focus();
+  });
+
+  bar.append(label, field, clear);
+  return bar;
+}
+
+/** Sent on every Enter, even if unchanged, so a failed filter can simply be retried. */
+function applyWhere(input: HTMLInputElement): void {
+  pendingFocus = { start: input.selectionStart, end: input.selectionEnd };
+  setBusy();
+  vscode.postMessage({ type: 'filter', where: input.value });
+}
+
+/** The section is rebuilt for every page, so put focus and the caret back in the WHERE box. */
+function restoreFocus(): void {
+  const focus = pendingFocus;
+  pendingFocus = undefined;
+  const input = root.querySelector<HTMLInputElement>('input.filter-input');
+  if (!focus || !input) return;
+  input.focus();
+  if (focus.start !== null) input.setSelectionRange(focus.start, focus.end);
+}
+
 /** Previous / Next for a table view. The total isn't known: the extension only knows whether another page exists. */
 function renderPager(result: StatementResult, table: TableViewState): HTMLElement {
   const pager = el('nav', 'pager');
@@ -73,10 +155,11 @@ function renderPager(result: StatementResult, table: TableViewState): HTMLElemen
   const prev = button('Previous', table.offset === 0, () => requestPage(Math.max(0, table.offset - table.pageSize)));
   const next = button('Next', !table.hasMore, () => requestPage(table.offset + table.pageSize));
   const shown = result.rows.length;
+  const empty = table.offset ? 'No rows on this page' : table.where ? 'No matching rows' : 'No rows';
   const range = el(
     'span',
     'range',
-    shown ? `Rows ${(table.offset + 1).toLocaleString()}–${(table.offset + shown).toLocaleString()}` : table.offset ? 'No rows on this page' : 'No rows',
+    shown ? `Rows ${(table.offset + 1).toLocaleString()}–${(table.offset + shown).toLocaleString()}` : empty,
   );
   pager.append(prev, range, next);
   if (!table.sort && !table.orderedByKey) {
@@ -181,6 +264,7 @@ function requestSort(sort: SortKey | undefined): void {
 function setBusy(): void {
   root.classList.add('busy');
   root.querySelectorAll('button').forEach((b) => (b.disabled = true));
+  root.querySelectorAll('input').forEach((i) => (i.readOnly = true));
 }
 
 function button(label: string, disabled: boolean, onClick: () => void): HTMLButtonElement {

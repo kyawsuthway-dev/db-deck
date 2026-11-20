@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
 import { errorMessage } from '../drivers/common';
 import { typeLabel } from '../drivers';
-import type { ColumnInfo, Driver, SortKey, StatementResult, TableInfo } from '../types';
+import type { ColumnInfo, Driver, FilterHints, SortKey, StatementResult, TableInfo } from '../types';
 import type { ResultsPanel, ResultsRequest, TableViewState } from '../views/ResultsPanel';
 
 const FILE_CONNECTIONS_KEY = 'dbDeck.documentConnections';
@@ -21,7 +21,14 @@ interface TableView {
   keyOrder: SortKey[];
   offset: number;
   sort?: SortKey;
+  /** The WHERE box's condition, as typed. */
+  where?: string;
+  /** Autocomplete for the WHERE box, built once when the table opens. */
+  hints: FilterHints;
 }
+
+/** Longest filter condition accepted from the webview. */
+const MAX_WHERE_LENGTH = 10_000;
 
 /**
  * Links SQL editors to connections and runs their contents.
@@ -87,8 +94,14 @@ export class QueryController implements vscode.Disposable {
   /** Opens a table view at its first page, ordered by primary key when there is one. */
   async previewTable(connectionId: string, table: TableInfo, label: string): Promise<void> {
     let columns: ColumnInfo[];
+    let hints: FilterHints;
     try {
-      columns = await (await this.manager.getDriver(connectionId)).listColumns(table);
+      const driver = await this.manager.getDriver(connectionId);
+      columns = await driver.listColumns(table);
+      hints = {
+        columns: columns.map((c) => ({ name: c.name, type: c.type, insert: driver.filterIdentifier(c.name) })),
+        operators: driver.filterOperators(),
+      };
     } catch (err) {
       void vscode.window.showErrorMessage(`DB Deck: ${errorMessage(err)}`);
       return;
@@ -100,6 +113,7 @@ export class QueryController implements vscode.Disposable {
       columns: columns.map((c) => c.name),
       keyOrder: columns.filter((c) => c.primaryKey).map((c): SortKey => ({ column: c.name, direction: 'asc' })),
       offset: 0,
+      hints,
     };
     await this.showTablePage(this.tableView, true);
   }
@@ -123,6 +137,11 @@ export class QueryController implements vscode.Disposable {
     if (request.type === 'page') {
       if (!Number.isSafeInteger(request.offset) || request.offset < 0) return;
       view.offset = request.offset;
+    } else if (request.type === 'filter') {
+      if (typeof request.where !== 'string' || request.where.length > MAX_WHERE_LENGTH) return;
+      // Typed by the user and run as their own SQL (core.md rule 4); the driver checks it's one statement.
+      view.where = request.where.trim() || undefined;
+      view.offset = 0;
     } else {
       const sort = request.sort;
       if (sort && (!view.columns.includes(sort.column) || (sort.direction !== 'asc' && sort.direction !== 'desc'))) return;
@@ -147,20 +166,20 @@ export class QueryController implements vscode.Disposable {
       }
       return;
     }
-    const orderBy = view.sort ? [view.sort] : view.keyOrder;
-    const sql = driver.previewSql(view.table, { limit: PAGE_SIZE + 1, offset: view.offset, orderBy });
+    const page = { limit: PAGE_SIZE + 1, offset: view.offset, orderBy: view.sort ? [view.sort] : view.keyOrder };
     // A first load shows "Running…"; paging keeps the grid on screen while the webview shows it's busy.
-    const token = firstLoad ? this.panel.showLoading(view.label, sql, vscode.ViewColumn.Active) : this.panel.startRun();
-    let results: StatementResult[];
+    const token = firstLoad
+      ? this.panel.showLoading(view.label, driver.previewSql(view.table, page), vscode.ViewColumn.Active)
+      : this.panel.startRun();
+    let result: StatementResult;
     try {
-      results = await driver.query(sql);
+      result = await driver.selectPage(view.table, page, view.where);
     } catch (err) {
-      results = [{ sql, columns: [], rows: [], durationMs: 0, error: errorMessage(err) }];
+      result = { sql: '', columns: [], rows: [], durationMs: 0, error: errorMessage(err) };
     }
-    const [result] = results;
-    const hasMore = !!result && result.rows.length > PAGE_SIZE;
+    const hasMore = result.rows.length > PAGE_SIZE;
     if (hasMore) result.rows = result.rows.slice(0, PAGE_SIZE);
-    this.panel.showResults(token, view.label, results, tableState(view, hasMore));
+    this.panel.showResults(token, view.label, [result], tableState(view, hasMore));
   }
 
   private async execute(connectionId: string, sql: string, title: string, column: vscode.ViewColumn) {
@@ -223,5 +242,13 @@ export class QueryController implements vscode.Disposable {
 }
 
 function tableState(view: TableView, hasMore: boolean): TableViewState {
-  return { offset: view.offset, pageSize: PAGE_SIZE, hasMore, sort: view.sort, orderedByKey: view.keyOrder.length > 0 };
+  return {
+    offset: view.offset,
+    pageSize: PAGE_SIZE,
+    hasMore,
+    sort: view.sort,
+    orderedByKey: view.keyOrder.length > 0,
+    where: view.where,
+    hints: view.hints,
+  };
 }

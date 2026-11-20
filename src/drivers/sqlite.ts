@@ -2,8 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
-import type { ColumnInfo, Driver, StatementResult, TableInfo, TablePage } from '../types';
-import { MAX_ROWS, quoteIdent, runEach, selectPageSql } from './common';
+import type { ColumnInfo, Driver, FilterOperator, StatementResult, TableInfo, TablePage } from '../types';
+import { buildPageQuery, FILTER_OPERATORS, filterCondition, identifierFor, MAX_ROWS, quoteIdent, runEach } from './common';
 
 let sqlJs: Promise<SqlJsStatic> | undefined;
 
@@ -59,25 +59,34 @@ export class SqliteDriver implements Driver {
   async query(sql: string): Promise<StatementResult[]> {
     const db = await this.database();
     const results = await runEach(splitSql(sql, 'sqlite'), async (statement) => {
-      const stmt = db.prepare(statement);
-      try {
-        const columns = stmt.getColumnNames();
-        const rows: unknown[][] = [];
-        // Read one extra row so runEach can tell the result was truncated.
-        while (rows.length <= MAX_ROWS && stmt.step()) rows.push(stmt.get());
-        // SQLite's change counter keeps the last DML count through DDL, so only report it for DML.
-        const isDml = /^(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(stripLeadingComments(statement));
-        return { columns, rows, affectedRows: columns.length === 0 && isDml ? db.getRowsModified() : undefined };
-      } finally {
-        stmt.free();
-      }
+      const { columns, rows } = readStatement(db, statement);
+      // SQLite's change counter keeps the last DML count through DDL, so only report it for DML.
+      const isDml = /^(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(stripLeadingComments(statement));
+      return { columns, rows, affectedRows: columns.length === 0 && isDml ? db.getRowsModified() : undefined };
     });
     if (results.some((r) => !r.error && mightWrite(r.sql))) this.save(db);
     return results;
   }
 
   previewSql(table: TableInfo, page: TablePage): string {
-    return selectPageSql(quoteIdent(table.name, '"'), '"', page);
+    return buildPageQuery(quoteIdent(table.name, '"'), '"', page);
+  }
+
+  /** A single SELECT, so the file is never written back. */
+  async selectPage(table: TableInfo, page: TablePage, where?: string): Promise<StatementResult> {
+    const sql = buildPageQuery(quoteIdent(table.name, '"'), '"', page, filterCondition(where, 'sqlite'));
+    const db = await this.database();
+    const [result] = await runEach([sql], async (statement) => readStatement(db, statement));
+    return result;
+  }
+
+  /** Column names aren't case-sensitive in SQLite, so only odd characters and reserved words need quotes. */
+  filterIdentifier(name: string): string {
+    return identifierFor(name, '"', /^[A-Za-z_][A-Za-z0-9_]*$/);
+  }
+
+  filterOperators(): FilterOperator[] {
+    return FILTER_OPERATORS;
   }
 
   async close(): Promise<void> {
@@ -114,4 +123,17 @@ export class SqliteDriver implements Driver {
 
 function mightWrite(sql: string): boolean {
   return !/^(SELECT|EXPLAIN)\b/i.test(stripLeadingComments(sql));
+}
+
+function readStatement(db: Database, statement: string): { columns: string[]; rows: unknown[][] } {
+  const stmt = db.prepare(statement);
+  try {
+    const columns = stmt.getColumnNames();
+    const rows: unknown[][] = [];
+    // Read one extra row so runEach can tell the result was truncated.
+    while (rows.length <= MAX_ROWS && stmt.step()) rows.push(stmt.get());
+    return { columns, rows };
+  } finally {
+    stmt.free();
+  }
 }

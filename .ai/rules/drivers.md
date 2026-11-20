@@ -26,6 +26,8 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 - `connect()` throws with a readable message on failure. A connection test is `connect()` + `listTables()` (`ConnectionManager.test`).
 - `query(sql)` splits with `splitSql(sql, dialect)` and runs statements through `runEach()` from `common.ts`, which times each statement, converts values with `toCell()`, caps rows at `MAX_ROWS`, and stops at the first error. Don't reimplement any of that per driver.
 - `listTables()` returns `schema` only when the table is outside the connection's default schema/database; `previewSql()` and `listColumns()` must handle both cases.
+- `selectPage(table, page, where?)` runs one table-view page as a single statement through `runEach`. It's read-only; SQLite must not write the file back. `previewSql()` builds the same SQL as text, without a filter, for opening in an editor.
+- `filterIdentifier(name)` returns a column name as it should be typed in that database — bare when safe, quoted otherwise (use `identifierFor()` with the database's safe pattern; PostgreSQL's excludes uppercase). `filterOperators()` returns `FILTER_OPERATORS`, plus any operators only that database has.
 - Errors: let them throw; callers format them with `errorMessage()`. Never put a password into an error.
 
 ## Connections
@@ -39,6 +41,8 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 - Metadata queries (tables, columns) use **parameters** (`$1`, `?`) for any name or value. Never interpolate a table, schema, or user value into metadata SQL.
 - Identifiers that must be in SQL text (previews) go through `quoteIdent()` with the dialect's quote character.
 - Metadata and preview queries are read-only (`core.md` rule 4).
+- The table-view filter (`where`) is SQL the user typed. Pass it through `filterCondition()` (rejects a second statement) and `buildPageQuery()` (wraps it in `(\n…\n)` so a `--` comment can't remove ORDER BY/LIMIT). Never add it to SQL any other way.
+- MySQL: run parameterized SQL with `conn.execute()`, not `conn.query(sql, values)` — the latter substitutes `?` on the client and doesn't skip quoted identifiers.
 
 ## Values
 

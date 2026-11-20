@@ -1,7 +1,7 @@
 import { Client, type CustomTypesConfig, type QueryResult } from 'pg';
 import { splitSql } from '../query/splitSql';
-import type { ColumnInfo, ConnectionConfig, Driver, SslMode, StatementResult, TableInfo, TablePage } from '../types';
-import { quoteIdent, runEach, selectPageSql } from './common';
+import type { ColumnInfo, ConnectionConfig, Driver, FilterOperator, SslMode, StatementResult, TableInfo, TablePage } from '../types';
+import { buildPageQuery, FILTER_OPERATORS, filterCondition, identifierFor, quoteIdent, runEach } from './common';
 
 const BOOL_OID = 16;
 
@@ -70,7 +70,32 @@ export class PostgresDriver implements Driver {
   }
 
   previewSql(table: TableInfo, page: TablePage): string {
-    return selectPageSql(qualifiedName(table), '"', page);
+    return buildPageQuery(qualifiedName(table), '"', page);
+  }
+
+  async selectPage(table: TableInfo, page: TablePage, where?: string): Promise<StatementResult> {
+    const sql = buildPageQuery(qualifiedName(table), '"', page, filterCondition(where, 'postgres'));
+    const client = await this.getClient();
+    const [result] = await runEach([sql], async (statement) => {
+      const r = await client.query<unknown[]>({ text: statement, rowMode: 'array' });
+      return { columns: r.fields.map((f) => f.name), rows: r.rows };
+    });
+    return result;
+  }
+
+  /** Unquoted names fold to lowercase in PostgreSQL, so anything with uppercase must be quoted. */
+  filterIdentifier(name: string): string {
+    return identifierFor(name, '"', /^[a-z_][a-z0-9_]*$/);
+  }
+
+  filterOperators(): FilterOperator[] {
+    const likeAt = FILTER_OPERATORS.findIndex((o) => o.label === 'NOT LIKE') + 1;
+    return [
+      ...FILTER_OPERATORS.slice(0, likeAt),
+      { label: 'ILIKE', insert: 'ILIKE ' },
+      { label: 'NOT ILIKE', insert: 'NOT ILIKE ' },
+      ...FILTER_OPERATORS.slice(likeAt),
+    ];
   }
 
   async close(): Promise<void> {

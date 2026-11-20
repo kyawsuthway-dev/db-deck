@@ -58,6 +58,22 @@ export interface TablePage {
   orderBy: SortKey[];
 }
 
+/** An operator offered by the WHERE box's autocomplete. */
+export interface FilterOperator {
+  label: string;
+  /** Text inserted in place of the partial word. */
+  insert: string;
+  /** Where the caret goes within `insert`; the end when absent. */
+  caret?: number;
+}
+
+/** What the WHERE box's autocomplete offers for the open table. */
+export interface FilterHints {
+  /** `insert` is the name as it should be typed in this database (quoted only when needed). */
+  columns: { name: string; type: string; insert: string }[];
+  operators: FilterOperator[];
+}
+
 export interface Driver {
   /** Opens the connection. Throws with a readable message when it can't. */
   connect(): Promise<void>;
@@ -65,7 +81,16 @@ export interface Driver {
   listColumns(table: TableInfo): Promise<ColumnInfo[]>;
   /** Runs one or more `;`-separated statements in order, stopping at the first error. */
   query(sql: string): Promise<StatementResult[]>;
-  /** SQL that selects one page of a table, quoted for this database. Read-only. */
+  /** SQL text that selects one page of a table, for opening in an editor. Read-only. */
   previewSql(table: TableInfo, page: TablePage): string;
+  /**
+   * Runs one page of a table view as a single statement. `where` is a SQL condition the user typed
+   * (the filter box); it's checked to be one statement and can't comment out the page limits.
+   */
+  selectPage(table: TableInfo, page: TablePage, where?: string): Promise<StatementResult>;
+  /** A column name as it should be typed in a condition: bare when that's safe, quoted otherwise. */
+  filterIdentifier(name: string): string;
+  /** Operators the WHERE box suggests for this database. */
+  filterOperators(): FilterOperator[];
   close(): Promise<void>;
 }
