@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { FilterHints, SortKey, StatementResult } from '../types';
+import type { FilterHints, PendingChanges, SortKey, StatementResult } from '../types';
 
 /** Paging and sort state of a table view; absent for query results. */
 export interface TableViewState {
@@ -14,7 +14,12 @@ export interface TableViewState {
   where?: string;
   /** Column names and operators the WHERE box suggests. */
   hints: FilterHints;
+  /** Editable: the primary key and the columns that can't be edited. Otherwise why the table is read-only. */
+  edit: { key: string[]; readOnly: string[] } | { reason: string };
 }
+
+/** Grid actions from VS Code's context menu, carried out by the webview on its selection. */
+export type EditCommand = 'setNull' | 'deleteRows' | 'addRow';
 
 /** Messages sent to the webview (src/webview/results.ts). */
 export type ResultsMessage =
@@ -25,7 +30,18 @@ export type ResultsMessage =
 export type CopyFormat = 'tsv' | 'tsvHeaders' | 'csv' | 'json';
 
 /** One-off commands to the webview. Unlike ResultsMessage, they're never replayed on reload. */
-export type ResultsCommand = { type: 'copyRequest'; format: CopyFormat };
+export type ResultsCommand =
+  | { type: 'copyRequest'; format: CopyFormat }
+  | { type: 'edit'; command: EditCommand }
+  /** Forget pending edits (after a save, or when the user agreed to discard them). */
+  | { type: 'clearPending' }
+  /**
+   * Ask the user to confirm a save, inside the grid. `statements` are for reading only (Review SQL).
+   * Apply sends `token` back; the extension runs only the change set it prepared under that token.
+   */
+  | { type: 'confirmSave'; token: string; title: string; detail: string; statements: string[] }
+  /** The save finished or failed: close the confirmation. */
+  | { type: 'closeConfirm' };
 
 /** Messages the webview sends back. Treat them as untrusted input. */
 export type ResultsRequest =
@@ -36,9 +52,15 @@ export type ResultsRequest =
   /** `order`: the row order shown, when query results were sorted in the webview. */
   | { type: 'export'; index: number; order?: number[] }
   /** `rows`: original row indexes in display order; `columns`: the first and last column. */
-  | { type: 'copy'; index: number; rows: number[]; columns: [number, number]; format: CopyFormat };
+  | { type: 'copy'; index: number; rows: number[]; columns: [number, number]; format: CopyFormat }
+  /** How many pending edits the grid holds, so opening something else can ask first. */
+  | { type: 'pending'; count: number }
+  | { type: 'save'; changes: PendingChanges }
+  /** The user clicked Apply or Cancel in the save confirmation (`confirmSave`). */
+  | { type: 'applySave'; token: string }
+  | { type: 'cancelSave'; token: string };
 
-const REQUEST_TYPES = new Set(['page', 'sort', 'filter', 'export', 'copy']);
+const REQUEST_TYPES = new Set(['page', 'sort', 'filter', 'export', 'copy', 'pending', 'save', 'applySave', 'cancelSave']);
 
 /** One reusable "Results" editor tab showing the latest run. */
 export class ResultsPanel implements vscode.Disposable {
@@ -74,7 +96,27 @@ export class ResultsPanel implements vscode.Disposable {
 
   /** Asks the webview to send its selected cells back as a `copy` request (from the context menu). */
   requestCopy(format: CopyFormat): void {
-    const command: ResultsCommand = { type: 'copyRequest', format };
+    this.command({ type: 'copyRequest', format });
+  }
+
+  /** A context-menu edit action (Set to NULL, Delete Rows, Add Row) for the webview's selection. */
+  requestEdit(command: EditCommand): void {
+    this.command({ type: 'edit', command });
+  }
+
+  clearPending(): void {
+    this.command({ type: 'clearPending' });
+  }
+
+  confirmSave(token: string, title: string, detail: string, statements: string[]): void {
+    this.command({ type: 'confirmSave', token, title, detail, statements });
+  }
+
+  closeConfirm(): void {
+    this.command({ type: 'closeConfirm' });
+  }
+
+  private command(command: ResultsCommand): void {
     if (this.panel) void this.panel.webview.postMessage(command);
   }
 

@@ -1,5 +1,5 @@
 import { splitSql } from '../query/splitSql';
-import type { Cell, DbType, FilterOperator, StatementResult, TablePage } from '../types';
+import type { Cell, ChangeStatement, ColumnValue, DbType, FilterOperator, RowChange, StatementResult, TablePage } from '../types';
 
 /** Rows kept per statement; the grid shows a "truncated" note beyond this. */
 export const MAX_ROWS = 10_000;
@@ -154,4 +154,92 @@ export function insertStatements(from: string, quote: '"' | '`', columns: string
 /** A standard SQL string literal: quotes doubled. Right for PostgreSQL (standard_conforming_strings) and SQLite. */
 export function standardLiteral(value: string): string {
   return `'${value.split("'").join("''")}'`;
+}
+
+/** What `buildChangeStatements` needs to know about a database's SQL. Each driver defines one. */
+export interface WriteDialect {
+  quote: '"' | '`';
+  /** Placeholder for the n-th parameter (1-based): `$1` or `?`. */
+  placeholder(n: number): string;
+  /** NULL-safe equality: `IS NOT DISTINCT FROM`, `<=>` or `IS`. A plain `=` never matches NULL. */
+  nullSafeEquals: string;
+  /** An INSERT with every column at its default: `DEFAULT VALUES` or `() VALUES ()`. */
+  allDefaults: string;
+  /** A value as a SQL literal, for the review text only. */
+  literal(value: string): string;
+}
+
+/**
+ * UPDATE / INSERT / DELETE for pending table edits, with values as parameters.
+ * UPDATE and DELETE match the primary key with `=` (so indexes are used), and UPDATE also checks the
+ * original value of each edited cell with NULL-safe equality, so a row changed by someone else matches nothing.
+ */
+export function buildChangeStatements(from: string, dialect: WriteDialect, changes: RowChange[]): ChangeStatement[] {
+  return changes.map((change) => {
+    const params: Cell[] = [];
+    const shown: string[] = [];
+    const q = (column: string) => quoteIdent(column, dialect.quote);
+    // Each value goes in twice: as a parameter for running, as a literal for review.
+    const sql: string[] = [];
+    const add = (text: string, display = text) => {
+      sql.push(text);
+      shown.push(display);
+    };
+    const value = (v: Cell) => {
+      add(dialect.placeholder(params.push(v)), v === null ? 'NULL' : dialect.literal(v));
+    };
+    const keyMatch = (key: ColumnValue[]) =>
+      key.forEach((k, i) => {
+        add(`${i ? ' AND ' : ''}${q(k.column)} = `);
+        value(k.value);
+      });
+
+    switch (change.kind) {
+      case 'update':
+        add(`UPDATE ${from} SET `);
+        change.set.forEach((s, i) => {
+          add(`${i ? ', ' : ''}${q(s.column)} = `);
+          value(s.value);
+        });
+        add(' WHERE ');
+        keyMatch(change.key);
+        for (const s of change.set.filter((s) => s.check)) {
+          add(` AND ${q(s.column)} ${dialect.nullSafeEquals} `);
+          value(s.original);
+        }
+        break;
+      case 'insert':
+        if (!change.values.length) {
+          add(`INSERT INTO ${from} ${dialect.allDefaults}`);
+          break;
+        }
+        add(`INSERT INTO ${from} (${change.values.map((v) => q(v.column)).join(', ')}) VALUES (`);
+        change.values.forEach((v, i) => {
+          if (i) add(', ');
+          value(v.value);
+        });
+        add(')');
+        break;
+      case 'delete':
+        add(`DELETE FROM ${from} WHERE `);
+        keyMatch(change.key);
+        break;
+    }
+    return { kind: change.kind, sql: sql.join(''), params, display: `${shown.join('')};` };
+  });
+}
+
+/** Thrown by `applyChanges` when a statement doesn't affect exactly one row; the transaction was rolled back. */
+export class ChangeConflict extends Error {
+  constructor(
+    readonly index: number,
+    readonly affected: number,
+  ) {
+    super(
+      affected === 0
+        ? `Change ${index + 1} matched no row: it was changed or deleted since the page was loaded. Nothing was saved.`
+        : `Change ${index + 1} matched ${affected} rows instead of one. Nothing was saved.`,
+    );
+    this.name = 'ChangeConflict';
+  }
 }

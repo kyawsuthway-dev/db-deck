@@ -74,6 +74,44 @@ export interface FilterHints {
   operators: FilterOperator[];
 }
 
+/** A column and a value. Changes use arrays of these, not objects, so any column name (even `__proto__`) is safe. */
+export interface ColumnValue {
+  column: string;
+  value: Cell;
+}
+
+/** One pending change from the table view's grid. Values are text as typed, or null. */
+export type RowChange =
+  | {
+      kind: 'update';
+      /** The row's primary key, as loaded. */
+      key: ColumnValue[];
+      /** `original` is what the grid showed; when `check` is set it must still match (conflict detection). */
+      set: { column: string; value: Cell; original: Cell; check: boolean }[];
+    }
+  | { kind: 'insert'; values: ColumnValue[] }
+  | { kind: 'delete'; key: ColumnValue[] };
+
+/**
+ * Pending edits as the webview reports them: positions in the shown page and new values only.
+ * Original values and primary keys come from the extension's own copy of the page, never from here.
+ */
+export interface PendingChanges {
+  /** `row` is the row's index in the page as loaded (not its display position). */
+  updates: { row: number; col: number; value: Cell }[];
+  deletes: number[];
+  /** New rows; columns left out get their default. */
+  inserts: { col: number; value: Cell }[][];
+}
+
+/** A change as SQL: `sql` + `params` are what runs; `display` has the values written in, for review only. */
+export interface ChangeStatement {
+  kind: RowChange['kind'];
+  sql: string;
+  params: Cell[];
+  display: string;
+}
+
 export interface Driver {
   /** Opens the connection. Throws with a readable message when it can't. */
   connect(): Promise<void>;
@@ -94,5 +132,13 @@ export interface Driver {
   filterOperators(): FilterOperator[];
   /** `INSERT` statements (one per row, each ending in `;\n`) that recreate these rows in `table`. For export. */
   insertSql(table: TableInfo, columns: string[], rows: Cell[][]): string;
+  /** Parameterized statements for pending table edits. Builds SQL only; nothing runs. */
+  changeStatements(table: TableInfo, changes: RowChange[]): ChangeStatement[];
+  /**
+   * Runs the statements in one transaction on a separate, short-lived connection (SQLite: a separate
+   * in-memory copy), so a transaction left open in the query editor is never touched. Each statement must
+   * affect exactly one row, or everything rolls back and `ChangeConflict` is thrown.
+   */
+  applyChanges(statements: ChangeStatement[]): Promise<void>;
   close(): Promise<void>;
 }

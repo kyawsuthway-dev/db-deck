@@ -1,7 +1,29 @@
 import mysql from 'mysql2/promise';
 import { splitSql } from '../query/splitSql';
-import type { Cell, ColumnInfo, ConnectionConfig, Driver, FilterOperator, StatementResult, TableInfo, TablePage } from '../types';
-import { buildPageQuery, FILTER_OPERATORS, filterCondition, identifierFor, insertStatements, quoteIdent, runEach } from './common';
+import type {
+  Cell,
+  ChangeStatement,
+  ColumnInfo,
+  ConnectionConfig,
+  Driver,
+  FilterOperator,
+  RowChange,
+  StatementResult,
+  TableInfo,
+  TablePage,
+} from '../types';
+import {
+  buildChangeStatements,
+  buildPageQuery,
+  ChangeConflict,
+  FILTER_OPERATORS,
+  filterCondition,
+  identifierFor,
+  insertStatements,
+  quoteIdent,
+  runEach,
+  type WriteDialect,
+} from './common';
 
 const SYSTEM_SCHEMAS = ['mysql', 'information_schema', 'performance_schema', 'sys'];
 
@@ -110,9 +132,37 @@ export class MysqlDriver implements Driver {
     return this.connecting;
   }
 
-  private async open(): Promise<mysql.Connection> {
+  changeStatements(table: TableInfo, changes: RowChange[]): ChangeStatement[] {
+    return buildChangeStatements(qualifiedName(table), WRITE_DIALECT, changes);
+  }
+
+  /**
+   * On its own connection, so the editor's session (and any open transaction) is never touched.
+   * FOUND_ROWS makes affectedRows count rows matched, not rows changed: setting a cell to the value it
+   * already has must not look like a conflict. MyISAM tables ignore the transaction (README).
+   */
+  async applyChanges(statements: ChangeStatement[]): Promise<void> {
+    const conn = await mysql.createConnection({ ...this.options(), flags: ['FOUND_ROWS'] });
+    conn.on('error', () => {}); // a dropped connection fails the pending query instead of crashing
+    try {
+      await conn.query('START TRANSACTION');
+      for (const [i, s] of statements.entries()) {
+        const [result] = await conn.execute(s.sql, s.params);
+        const affected = (result as mysql.ResultSetHeader).affectedRows;
+        if (affected !== 1) throw new ChangeConflict(i, affected);
+      }
+      await conn.query('COMMIT');
+    } catch (err) {
+      await conn.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      await conn.end().catch(() => {});
+    }
+  }
+
+  private options(): mysql.ConnectionOptions {
     const c = this.config;
-    const conn = await mysql.createConnection({
+    return {
       host: c.host,
       port: c.port,
       user: c.user,
@@ -124,7 +174,11 @@ export class MysqlDriver implements Driver {
       dateStrings: true,
       supportBigNumbers: true,
       bigNumberStrings: true,
-    });
+    };
+  }
+
+  private async open(): Promise<mysql.Connection> {
+    const conn = await mysql.createConnection(this.options());
     conn.on('error', () => {
       if (this.conn === conn) this.conn = undefined;
     });
@@ -145,3 +199,11 @@ function qualifiedName(table: TableInfo): string {
 function mysqlLiteral(value: string): string {
   return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
 }
+
+const WRITE_DIALECT: WriteDialect = {
+  quote: '`',
+  placeholder: () => '?',
+  nullSafeEquals: '<=>',
+  allDefaults: '() VALUES ()',
+  literal: mysqlLiteral,
+};

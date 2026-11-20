@@ -2,9 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
-import type { Cell, ColumnInfo, Driver, FilterOperator, StatementResult, TableInfo, TablePage } from '../types';
+import type { Cell, ChangeStatement, ColumnInfo, Driver, FilterOperator, RowChange, StatementResult, TableInfo, TablePage } from '../types';
 import {
+  buildChangeStatements,
   buildPageQuery,
+  ChangeConflict,
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
@@ -13,7 +15,16 @@ import {
   quoteIdent,
   runEach,
   standardLiteral,
+  type WriteDialect,
 } from './common';
+
+const WRITE_DIALECT: WriteDialect = {
+  quote: '"',
+  placeholder: () => '?',
+  nullSafeEquals: 'IS',
+  allDefaults: 'DEFAULT VALUES',
+  literal: standardLiteral,
+};
 
 let sqlJs: Promise<SqlJsStatic> | undefined;
 
@@ -101,6 +112,34 @@ export class SqliteDriver implements Driver {
 
   insertSql(table: TableInfo, columns: string[], rows: Cell[][]): string {
     return insertStatements(quoteIdent(table.name, '"'), '"', columns, rows, standardLiteral);
+  }
+
+  changeStatements(table: TableInfo, changes: RowChange[]): ChangeStatement[] {
+    return buildChangeStatements(quoteIdent(table.name, '"'), WRITE_DIALECT, changes);
+  }
+
+  /**
+   * sql.js has no second connection, so the transaction runs on a separate in-memory copy loaded from
+   * the file, which is written back only after COMMIT. The main copy is dropped so the next call reloads
+   * the saved file. (A transaction left open in the editor isn't kept for SQLite anyway; see README.)
+   */
+  async applyChanges(statements: ChangeStatement[]): Promise<void> {
+    const SQL = await loadSqlJs();
+    const db = new SQL.Database(fs.readFileSync(this.filePath));
+    try {
+      db.exec('BEGIN');
+      statements.forEach((s, i) => {
+        db.run(s.sql, s.params);
+        const affected = db.getRowsModified();
+        if (affected !== 1) throw new ChangeConflict(i, affected);
+      });
+      db.exec('COMMIT');
+      fs.writeFileSync(this.filePath, db.export());
+    } finally {
+      db.close();
+    }
+    this.db?.close();
+    this.db = undefined;
   }
 
   async close(): Promise<void> {

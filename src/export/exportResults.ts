@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
 import { errorMessage } from '../drivers/common';
-import type { QueryController, TableExportSource } from '../query/runQuery';
+import type { QueryController, TableViewSource } from '../query/runQuery';
 import type { Cell, Driver, StatementResult } from '../types';
 import type { CopyFormat, ResultsPanel, ResultsRequest } from '../views/ResultsPanel';
 import { isBinaryType, streamFormat, toDelimited, toJson, type ExportFormat } from './formats';
@@ -61,7 +61,7 @@ export class ResultsExporter implements vscode.Disposable {
       allRows = scope.all;
     }
 
-    if (format === 'sql' && view && view.columnTypes.some(isBinaryType)) {
+    if (format === 'sql' && view && view.columns.some((c) => isBinaryType(c.type))) {
       const go = await vscode.window.showWarningMessage(
         'This table has binary columns. The grid shows them as shortened hex, so the INSERT statements would insert that text, not the original bytes.',
         { modal: true },
@@ -104,7 +104,7 @@ export class ResultsExporter implements vscode.Disposable {
   }
 
   /** Streams every matching row to the file. Returns the row count, or undefined if cancelled. */
-  private writeAllRows(file: string, format: ExportFormat, driver: Driver, view: TableExportSource, columns: string[]) {
+  private writeAllRows(file: string, format: ExportFormat, driver: Driver, view: TableViewSource, columns: string[]) {
     return vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Exporting ${view.table.name}`, cancellable: true },
       async (progress, token) => {
@@ -178,7 +178,7 @@ function ordered(result: StatementResult, order: unknown): Cell[][] {
 async function writeFile(
   file: string,
   format: ExportFormat,
-  source: { driver: Driver; view: TableExportSource } | undefined,
+  source: { driver: Driver; view: TableViewSource } | undefined,
   columns: string[],
   rows: Cell[][],
 ): Promise<number> {

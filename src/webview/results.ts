@@ -1,12 +1,30 @@
 // Runs inside the Results webview (a browser context), bundled separately to dist/webview/results.js.
 // Values are only ever inserted with textContent, never as HTML.
 import type { Cell, SortKey, StatementResult } from '../types';
-import type { CopyFormat, ResultsCommand, ResultsMessage, ResultsRequest, TableViewState } from '../views/ResultsPanel';
+import type { CopyFormat, EditCommand, ResultsCommand, ResultsMessage, ResultsRequest, TableViewState } from '../views/ResultsPanel';
 import { attachAutocomplete } from './autocomplete';
+import {
+  addRow,
+  deserialize,
+  emptyPending,
+  isEdited,
+  pendingCount,
+  serialize,
+  setCell,
+  setInsertedCell,
+  shownValue,
+  toggleDelete,
+  toPendingChanges,
+  type Pending,
+} from './edits';
 import { copyRequestOf, inRange, rangeOf, selectAll, selectCell, type CellRange, type GridSelection } from './selection';
 import './results.css';
 
-declare function acquireVsCodeApi(): { postMessage(message: ResultsRequest): void };
+declare function acquireVsCodeApi(): {
+  postMessage(message: ResultsRequest): void;
+  getState(): unknown;
+  setState(state: unknown): void;
+};
 
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('root')!;
@@ -19,22 +37,63 @@ let current: Extract<ResultsMessage, { type: 'results' }> | undefined;
 let draftWhere: string | undefined;
 /** Caret to restore in the WHERE box once the filtered page arrives. */
 let pendingFocus: { start: number | null; end: number | null } | undefined;
-/** Selected cells (one grid at a time). Cleared on every render. */
+/** Selected cells (one grid at a time). Cleared when new results arrive. */
 let selection: GridSelection | undefined;
 /** Per result section: original row index for each displayed row (differs after an in-grid sort). */
 let orders = new Map<number, number[]>();
 let dragging = false;
+/** Unsaved edits of the table view, and which page they belong to (kept in webview state across hide/show). */
+let pending: Pending = emptyPending();
+let pendingKey: string | undefined;
+/** Closes the open cell editor, keeping its value. Set while a cell is being edited. */
+let finishEditing: (() => void) | undefined;
+/**
+ * The save confirmation, while it's open. Editing is locked meanwhile, so what the user confirms is what's
+ * saved. Not kept in webview state: if the panel reloads, the user clicks Save… again.
+ */
+let confirm: { token: string; title: string; detail: string; statements: string[]; showSql: boolean; saving: boolean; focus: boolean } | undefined;
 
 window.addEventListener('message', (event: MessageEvent<ResultsMessage | ResultsCommand>) => {
   const msg = event.data;
-  if (msg.type === 'copyRequest') {
-    copySelection(msg.format);
-    return;
+  switch (msg.type) {
+    case 'copyRequest':
+      copySelection(msg.format);
+      return;
+    case 'edit':
+      runEditCommand(msg.command);
+      return;
+    case 'clearPending':
+      confirm = undefined;
+      pending = emptyPending();
+      pendingChanged();
+      return;
+    case 'confirmSave':
+      finishEditing?.();
+      confirm = { token: msg.token, title: msg.title, detail: msg.detail, statements: msg.statements, showSql: false, saving: false, focus: true };
+      rerender();
+      return;
+    case 'closeConfirm':
+      if (confirm) {
+        confirm = undefined;
+        rerender();
+      }
+      return;
+    default:
+      confirm = undefined;
+      localSorts = new Map();
+      selection = undefined;
+      restorePending(msg);
+      render(msg);
   }
-  localSorts = new Map();
-  render(msg);
 });
 window.addEventListener('mouseup', () => (dragging = false));
+// Escape anywhere in the panel cancels the save confirmation.
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && confirm && !confirm.saving) {
+    event.preventDefault();
+    cancelConfirm();
+  }
+});
 // Ctrl/Cmd+C (and Edit > Copy) arrive as a copy event. Formatting happens in the extension.
 document.addEventListener('copy', (event) => {
   if (!selection || !(document.activeElement instanceof HTMLElement) || !document.activeElement.classList.contains('table-wrap')) return;
@@ -44,7 +103,6 @@ document.addEventListener('copy', (event) => {
 vscode.postMessage({ type: 'ready' });
 
 function render(msg: ResultsMessage): void {
-  selection = undefined;
   orders = new Map();
   if (msg.type === 'loading') {
     current = undefined;
@@ -63,6 +121,25 @@ function render(msg: ResultsMessage): void {
   root.className = msg.results.length === 1 ? 'single' : '';
   root.replaceChildren(...msg.results.map((result, i) => renderResult(result, i, msg.table)));
   restoreFocus();
+  if (confirm?.focus) {
+    confirm.focus = false;
+    root.querySelector<HTMLElement>('.confirm')?.focus();
+  }
+}
+
+/** Re-renders the current results in place (after an edit), keeping scroll position and selection. */
+function rerender(): void {
+  if (!current) return;
+  const wrap = root.querySelector<HTMLElement>('.table-wrap');
+  const scroll = wrap && { top: wrap.scrollTop, left: wrap.scrollLeft };
+  render(current);
+  const again = root.querySelector<HTMLElement>('.table-wrap');
+  if (again && scroll) {
+    again.scrollTop = scroll.top;
+    again.scrollLeft = scroll.left;
+  }
+  const columns = selection && current.results[selection.index]?.columns.length;
+  if (selection && columns) setSelection(selection, columns);
 }
 
 function renderResult(result: StatementResult, index: number, table: TableViewState | undefined): HTMLElement {
@@ -82,6 +159,8 @@ function renderResult(result: StatementResult, index: number, table: TableViewSt
   section.append(header);
   // The filter bar stays above an error too, so a bad condition can be fixed in place.
   if (table) section.append(renderFilterBar(table), renderPager(result, table));
+  if (table && !result.error) section.append(renderEditBar(table));
+  if (table && !result.error && confirm) section.append(renderConfirm(confirm));
 
   if (result.error) {
     section.append(el('pre', 'error', result.error));
@@ -101,6 +180,10 @@ function summary(r: StatementResult): string {
   if (r.affectedRows !== undefined) return `${r.affectedRows.toLocaleString()} row${r.affectedRows === 1 ? '' : 's'} affected · ${time}`;
   return `Done · ${time}`;
 }
+
+/** Paging, sorting and filtering reload the page, which would lose unsaved edits, so they wait. */
+const DIRTY_HINT = 'Save or discard your changes first.';
+const dirty = () => pendingCount(pending) > 0;
 
 /**
  * One SQL condition for the whole table, like DBeaver's filter box. Enter applies it, Escape or ✕ clears it,
@@ -124,6 +207,11 @@ function renderFilterBar(table: TableViewState): HTMLElement {
   clear.type = 'button';
   clear.title = 'Clear filter (Escape)';
   clear.setAttribute('aria-label', 'Clear filter');
+  if (dirty()) {
+    input.readOnly = true;
+    input.title = DIRTY_HINT;
+    clear.disabled = true;
+  }
 
   const clearFilter = () => {
     input.value = '';
@@ -139,6 +227,7 @@ function renderFilterBar(table: TableViewState): HTMLElement {
 
   input.addEventListener('input', () => (draftWhere = input.value));
   input.addEventListener('keydown', (event) => {
+    if (input.readOnly) return;
     // While suggestions are open, Enter / Tab / Escape / arrows belong to the list.
     if (autocomplete(event)) return;
     if (event.key === 'Enter') {
@@ -179,8 +268,9 @@ function restoreFocus(): void {
 function renderPager(result: StatementResult, table: TableViewState): HTMLElement {
   const pager = el('nav', 'pager');
   pager.setAttribute('aria-label', 'Pages');
-  const prev = button('Previous', table.offset === 0, () => requestPage(Math.max(0, table.offset - table.pageSize)));
-  const next = button('Next', !table.hasMore, () => requestPage(table.offset + table.pageSize));
+  const prev = button('Previous', table.offset === 0 || dirty(), () => requestPage(Math.max(0, table.offset - table.pageSize)));
+  const next = button('Next', !table.hasMore || dirty(), () => requestPage(table.offset + table.pageSize));
+  if (dirty()) prev.title = next.title = DIRTY_HINT;
   const shown = result.rows.length;
   const empty = table.offset ? 'No rows on this page' : table.where ? 'No matching rows' : 'No rows';
   const range = el(
@@ -195,9 +285,110 @@ function renderPager(result: StatementResult, table: TableViewState): HTMLElemen
   return pager;
 }
 
+/** Add Row / Delete Rows, and once there are edits: the count, Save… and Discard. Read-only tables say why. */
+function renderEditBar(table: TableViewState): HTMLElement {
+  const bar = el('div', 'edit-bar');
+  if ('reason' in table.edit) {
+    bar.append(el('span', 'note', table.edit.reason));
+    return bar;
+  }
+  // These buttons keep focus where it is (mousedown), so an open cell editor isn't closed by the press and
+  // redrawn away before the click lands; each one finishes that edit first instead.
+  const editButton = (label: string, onClick: () => void) => {
+    const b = button(label, !!confirm, () => {
+      finishEditing?.();
+      onClick();
+    });
+    b.addEventListener('mousedown', (event) => event.preventDefault());
+    return b;
+  };
+  bar.append(editButton('Add Row', () => runEditCommand('addRow')), editButton('Delete Rows', () => runEditCommand('deleteRows')));
+  const count = pendingCount(pending);
+  if (count) {
+    const save = editButton('Save…', () => vscode.postMessage({ type: 'save', changes: toPendingChanges(pending) }));
+    save.classList.add('primary');
+    bar.append(
+      el('span', 'pending-count', `● ${count} pending change${count === 1 ? '' : 's'}`),
+      save,
+      editButton('Discard', () => {
+        pending = emptyPending();
+        pendingChanged();
+      }),
+      el('span', 'note', 'Paging, sorting and filtering wait until you save or discard.'),
+    );
+  } else {
+    bar.append(el('span', 'note', 'Double-click a cell to edit. Changes are saved only when you click Save.'));
+  }
+  return bar;
+}
+
+/**
+ * The save confirmation, shown between the edit bar and the grid. Apply sends the extension's token back;
+ * Review SQL shows the statements as text (for reading only, they run with parameters). Escape cancels
+ * (document listener).
+ */
+function renderConfirm(c: NonNullable<typeof confirm>): HTMLElement {
+  const box = el('div', 'confirm');
+  box.tabIndex = -1;
+  box.setAttribute('role', 'alertdialog');
+  box.setAttribute('aria-labelledby', 'confirm-title');
+  box.setAttribute('aria-describedby', 'confirm-detail');
+  const title = el('div', 'confirm-title', c.title);
+  title.id = 'confirm-title';
+  const detail = el('div', 'confirm-detail', c.detail);
+  detail.id = 'confirm-detail';
+  const text = el('div', 'confirm-text');
+  text.append(title, detail);
+  const head = el('div', 'confirm-head');
+  head.append(el('span', 'confirm-icon', '⚠'), text);
+
+  const apply = button(c.saving ? 'Saving…' : 'Apply', c.saving, () => {
+    c.saving = true;
+    rerender();
+    vscode.postMessage({ type: 'applySave', token: c.token });
+  });
+  apply.classList.add('primary');
+  const review = button(c.showSql ? 'Hide SQL' : 'Review SQL', c.saving, () => {
+    c.showSql = !c.showSql;
+    c.focus = true;
+    rerender();
+  });
+  review.setAttribute('aria-expanded', String(c.showSql));
+  const cancel = button('Cancel', c.saving, cancelConfirm);
+  const actions = el('div', 'confirm-actions');
+  actions.append(apply, review, cancel);
+  box.append(head, actions);
+
+  if (c.showSql) {
+    box.append(
+      el('div', 'confirm-note', 'For review only. DB Deck runs these with parameters, in one transaction, with the conflict check. Running this text yourself skips those checks.'),
+      el('pre', 'confirm-sql', c.statements.join('\n')),
+    );
+  }
+  return box;
+}
+
+function cancelConfirm(): void {
+  if (!confirm || confirm.saving) return;
+  vscode.postMessage({ type: 'cancelSave', token: confirm.token });
+  confirm = undefined;
+  rerender();
+  root.querySelector<HTMLElement>('.table-wrap')?.focus({ preventScroll: true });
+}
+
+/** Editing applies to table views of tables with a primary key, on the first (only) result. */
+function editTarget(): { result: StatementResult; readOnly: Set<number>; key: Set<number> } | undefined {
+  const table = current?.table;
+  const result = current?.results[0];
+  if (!table || !result || result.error || 'reason' in table.edit) return undefined;
+  const index = (names: string[]) => new Set(names.map((n) => result.columns.indexOf(n)).filter((i) => i >= 0));
+  return { result, readOnly: index(table.edit.readOnly), key: index(table.edit.key) };
+}
+
 function renderTable(result: StatementResult, index: number, table: TableViewState | undefined): HTMLElement {
   // Table views sort in the database; query results sort here, over the rows already loaded.
   const sort = table ? table.sort : localSorts.get(index);
+  const editing = table ? editTarget() : undefined;
   const wrap = el('div', 'table-wrap');
   const grid = el('table');
   const headRow = el('tr');
@@ -205,13 +396,14 @@ function renderTable(result: StatementResult, index: number, table: TableViewSta
   result.columns.forEach((name, col) => {
     // Query results can repeat a column name, so they sort by position; table views sort by name in the database.
     const active = sort && sort.column === (table ? name : String(col)) ? sort.direction : undefined;
-    headRow.append(renderHeader(name, active, () => {
+    headRow.append(renderHeader(name, active, !!table && dirty(), () => {
       const next = nextSort(active);
       if (table) {
         requestSort(next && { column: name, direction: next });
       } else {
         if (next) localSorts.set(index, { column: String(col), direction: next });
         else localSorts.delete(index);
+        selection = undefined;
         if (current) render(current);
       }
     }));
@@ -231,37 +423,65 @@ function renderTable(result: StatementResult, index: number, table: TableViewSta
     const tr = el('tr');
     // The number is the row's position in the result, so it stays with the row when sorted here.
     tr.append(el('td', 'rownum', String((table?.offset ?? 0) + i + 1)));
-    for (const value of result.rows[i]) {
-      const td = el('td');
-      if (value === null) {
-        td.append(el('span', 'null', 'NULL'));
-      } else {
-        td.textContent = value;
-        if (value.length > 40) td.title = value;
-      }
+    if (editing && pending.deleted.has(i)) tr.classList.add('deleted');
+    result.rows[i].forEach((original, col) => {
+      const td = valueCell(editing ? shownValue(pending, i, col, original) : original);
+      if (editing && isEdited(pending, i, col)) td.classList.add('edited');
+      if (editing?.readOnly.has(col)) td.classList.add('readonly');
       tr.append(td);
-    }
+    });
     body.append(tr);
+  }
+  // New rows go after the page's rows; untouched cells show DEFAULT (the database fills them in).
+  if (editing) {
+    pending.inserted.forEach((cells) => {
+      const tr = el('tr', 'inserted');
+      tr.append(el('td', 'rownum', '+'));
+      result.columns.forEach((_, col) => {
+        const td = cells.has(col) ? valueCell(cells.get(col)!) : el('td', undefined, '');
+        if (cells.has(col)) td.classList.add('edited');
+        else td.append(el('span', 'default', 'DEFAULT'));
+        if (editing.readOnly.has(col)) td.classList.add('readonly');
+        tr.append(td);
+      });
+      body.append(tr);
+    });
   }
   grid.append(body);
   wrap.append(grid);
   orders.set(index, order);
-  attachSelection(wrap, body, index, result.columns.length);
+  attachSelection(wrap, body, index, result.columns.length, !!editing);
   return wrap;
+}
+
+function valueCell(value: Cell): HTMLTableCellElement {
+  const td = el('td');
+  if (value === null) {
+    td.append(el('span', 'null', 'NULL'));
+  } else {
+    td.textContent = value;
+    if (value.length > 40) td.title = value;
+  }
+  return td;
 }
 
 /**
  * Click a cell, Shift+click or drag for a range, click row numbers for whole rows, Ctrl/Cmd+A for all.
  * The grid takes focus so Ctrl+C copies it (see the document 'copy' listener). Right-click opens
  * VS Code's own menu (package.json webview/context) for the grid section.
+ * In an editable table: double-click, Enter or F2 edits a cell; Ctrl/Cmd+0 sets the selection to NULL.
  */
-function attachSelection(wrap: HTMLElement, body: HTMLTableSectionElement, index: number, columnCount: number): void {
+function attachSelection(wrap: HTMLElement, body: HTMLTableSectionElement, index: number, columnCount: number, editable: boolean): void {
   wrap.tabIndex = 0;
   wrap.dataset.index = String(index);
-  wrap.dataset.vscodeContext = JSON.stringify({ webviewSection: 'grid', preventDefaultContextMenuItems: true });
-  wrap.setAttribute('aria-label', 'Results grid. Ctrl+A selects all, Ctrl+C copies.');
+  wrap.dataset.vscodeContext = JSON.stringify({ webviewSection: 'grid', dbDeckEditable: editable, preventDefaultContextMenuItems: true });
+  wrap.setAttribute(
+    'aria-label',
+    editable ? 'Results grid. Enter or F2 edits a cell, Ctrl+A selects all, Ctrl+C copies.' : 'Results grid. Ctrl+A selects all, Ctrl+C copies.',
+  );
 
   const cellAt = (target: EventTarget | null) => {
+    if (target instanceof HTMLTextAreaElement) return undefined; // clicks inside the cell editor
     const td = target instanceof Element ? target.closest('td') : null;
     const tr = td?.parentElement;
     if (!td || !(tr instanceof HTMLTableRowElement) || tr.parentElement !== body) return undefined;
@@ -285,12 +505,150 @@ function attachSelection(wrap: HTMLElement, body: HTMLTableSectionElement, index
     const at = cellAt(event.target);
     if (at) setSelection({ ...selection, focus: { row: at.row, col: at.col } }, columnCount);
   });
+  wrap.addEventListener('dblclick', (event) => {
+    const at = cellAt(event.target);
+    if (editable && at && !at.rowHeader) openEditor(at.row, at.col);
+  });
   wrap.addEventListener('keydown', (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && event.key.toLowerCase() === 'a') {
       event.preventDefault();
       setSelection(selectAll(index, body.rows.length, columnCount), columnCount);
+    } else if (editable && mod && event.key === '0') {
+      event.preventDefault();
+      runEditCommand('setNull');
+    } else if (editable && !mod && (event.key === 'Enter' || event.key === 'F2') && selection?.index === index) {
+      event.preventDefault();
+      openEditor(selection.focus.row, selection.focus.col);
     }
   });
+}
+
+/**
+ * Edits one cell in place. Enter keeps the value as a pending change, Shift+Enter adds a line,
+ * Escape cancels, Tab / Shift+Tab move to the next / previous editable cell. Leaving the cell keeps
+ * the value too. Opening and closing without typing changes nothing (so a NULL stays NULL).
+ */
+function openEditor(rowPos: number, col: number): void {
+  const target = editTarget();
+  const body = root.querySelector<HTMLTableSectionElement>('.table-wrap[data-index="0"] tbody');
+  if (confirm) return;
+  const td = body?.rows[rowPos]?.cells[col + 1];
+  if (!target || !td || target.readOnly.has(col)) return;
+  const existing = rowPos < target.result.rows.length;
+  const insertIndex = rowPos - target.result.rows.length;
+  if (existing && pending.deleted.has(rowPos)) return;
+  const shown = existing ? shownValue(pending, rowPos, col, target.result.rows[rowPos][col]) : pending.inserted[insertIndex]?.get(col) ?? null;
+
+  const editor = el('textarea', 'cell-editor');
+  editor.value = shown ?? '';
+  editor.rows = 1;
+  editor.spellcheck = false;
+  editor.setAttribute('aria-label', `Edit ${target.result.columns[col]}`);
+  const initial = editor.value;
+  td.classList.add('editing');
+  td.replaceChildren(editor);
+  editor.focus();
+  editor.select();
+
+  const owner = current;
+  let closed = false;
+  const close = (keep: boolean, move?: 1 | -1) => {
+    if (closed) return;
+    closed = true;
+    finishEditing = undefined;
+    // New results replaced the page while editing: this edit belongs to a page that's gone.
+    if (current !== owner) return;
+    if (keep && editor.value !== initial) {
+      if (existing) setCell(pending, rowPos, col, editor.value, target.result.rows[rowPos][col]);
+      else setInsertedCell(pending, insertIndex, col, editor.value);
+      pendingChanged();
+    } else {
+      rerender();
+    }
+    const next = move && nextEditableColumn(col, move, target.readOnly, target.result.columns.length);
+    if (next !== undefined) openEditor(rowPos, next);
+    else root.querySelector<HTMLElement>('.table-wrap')?.focus({ preventScroll: true });
+  };
+  editor.addEventListener('keydown', (event) => {
+    event.stopPropagation(); // the grid's own shortcuts (Ctrl+A, Enter, Ctrl+0) don't apply while typing
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      close(true);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      close(false);
+    } else if (event.key === 'Tab') {
+      event.preventDefault();
+      close(true, event.shiftKey ? -1 : 1);
+    }
+  });
+  editor.addEventListener('blur', () => close(true));
+  finishEditing = () => close(true);
+}
+
+function nextEditableColumn(col: number, step: 1 | -1, readOnly: Set<number>, count: number): number | undefined {
+  for (let c = col + step; c >= 0 && c < count; c += step) if (!readOnly.has(c)) return c;
+  return undefined;
+}
+
+/** Set to NULL / Delete Rows / Add Row, from the buttons, keys or VS Code's context menu. */
+function runEditCommand(command: EditCommand): void {
+  finishEditing?.();
+  const target = editTarget();
+  if (!target || confirm) return;
+  const rowCount = target.result.rows.length;
+  const columns = target.result.columns.length;
+  const range = selection?.index === 0 ? rangeOf(selection, columns) : undefined;
+
+  if (command === 'addRow') {
+    const i = addRow(pending);
+    pendingChanged();
+    // Start typing in the first column that isn't the key (usually generated) and isn't read-only.
+    const first = [...Array(columns).keys()].find((c) => !target.key.has(c) && !target.readOnly.has(c)) ?? nextEditableColumn(-1, 1, target.readOnly, columns);
+    if (first !== undefined) openEditor(rowCount + i, first);
+    return;
+  }
+  if (!range) return;
+  if (command === 'deleteRows') {
+    const rows = [...Array(range.bottom - range.top + 1).keys()].map((k) => range.top + k);
+    toggleDelete(pending, rows.filter((r) => r < rowCount), rows.filter((r) => r >= rowCount).map((r) => r - rowCount));
+    selection = undefined;
+  } else {
+    for (let r = range.top; r <= range.bottom; r++) {
+      for (let c = range.left; c <= range.right; c++) {
+        if (target.readOnly.has(c)) continue;
+        if (r < rowCount) {
+          if (!pending.deleted.has(r)) setCell(pending, r, c, null, target.result.rows[r][c]);
+        } else {
+          setInsertedCell(pending, r - rowCount, c, null);
+        }
+      }
+    }
+  }
+  pendingChanged();
+}
+
+/** Saves pending edits in webview state, tells the extension the count, and redraws. */
+function pendingChanged(): void {
+  vscode.setState({ key: pendingKey, pending: serialize(pending) });
+  vscode.postMessage({ type: 'pending', count: pendingCount(pending) });
+  rerender();
+}
+
+/**
+ * Pending edits belong to one page of one table. When that page is shown again (the panel was hidden
+ * and reloaded), they come back from webview state; any other results start clean.
+ */
+function restorePending(msg: ResultsMessage): void {
+  const key = msg.type === 'results' && msg.table ? `${msg.title}\n${msg.results[0]?.sql ?? ''}` : undefined;
+  const saved = vscode.getState() as { key?: string; pending?: unknown } | undefined;
+  pending = key && saved?.key === key ? deserialize(saved.pending) : emptyPending();
+  pendingKey = key;
+  if (msg.type === 'results') {
+    vscode.setState({ key: pendingKey, pending: serialize(pending) });
+    vscode.postMessage({ type: 'pending', count: pendingCount(pending) });
+  }
 }
 
 /** Repaints only the rows the old or new selection touches. */
@@ -325,12 +683,19 @@ function copySelection(format: CopyFormat): void {
   vscode.postMessage({ type: 'copy', index: sel.index, format, ...copyRequestOf(sel, order, columns) });
 }
 
-function renderHeader(name: string, active: SortKey['direction'] | undefined, onSort: () => void): HTMLElement {
+function renderHeader(name: string, active: SortKey['direction'] | undefined, disabled: boolean, onSort: () => void): HTMLElement {
   const th = el('th');
   th.setAttribute('aria-sort', active === 'asc' ? 'ascending' : active === 'desc' ? 'descending' : 'none');
   const sortButton = el('button', 'sort');
   sortButton.type = 'button';
-  sortButton.title = active === 'asc' ? 'Sorted ascending. Click to sort descending.' : active === 'desc' ? 'Sorted descending. Click to clear.' : 'Click to sort ascending.';
+  sortButton.disabled = disabled;
+  sortButton.title = disabled
+    ? DIRTY_HINT
+    : active === 'asc'
+      ? 'Sorted ascending. Click to sort descending.'
+      : active === 'desc'
+        ? 'Sorted descending. Click to clear.'
+        : 'Click to sort ascending.';
   sortButton.append(el('span', 'name', name), el('span', 'arrow', active === 'asc' ? '▲' : active === 'desc' ? '▼' : ''));
   sortButton.addEventListener('click', onSort);
   th.append(sortButton);

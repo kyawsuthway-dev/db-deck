@@ -15,6 +15,7 @@ A free, open-source database explorer for VS Code. Browse local and remote datab
 - **Filter a table** — type a SQL condition in the **WHERE** box above the rows, such as `(id = 1) AND (name = 'Hotel')` or `total > 100 OR status IS NULL`, and press **Enter**. **Escape** or **✕** clears it. Paging and sorting keep the filter. As you type, the box suggests column names (with their types) and, after a column, operators. Use **↑**/**↓** and **Tab** or **Enter** to insert one, and **Ctrl+Space** to open the list on demand.
 - **Run SQL** — **New Query** opens a SQL editor tied to a connection. Press **Ctrl+Enter** (**Cmd+Enter** on macOS), or click ▶, to run the selection, or the whole editor if nothing is selected. Several `;`-separated statements each get their own result. Click a column header to sort the loaded rows; your SQL isn't run again.
 - **Pick the connection per editor** — the status bar shows which connection a SQL editor uses; click it to change. Saved `.sql` files remember their connection.
+- **Edit table data** — in a table with a primary key, double-click a cell (or press **Enter** / **F2**) to edit it. Use **Add Row** and **Delete Rows**, or right-click for **Set to NULL** (**Ctrl+0** / **Cmd+0**). Changes are marked in the grid until you click **Save…**, which shows a confirmation above the grid (**Review SQL** shows the statements there) and applies everything in one transaction when you click **Apply**. If someone else changed one of those rows in the meantime, nothing is saved.
 - **Export** — click **Export…** on a result and choose CSV, JSON, or SQL INSERT statements (table views only). For a table you can export the current page or all rows matching the WHERE filter, with progress and Cancel.
 - **Copy** — click a cell, Shift+click or drag for a range, click row numbers for whole rows, or press **Ctrl+A** (**Cmd+A**) for everything. **Ctrl+C** (**Cmd+C**) copies tab-separated text that pastes into spreadsheets. Right-click for **Copy with Headers**, **Copy as CSV**, and **Copy as JSON**.
 - **Works everywhere VS Code does** — no native modules, so it runs the same on Windows, macOS, Linux, WSL, and remote hosts.
@@ -44,7 +45,7 @@ All commands are in the Command Palette under **DB Deck**.
 ## Security and privacy
 
 - Passwords are stored only in VS Code's **SecretStorage** (your OS keychain), never in settings files.
-- Browsing and table previews only read. The extension writes to a database only when you run SQL that does.
+- Browsing and table previews only read. The extension writes to a database only when you run SQL that does, or when you click **Apply** to save table edits.
 - No telemetry. The extension only talks to the databases you configure.
 
 ## Good to know
@@ -60,6 +61,12 @@ All commands are in the Command Palette under **DB Deck**.
   - SQL INSERT statements for MySQL escape backslashes, which is wrong if the server runs with `NO_BACKSLASH_ESCAPES`.
   - Values starting with `=`, `+`, `-` or `@` are kept as they are. Be careful opening exports of untrusted data in a spreadsheet, which may treat them as formulas.
   - Exporting all rows of a table with no primary key and no sort may repeat or skip rows.
+- **Table edits** need a primary key; views and tables without one are read-only, and so are binary columns.
+  - Values are typed as text and the database converts them. An empty cell is an empty string; use **Set to NULL** for NULL.
+  - Saving uses its own short connection, so a transaction you left open in a query editor isn't affected. For SQLite, the save is written straight to the file.
+  - The conflict check compares the cells you edited with what was loaded, except `float`/`double`/`real` columns, whose text form may not match exactly. Those rows are still matched by primary key.
+  - MySQL tables using the MyISAM engine don't support transactions, so a failed save there may be partly applied.
+  - Unsaved edits are lost if you close the Results tab.
 
 ## Contributing
 
