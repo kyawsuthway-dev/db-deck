@@ -58,6 +58,8 @@
       { "command": "dbDeck.newQuery", "title": "New Query", "category": "DB Deck", "icon": "$(new-file)" },
       { "command": "dbDeck.previewTable", "title": "Show Rows", "category": "DB Deck", "icon": "$(table)" },
       { "command": "dbDeck.runQuery", "title": "Run Query", "category": "DB Deck", "icon": "$(play)" },
+      { "command": "dbDeck.runAll", "title": "Run All", "category": "DB Deck", "icon": "$(run-all)" },
+      { "command": "dbDeck.runStatement", "title": "Run Statement", "category": "DB Deck" },
       { "command": "dbDeck.selectConnection", "title": "Select Connection for This Editor", "category": "DB Deck", "icon": "$(database)" },
       { "command": "dbDeck.copySelection", "title": "Copy", "category": "DB Deck" },
       { "command": "dbDeck.copySelectionWithHeaders", "title": "Copy with Headers", "category": "DB Deck" },
@@ -86,7 +88,7 @@
         { "command": "dbDeck.refresh", "when": "view == dbDeck.connections && viewItem == table", "group": "2_manage@1" }
       ],
       "editor/title": [
-        { "command": "dbDeck.runQuery", "when": "editorLangId == sql", "group": "navigation@1" }
+        { "command": "dbDeck.runAll", "when": "editorLangId == sql", "group": "navigation@1" }
       ],
       "webview/context": [
         { "command": "dbDeck.copySelection", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "1_copy@1" },
@@ -99,6 +101,7 @@
       ],
       "commandPalette": [
         { "command": "dbDeck.previewTable", "when": "false" },
+        { "command": "dbDeck.runStatement", "when": "false" },
         { "command": "dbDeck.disconnect", "when": "false" },
         { "command": "dbDeck.copySelection", "when": "false" },
         { "command": "dbDeck.copySelectionWithHeaders", "when": "false" },
@@ -116,6 +119,12 @@
         "command": "dbDeck.runQuery",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
+        "when": "editorTextFocus && editorLangId == sql"
+      },
+      {
+        "command": "dbDeck.runAll",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
         "when": "editorTextFocus && editorLangId == sql"
       }
     ]
@@ -139,6 +148,7 @@
   "dependencies": {
     "mysql2": "^3.24.6",
     "pg": "^8.23.1",
+    "sql-formatter": "15.10.0",
     "sql.js": "^1.17.0"
   }
 }

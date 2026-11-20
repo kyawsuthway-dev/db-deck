@@ -13,7 +13,9 @@ A free, open-source database explorer for VS Code. Browse local and remote datab
 - **Browse your schema** — Connection → Tables / Views → Columns, with each column's type and primary keys marked.
 - **Click a table** to see its rows, 100 per page. Use **Previous** / **Next** to page through, and click a column header to sort (ascending, descending, then back to the default). Pages are ordered by primary key unless you sort.
 - **Filter a table** — type a SQL condition in the **WHERE** box above the rows, such as `(id = 1) AND (name = 'Hotel')` or `total > 100 OR status IS NULL`, and press **Enter**. **Escape** or **✕** clears it. Paging and sorting keep the filter. As you type, the box suggests column names (with their types) and, after a column, operators. Use **↑**/**↓** and **Tab** or **Enter** to insert one, and **Ctrl+Space** to open the list on demand.
-- **Run SQL** — **New Query** opens a SQL editor tied to a connection. Press **Ctrl+Enter** (**Cmd+Enter** on macOS), or click ▶, to run the selection, or the whole editor if nothing is selected. Several `;`-separated statements each get their own result. Click a column header to sort the loaded rows; your SQL isn't run again.
+- **Run SQL** — **New Query** opens a SQL editor tied to a connection. Press **Ctrl+Enter** (**Cmd+Enter** on macOS) to run the selection, or the statement the cursor is in if nothing is selected. Click **▶ Run** above a statement to run just that one. **Run All** (**Ctrl+Shift+Enter** / **Cmd+Shift+Enter**, or ▶ in the editor title) runs the whole editor. Several `;`-separated statements each get their own result. Click a column header to sort the loaded rows; your SQL isn't run again.
+- **Autocomplete** — while you type, a SQL editor suggests table names, columns (after `table.` or an alias like `o.`, or from the tables in the statement), and keywords. Names are quoted when needed. Tables and columns are suggested once the connection is open; typing never connects.
+- **Format SQL** — **Format Document** (**Shift+Alt+F**) or **Format Selection** reformats SQL for the editor's database. Only spacing and line breaks change; keywords keep their case.
 - **Pick the connection per editor** — the status bar shows which connection a SQL editor uses; click it to change. Saved `.sql` files remember their connection.
 - **Edit table data** — in a table with a primary key, double-click a cell (or press **Enter** / **F2**) to edit it. Use **Add Row** and **Delete Rows**, or right-click for **Set to NULL** (**Ctrl+0** / **Cmd+0**). Changes are marked in the grid until you click **Save…**, which shows a confirmation above the grid (**Review SQL** shows the statements there) and applies everything in one transaction when you click **Apply**. If someone else changed one of those rows in the meantime, nothing is saved.
 - **Export** — click **Export…** on a result and choose CSV, JSON, or SQL INSERT statements (table views only). For a table you can export the current page or all rows matching the WHERE filter, with progress and Cancel.
@@ -36,7 +38,8 @@ The extension isn't published yet. To try it, build a `.vsix` (see [CONTRIBUTING
 | Add Connection | Connections view toolbar, Command Palette |
 | New Query | Connections toolbar, connection or table (inline / right-click) |
 | Show Rows | Click a table, or right-click it |
-| Run Query | `Ctrl+Enter` / `Cmd+Enter` in a SQL editor, ▶ in the editor title |
+| Run Query (selection or statement at cursor) | `Ctrl+Enter` / `Cmd+Enter` in a SQL editor, **▶ Run** above a statement |
+| Run All | `Ctrl+Shift+Enter` / `Cmd+Shift+Enter`, ▶ in the editor title |
 | Select Connection for This Editor | Status bar, Command Palette |
 | Refresh / Disconnect / Remove Connection | Right-click a connection |
 
@@ -54,7 +57,8 @@ All commands are in the Command Palette under **DB Deck**.
 - **SQLite** runs in WebAssembly on an in-memory copy of the file. The file is reloaded when it changes on disk, and written back after each run that might change it. A transaction left open at the end of a run is not kept open.
 - **PostgreSQL and MySQL** keep one connection open per saved connection, so `BEGIN` … `COMMIT` across several runs works.
 - Encrypted connections: choose **SSL** (verifies the certificate) or **SSL, allow self-signed** in the wizard.
-- MySQL `DELIMITER` scripts aren't supported yet.
+- MySQL `DELIMITER` scripts aren't supported yet, for running or formatting.
+- **Autocomplete** reads the tables in the current statement (`FROM`, `JOIN`, `UPDATE`, `INSERT INTO`) without running anything. After you change the schema outside DB Deck, use **Refresh** on the connection to update the suggestions.
 - The **WHERE** filter is plain SQL for your database, with its own rules. For example, `LIKE` is case-sensitive in PostgreSQL (use `ILIKE`), but usually not in MySQL. It must be a single condition: anything after a `;` is rejected, not run.
 - **Export and copy** write values exactly as shown. NULL is an empty field in CSV and copied text (an empty string is `""`), and `null` in JSON. JSON values stay text, so large numbers keep every digit. CSV files start with a UTF-8 byte order mark so Excel reads non-English text correctly.
   - Binary columns export as the shortened hex the grid shows, not the original bytes.

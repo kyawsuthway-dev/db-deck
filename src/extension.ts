@@ -5,6 +5,7 @@ import { errorMessage } from './drivers/common';
 import { TableEditor } from './edit/applyEdits';
 import { ResultsExporter } from './export/exportResults';
 import { PAGE_SIZE, QueryController } from './query/runQuery';
+import { SqlEditor } from './query/sqlEditor';
 import { ConnectionNode, ConnectionsTree, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
 import { ResultsPanel } from './views/ResultsPanel';
 
@@ -15,6 +16,7 @@ export function activate(context: vscode.ExtensionContext) {
   const queries = new QueryController(context, manager, panel);
   const exporter = new ResultsExporter(manager, panel, queries);
   const editor = new TableEditor(manager, panel, queries);
+  const sqlEditor = new SqlEditor(manager, queries);
 
   const command = (id: string, handler: (...args: any[]) => unknown) =>
     vscode.commands.registerCommand(`dbDeck.${id}`, handler);
@@ -25,6 +27,7 @@ export function activate(context: vscode.ExtensionContext) {
     queries,
     exporter,
     editor,
+    sqlEditor,
     vscode.window.createTreeView('dbDeck.connections', { treeDataProvider: tree, showCollapseAll: true }),
 
     command('addConnection', () => addConnection(manager)),
@@ -40,7 +43,11 @@ export function activate(context: vscode.ExtensionContext) {
       if (confirm) await manager.remove(config.id);
     }),
 
-    command('refresh', (node?: TreeNode) => tree.refresh(node)),
+    command('refresh', (node?: TreeNode) => {
+      // Editor suggestions reload the schema too.
+      sqlEditor.clearSchema(node instanceof ConnectionNode ? node.config.id : node instanceof TableNode ? node.connectionId : undefined);
+      tree.refresh(node);
+    }),
 
     command('disconnect', async (node?: ConnectionNode) => {
       if (!node) return;
@@ -64,6 +71,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     command('runQuery', () => queries.runActiveEditor()),
+    command('runAll', () => queries.runAll()),
+    // ▶ Run CodeLens: the document and the statement's offset (see SqlEditor).
+    command('runStatement', (uri?: unknown, offset?: unknown) => queries.runStatementAt(uri, offset)),
     command('selectConnection', () => queries.selectConnectionForActiveEditor()),
 
     // Results grid context menu: the webview replies with its selected cells.

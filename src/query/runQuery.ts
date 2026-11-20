@@ -5,6 +5,7 @@ import { typeLabel } from '../drivers';
 import { isBinaryType } from '../export/formats';
 import type { ColumnInfo, Driver, FilterHints, SortKey, StatementResult, TableInfo } from '../types';
 import type { ResultsPanel, ResultsRequest, TableViewState } from '../views/ResultsPanel';
+import { splitSql, splitSqlRanges, statementAt, stripLeadingComments } from './splitSql';
 
 const FILE_CONNECTIONS_KEY = 'dbDeck.documentConnections';
 
@@ -42,6 +43,9 @@ export interface TableViewSource {
   key: string[];
 }
 
+/** Statements after which cached tables and columns may be out of date. */
+const SCHEMA_CHANGE = /^(CREATE|ALTER|DROP|RENAME)\b/i;
+
 /** Longest filter condition accepted from the webview. */
 const MAX_WHERE_LENGTH = 10_000;
 
@@ -56,6 +60,13 @@ export class QueryController implements vscode.Disposable {
   private tableView?: TableView;
   /** Pending edits the grid reports; replacing the view asks first when there are any. */
   private pendingCount = 0;
+  private readonly connectionChanged = new vscode.EventEmitter<vscode.TextDocument>();
+  private readonly schemaChanged = new vscode.EventEmitter<string>();
+
+  /** An editor was linked to a (different) connection. */
+  readonly onDidChangeConnection = this.connectionChanged.event;
+  /** A run included CREATE / ALTER / DROP / RENAME, so cached tables and columns may be out of date. */
+  readonly onDidChangeSchema = this.schemaChanged.event;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -66,6 +77,8 @@ export class QueryController implements vscode.Disposable {
     this.statusItem.tooltip = 'Connection used by Run Query (click to change)';
     this.disposables.push(
       this.statusItem,
+      this.connectionChanged,
+      this.schemaChanged,
       vscode.window.onDidChangeActiveTextEditor(() => this.updateStatus()),
       manager.onDidChange(() => this.updateStatus()),
       vscode.workspace.onDidCloseTextDocument((doc) => this.untitled.delete(doc.uri.toString())),
@@ -85,16 +98,38 @@ export class QueryController implements vscode.Disposable {
     editor.selection = new vscode.Selection(end, end);
   }
 
-  /** Runs the selection, or the whole editor if nothing is selected. */
-  async runActiveEditor(): Promise<void> {
+  /** Runs the selection, or the statement at the cursor if nothing is selected. */
+  runActiveEditor(): Promise<void> {
+    return this.runEditor('cursor');
+  }
+
+  /** Runs everything in the active editor. */
+  runAll(): Promise<void> {
+    return this.runEditor('all');
+  }
+
+  /**
+   * Runs the statement at `offset` in an open SQL document (the ▶ Run CodeLens). The text is read now,
+   * not when the lens was drawn, so an edit in between can't run stale SQL.
+   */
+  async runStatementAt(uri: unknown, offset: unknown): Promise<void> {
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri);
+    if (!doc || typeof offset !== 'number' || !Number.isSafeInteger(offset)) return;
+    const connectionId = this.connectionFor(doc);
+    if (!connectionId) return;
+    const text = doc.getText();
+    const statement = statementAt(text, splitSqlRanges(text, this.manager.get(connectionId)!.type), offset);
+    if (statement) await this.runSql(connectionId, statement.text);
+  }
+
+  private async runEditor(scope: 'cursor' | 'all'): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       void vscode.window.showInformationMessage('Open a SQL editor to run a query (DB Deck: New Query).');
       return;
     }
     const doc = editor.document;
-    const sql = editor.selection.isEmpty ? doc.getText() : doc.getText(editor.selection);
-    if (!sql.trim()) {
+    if (!doc.getText().trim()) {
       void vscode.window.showInformationMessage('There is no SQL to run.');
       return;
     }
@@ -104,6 +139,24 @@ export class QueryController implements vscode.Disposable {
       if (!connectionId) return;
       await this.setConnection(doc, connectionId);
     }
+    let sql: string;
+    if (scope === 'all') {
+      sql = doc.getText();
+    } else if (!editor.selection.isEmpty) {
+      sql = doc.getText(editor.selection);
+    } else {
+      const text = doc.getText();
+      const statement = statementAt(text, splitSqlRanges(text, this.manager.get(connectionId)!.type), doc.offsetAt(editor.selection.active));
+      sql = statement?.text ?? '';
+    }
+    if (!sql.trim()) {
+      void vscode.window.showInformationMessage('There is no SQL to run.');
+      return;
+    }
+    await this.runSql(connectionId, sql);
+  }
+
+  private async runSql(connectionId: string, sql: string): Promise<void> {
     const name = this.manager.get(connectionId)?.name ?? 'Query';
     if (!(await this.confirmDiscard())) return;
     await this.execute(connectionId, sql, `Query · ${name}`, vscode.ViewColumn.Beside);
@@ -259,9 +312,12 @@ export class QueryController implements vscode.Disposable {
       results = [{ sql, columns: [], rows: [], durationMs: 0, error: errorMessage(err) }];
     }
     this.panel.showResults(token, title, results);
+    const type = this.manager.get(connectionId)?.type;
+    if (type && splitSql(sql, type).some((st) => SCHEMA_CHANGE.test(stripLeadingComments(st)))) this.schemaChanged.fire(connectionId);
   }
 
-  private connectionFor(doc: vscode.TextDocument): string | undefined {
+  /** The connection an editor is linked to, if any. */
+  connectionFor(doc: vscode.TextDocument): string | undefined {
     const key = doc.uri.toString();
     const id = doc.isUntitled ? this.untitled.get(key) : this.fileConnections()[key];
     return id && this.manager.get(id) ? id : undefined;
@@ -275,6 +331,7 @@ export class QueryController implements vscode.Disposable {
       await this.context.workspaceState.update(FILE_CONNECTIONS_KEY, { ...this.fileConnections(), [key]: connectionId });
     }
     this.updateStatus();
+    this.connectionChanged.fire(doc);
   }
 
   private fileConnections(): Record<string, string> {
