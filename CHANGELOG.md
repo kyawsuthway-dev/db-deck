@@ -16,6 +16,9 @@
 - SQL editor: Ctrl/Cmd+Enter now runs the statement at the cursor when nothing is selected (it used to run the whole editor); **Run All** (Ctrl/Cmd+Shift+Enter, ▶ in the editor title) runs everything; a **▶ Run** link above each statement runs just that one.
 - SQL editor autocomplete for tables, columns (including aliases) and keywords, once the connection is open.
 - Format SQL with Format Document / Format Selection, in the connection's dialect (`sql-formatter`).
+- Query History view: runs from SQL editors per workspace, grouped by day, with open, Run Again, Copy SQL, Delete, Search and Clear; setting `dbDeck.history.enabled`.
+- Saved Queries view: Save Query… (editor title, right-click, view toolbar, or Ctrl/Cmd+S in a New Query editor) keeps a SQL editor's query as a `.sql` file under its connection; open, run, rename and delete from the view.
+- DB Deck's Ctrl/Cmd+Enter and Ctrl/Cmd+Shift+Enter now apply only in SQL editors linked to a DB Deck connection, so other SQL extensions keep theirs.
 - Contributor setup: `Taskfile.yml` (`task setup`), pre-commit check, `CONTRIBUTING.md`, shared rules in `.ai/rules/` and `AGENTS.md`.
 
 ## 0.0.1

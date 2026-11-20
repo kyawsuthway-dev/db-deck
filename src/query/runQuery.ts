@@ -43,6 +43,14 @@ export interface TableViewSource {
   key: string[];
 }
 
+/** A finished run from a SQL editor (Run Query, Run All, ▶ Run, Run Again). */
+export interface QueryRun {
+  connectionId: string;
+  sql: string;
+  results: StatementResult[];
+  startedAt: Date;
+}
+
 /** Statements after which cached tables and columns may be out of date. */
 const SCHEMA_CHANGE = /^(CREATE|ALTER|DROP|RENAME)\b/i;
 
@@ -60,13 +68,19 @@ export class QueryController implements vscode.Disposable {
   private tableView?: TableView;
   /** Pending edits the grid reports; replacing the view asks first when there are any. */
   private pendingCount = 0;
+  private linked?: boolean;
   private readonly connectionChanged = new vscode.EventEmitter<vscode.TextDocument>();
   private readonly schemaChanged = new vscode.EventEmitter<string>();
+  private readonly ran = new vscode.EventEmitter<QueryRun>();
+  /** Other ways a document is linked to a connection (saved queries: their folder). */
+  private readonly linkResolvers = new Set<(uri: vscode.Uri) => string | undefined>();
 
   /** An editor was linked to a (different) connection. */
   readonly onDidChangeConnection = this.connectionChanged.event;
   /** A run included CREATE / ALTER / DROP / RENAME, so cached tables and columns may be out of date. */
   readonly onDidChangeSchema = this.schemaChanged.event;
+  /** A run from a SQL editor finished (for query history). Table views and paging don't count. */
+  readonly onDidRun = this.ran.event;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -79,6 +93,7 @@ export class QueryController implements vscode.Disposable {
       this.statusItem,
       this.connectionChanged,
       this.schemaChanged,
+      this.ran,
       vscode.window.onDidChangeActiveTextEditor(() => this.updateStatus()),
       manager.onDidChange(() => this.updateStatus()),
       vscode.workspace.onDidCloseTextDocument((doc) => this.untitled.delete(doc.uri.toString())),
@@ -154,6 +169,32 @@ export class QueryController implements vscode.Disposable {
       return;
     }
     await this.runSql(connectionId, sql);
+  }
+
+  /**
+   * Runs SQL on a connection, as if run from an editor (Run Again, saved queries). When the connection
+   * is missing or was removed, asks which one to use.
+   */
+  async runSqlOn(connectionId: string | undefined, sql: string): Promise<void> {
+    const id = connectionId && this.manager.get(connectionId) ? connectionId : await this.pickConnection();
+    if (id) await this.runSql(id, sql);
+  }
+
+  /** Opens SQL in a new editor, linked to the connection if it still exists. Nothing runs. */
+  async openSql(connectionId: string | undefined, sql: string): Promise<void> {
+    const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: sql });
+    if (connectionId && this.manager.get(connectionId)) await this.setConnection(doc, connectionId);
+    await vscode.window.showTextDocument(doc);
+  }
+
+  /**
+   * Adds another way to find a document's connection, used when it has no explicit link
+   * (saved queries: from their folder). Returns a disposable that removes it.
+   */
+  registerLinkResolver(resolve: (uri: vscode.Uri) => string | undefined): vscode.Disposable {
+    this.linkResolvers.add(resolve);
+    this.updateStatus();
+    return new vscode.Disposable(() => this.linkResolvers.delete(resolve));
   }
 
   private async runSql(connectionId: string, sql: string): Promise<void> {
@@ -305,6 +346,7 @@ export class QueryController implements vscode.Disposable {
     // The panel now shows query results, so page and sort requests no longer apply to a table.
     this.tableView = undefined;
     const token = this.panel.showLoading(title, sql, column);
+    const startedAt = new Date();
     let results: StatementResult[];
     try {
       results = await (await this.manager.getDriver(connectionId)).query(sql);
@@ -312,6 +354,7 @@ export class QueryController implements vscode.Disposable {
       results = [{ sql, columns: [], rows: [], durationMs: 0, error: errorMessage(err) }];
     }
     this.panel.showResults(token, title, results);
+    this.ran.fire({ connectionId, sql, results, startedAt });
     const type = this.manager.get(connectionId)?.type;
     if (type && splitSql(sql, type).some((st) => SCHEMA_CHANGE.test(stripLeadingComments(st)))) this.schemaChanged.fire(connectionId);
   }
@@ -319,7 +362,8 @@ export class QueryController implements vscode.Disposable {
   /** The connection an editor is linked to, if any. */
   connectionFor(doc: vscode.TextDocument): string | undefined {
     const key = doc.uri.toString();
-    const id = doc.isUntitled ? this.untitled.get(key) : this.fileConnections()[key];
+    let id = doc.isUntitled ? this.untitled.get(key) : this.fileConnections()[key];
+    if (!id) for (const resolve of this.linkResolvers) id ??= resolve(doc.uri);
     return id && this.manager.get(id) ? id : undefined;
   }
 
@@ -338,7 +382,7 @@ export class QueryController implements vscode.Disposable {
     return this.context.workspaceState.get<Record<string, string>>(FILE_CONNECTIONS_KEY, {});
   }
 
-  private async pickConnection(): Promise<string | undefined> {
+  async pickConnection(): Promise<string | undefined> {
     const connections = this.manager.list();
     if (connections.length === 0) {
       const add = await vscode.window.showInformationMessage('No database connections yet.', 'Add Connection');
@@ -352,15 +396,28 @@ export class QueryController implements vscode.Disposable {
     return picked?.id;
   }
 
+  /** The status bar item, and the `dbDeck.editorLinked` context key that DB Deck's keybindings depend on. */
   private updateStatus(): void {
     const doc = vscode.window.activeTextEditor?.document;
     if (doc?.languageId !== 'sql') {
       this.statusItem.hide();
+      this.setLinked(false);
       return;
     }
     const id = this.connectionFor(doc);
     this.statusItem.text = `$(database) ${id ? this.manager.get(id)!.name : 'No connection'}`;
     this.statusItem.show();
+    this.setLinked(!!id);
+  }
+
+  /**
+   * Ctrl/Cmd+Enter, Ctrl/Cmd+Shift+Enter and Ctrl/Cmd+S (untitled) apply only in editors linked to a DB Deck
+   * connection, so other SQL extensions keep their own keys in their editors.
+   */
+  private setLinked(linked: boolean): void {
+    if (linked === this.linked) return;
+    this.linked = linked;
+    void vscode.commands.executeCommand('setContext', 'dbDeck.editorLinked', linked);
   }
 }
 
