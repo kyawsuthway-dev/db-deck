@@ -13,11 +13,13 @@ Put new code where the layer dictates, not where it's convenient.
 | -------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Activation / wiring  | `src/extension.ts`                       | Create the services, register commands, push disposables. Small command handlers that only route to a service. No database logic.     |
 | Services             | `connectionManager.ts`, `query/runQuery.ts`, `query/sqlEditor.ts` | State and orchestration: saved connections, secrets, open drivers, editor ↔ connection binding; SQL editor completion, CodeLens and formatting providers. May use the `vscode` API. |
-| UI                   | `connectionWizard.ts`, `tree/`, `views/` | Talk to the user (quick picks, tree items, webview panel). Call services; never call a database client directly.                       |
+| UI                   | `connectionWizard.ts`, `tree/`, `views/` | Talk to the user (quick picks, tree items, webview panel). Call services; never call a database client directly. Trees: `ConnectionsTree`, `SavedQueriesTree`, `HistoryTree`. |
 | Drivers              | `src/drivers/`                           | Everything database-specific: connecting, metadata queries, running SQL, identifier quoting. **Never import `vscode`.**                 |
 | Pure helpers         | `src/query/splitSql.ts`, `query/completion.ts`, `query/formatSql.ts`, `drivers/common.ts` | No `vscode`, no I/O. Testable in plain Node. (`query/schemaCache.ts` caches driver metadata and doesn't import `vscode` either.) |
 | Export               | `src/export/`                            | `formats.ts` is a pure helper (no `vscode`, no I/O). `readAll.ts` (batched reads through `Driver.selectPage`) and `fileOut.ts` (streamed file writes) don't import `vscode`, so they're smoke-tested in plain Node. `exportResults.ts` is a service: dialogs, progress, clipboard. |
 | Edit                 | `src/edit/`                              | `changes.ts` is a pure helper: validates the webview's pending edits and builds `RowChange`s, taking originals and keys from the extension's own copy of the page. `applyEdits.ts` is a service: prepares the statements, asks for confirmation in the grid, then calls `Driver.applyChanges`. |
+| History              | `src/history/`                           | `entries.ts` is a pure helper (building, capping and grouping entries). `queryHistory.ts` is a service: records `QueryController.onDidRun` in `workspaceState`, and opens, re-runs, searches and clears entries. |
+| Saved queries        | `src/saved/`                             | `names.ts` is a pure helper (name rules, path ↔ connection). `savedQueries.ts` is a service: `.sql` files under `globalStorageUri/queries/<connectionId>/`, through `vscode.workspace.fs`. |
 | Webview (browser)    | `src/webview/`                           | Runs in the webview's browser context. Never imports Node or `vscode` modules; only `import type` from extension code.                |
 | Shared types         | `src/types.ts`                           | Types used across layers. Types used by one file stay in that file.                                                                     |
 
@@ -47,6 +49,7 @@ If code is about to `switch` on `config.type` outside `src/drivers/`, stop: that
 
 - Every command is registered in `extension.ts` and declared in `package.json` `contributes.commands`, with its menus and `when` clauses there (see `vscode-api.md`).
 - Global, cross-workspace data → `context.globalState` (saved connections). Per-workspace → `context.workspaceState` (SQL file ↔ connection). Secrets → `context.secrets` only.
+- Query history → `workspaceState` (`dbDeck.queryHistory`). Saved queries → files under `globalStorageUri/queries/`, with last-known connection names in `globalState` (`dbDeck.savedQueryConnections`). Settings → `dbDeck.*` in `contributes.configuration`, read with `workspace.getConfiguration()`. Other ways to find an editor's connection go through `QueryController.registerLinkResolver()`.
 - State keys are prefixed `dbDeck.` and defined as constants at the top of the file that owns them.
 - Everything with a `dispose()` goes into `context.subscriptions`.
 

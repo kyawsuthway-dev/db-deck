@@ -4,9 +4,13 @@ import { runConnectionWizard, type WizardResult } from './connectionWizard';
 import { errorMessage } from './drivers/common';
 import { TableEditor } from './edit/applyEdits';
 import { ResultsExporter } from './export/exportResults';
+import { QueryHistory } from './history/queryHistory';
 import { PAGE_SIZE, QueryController } from './query/runQuery';
 import { SqlEditor } from './query/sqlEditor';
+import { SavedQueries } from './saved/savedQueries';
 import { ConnectionNode, ConnectionsTree, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
+import { HistoryNode, HistoryTree } from './tree/HistoryTree';
+import { SavedQueriesTree, SavedQueryNode } from './tree/SavedQueriesTree';
 import { ResultsPanel } from './views/ResultsPanel';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -17,6 +21,10 @@ export function activate(context: vscode.ExtensionContext) {
   const exporter = new ResultsExporter(manager, panel, queries);
   const editor = new TableEditor(manager, panel, queries);
   const sqlEditor = new SqlEditor(manager, queries);
+  const history = new QueryHistory(context, manager, queries);
+  const historyTree = new HistoryTree(history);
+  const saved = new SavedQueries(context, manager, queries);
+  const savedTree = new SavedQueriesTree(saved);
 
   const command = (id: string, handler: (...args: any[]) => unknown) =>
     vscode.commands.registerCommand(`dbDeck.${id}`, handler);
@@ -28,7 +36,18 @@ export function activate(context: vscode.ExtensionContext) {
     exporter,
     editor,
     sqlEditor,
+    history,
+    historyTree,
+    saved,
+    savedTree,
     vscode.window.createTreeView('dbDeck.connections', { treeDataProvider: tree, showCollapseAll: true }),
+    vscode.window.createTreeView('dbDeck.savedQueries', { treeDataProvider: savedTree, showCollapseAll: true }),
+    vscode.window.createTreeView('dbDeck.history', { treeDataProvider: historyTree, showCollapseAll: true }),
+    // Removed or added connections change how both views label their entries.
+    manager.onDidChange(() => {
+      savedTree.refresh();
+      historyTree.refresh();
+    }),
 
     command('addConnection', () => addConnection(manager)),
 
@@ -75,6 +94,21 @@ export function activate(context: vscode.ExtensionContext) {
     // ▶ Run CodeLens: the document and the statement's offset (see SqlEditor).
     command('runStatement', (uri?: unknown, offset?: unknown) => queries.runStatementAt(uri, offset)),
     command('selectConnection', () => queries.selectConnectionForActiveEditor()),
+
+    // Saved Queries view and SQL editors.
+    command('saveQuery', () => saved.saveActiveEditor()),
+    command('runSavedQuery', (node?: SavedQueryNode) => node && saved.run(node.query)),
+    command('renameSavedQuery', (node?: SavedQueryNode) => node && saved.rename(node.query)),
+    command('deleteSavedQuery', (node?: SavedQueryNode) => node && saved.delete(node.query)),
+    command('refreshSavedQueries', () => saved.refresh()),
+
+    // Query History view.
+    command('openHistoryEntry', (node?: HistoryNode) => node && history.open(node.entry)),
+    command('runHistoryEntry', (node?: HistoryNode) => node && history.runAgain(node.entry)),
+    command('copyHistorySql', (node?: HistoryNode) => node && history.copy(node.entry)),
+    command('deleteHistoryEntry', (node?: HistoryNode) => node && history.delete(node.entry)),
+    command('searchHistory', () => history.search()),
+    command('clearHistory', () => history.clear()),
 
     // Results grid context menu: the webview replies with its selected cells.
     command('copySelection', () => panel.requestCopy('tsv')),

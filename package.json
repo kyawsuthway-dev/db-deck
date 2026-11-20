@@ -41,6 +41,14 @@
         {
           "id": "dbDeck.connections",
           "name": "Connections"
+        },
+        {
+          "id": "dbDeck.savedQueries",
+          "name": "Saved Queries"
+        },
+        {
+          "id": "dbDeck.history",
+          "name": "Query History"
         }
       ]
     },
@@ -48,6 +56,14 @@
       {
         "view": "dbDeck.connections",
         "contents": "No database connections yet.\n[Add Connection](command:dbDeck.addConnection)\nSupports SQLite, PostgreSQL, MySQL and MariaDB."
+      },
+      {
+        "view": "dbDeck.savedQueries",
+        "contents": "No saved queries yet. Keep the query of the active SQL editor here:\n[Save Query…](command:dbDeck.saveQuery)\nIn a New Query editor, Ctrl+S (Cmd+S) does the same."
+      },
+      {
+        "view": "dbDeck.history",
+        "contents": "No queries have been run in this workspace yet. Queries you run from a SQL editor appear here."
       }
     ],
     "commands": [
@@ -60,6 +76,17 @@
       { "command": "dbDeck.runQuery", "title": "Run Query", "category": "DB Deck", "icon": "$(play)" },
       { "command": "dbDeck.runAll", "title": "Run All", "category": "DB Deck", "icon": "$(run-all)" },
       { "command": "dbDeck.runStatement", "title": "Run Statement", "category": "DB Deck" },
+      { "command": "dbDeck.saveQuery", "title": "Save Query…", "category": "DB Deck", "icon": "$(bookmark)" },
+      { "command": "dbDeck.runSavedQuery", "title": "Run", "category": "DB Deck", "icon": "$(play)" },
+      { "command": "dbDeck.renameSavedQuery", "title": "Rename…", "category": "DB Deck" },
+      { "command": "dbDeck.deleteSavedQuery", "title": "Delete", "category": "DB Deck", "icon": "$(trash)" },
+      { "command": "dbDeck.refreshSavedQueries", "title": "Refresh", "category": "DB Deck", "icon": "$(refresh)" },
+      { "command": "dbDeck.openHistoryEntry", "title": "Open in Editor", "category": "DB Deck" },
+      { "command": "dbDeck.runHistoryEntry", "title": "Run Again", "category": "DB Deck", "icon": "$(play)" },
+      { "command": "dbDeck.copyHistorySql", "title": "Copy SQL", "category": "DB Deck" },
+      { "command": "dbDeck.deleteHistoryEntry", "title": "Delete", "category": "DB Deck" },
+      { "command": "dbDeck.searchHistory", "title": "Search Query History", "category": "DB Deck", "icon": "$(search)" },
+      { "command": "dbDeck.clearHistory", "title": "Clear Query History", "category": "DB Deck", "icon": "$(clear-all)" },
       { "command": "dbDeck.selectConnection", "title": "Select Connection for This Editor", "category": "DB Deck", "icon": "$(database)" },
       { "command": "dbDeck.copySelection", "title": "Copy", "category": "DB Deck" },
       { "command": "dbDeck.copySelectionWithHeaders", "title": "Copy with Headers", "category": "DB Deck" },
@@ -73,7 +100,11 @@
       "view/title": [
         { "command": "dbDeck.addConnection", "when": "view == dbDeck.connections", "group": "navigation@1" },
         { "command": "dbDeck.newQuery", "when": "view == dbDeck.connections", "group": "navigation@2" },
-        { "command": "dbDeck.refresh", "when": "view == dbDeck.connections", "group": "navigation@3" }
+        { "command": "dbDeck.refresh", "when": "view == dbDeck.connections", "group": "navigation@3" },
+        { "command": "dbDeck.saveQuery", "when": "view == dbDeck.savedQueries", "group": "navigation@1" },
+        { "command": "dbDeck.refreshSavedQueries", "when": "view == dbDeck.savedQueries", "group": "navigation@2" },
+        { "command": "dbDeck.searchHistory", "when": "view == dbDeck.history", "group": "navigation@1" },
+        { "command": "dbDeck.clearHistory", "when": "view == dbDeck.history", "group": "navigation@2" }
       ],
       "view/item/context": [
         { "command": "dbDeck.newQuery", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "inline@1" },
@@ -85,10 +116,22 @@
         { "command": "dbDeck.previewTable", "when": "view == dbDeck.connections && viewItem == table", "group": "inline@1" },
         { "command": "dbDeck.previewTable", "when": "view == dbDeck.connections && viewItem == table", "group": "1_query@1" },
         { "command": "dbDeck.newQuery", "when": "view == dbDeck.connections && viewItem == table", "group": "1_query@2" },
-        { "command": "dbDeck.refresh", "when": "view == dbDeck.connections && viewItem == table", "group": "2_manage@1" }
+        { "command": "dbDeck.refresh", "when": "view == dbDeck.connections && viewItem == table", "group": "2_manage@1" },
+        { "command": "dbDeck.runSavedQuery", "when": "view == dbDeck.savedQueries && viewItem == savedQuery", "group": "inline@1" },
+        { "command": "dbDeck.runSavedQuery", "when": "view == dbDeck.savedQueries && viewItem == savedQuery", "group": "1_query@1" },
+        { "command": "dbDeck.renameSavedQuery", "when": "view == dbDeck.savedQueries && viewItem == savedQuery", "group": "2_manage@1" },
+        { "command": "dbDeck.deleteSavedQuery", "when": "view == dbDeck.savedQueries && viewItem == savedQuery", "group": "3_remove@1" },
+        { "command": "dbDeck.openHistoryEntry", "when": "view == dbDeck.history && viewItem =~ /^historyEntry/", "group": "1_query@1" },
+        { "command": "dbDeck.runHistoryEntry", "when": "view == dbDeck.history && viewItem == historyEntry", "group": "1_query@2" },
+        { "command": "dbDeck.copyHistorySql", "when": "view == dbDeck.history && viewItem =~ /^historyEntry/", "group": "2_manage@1" },
+        { "command": "dbDeck.deleteHistoryEntry", "when": "view == dbDeck.history && viewItem =~ /^historyEntry/", "group": "3_remove@1" }
       ],
       "editor/title": [
-        { "command": "dbDeck.runAll", "when": "editorLangId == sql", "group": "navigation@1" }
+        { "command": "dbDeck.runAll", "when": "editorLangId == sql", "group": "navigation@1" },
+        { "command": "dbDeck.saveQuery", "when": "editorLangId == sql", "group": "navigation@2" }
+      ],
+      "editor/context": [
+        { "command": "dbDeck.saveQuery", "when": "editorLangId == sql", "group": "1_dbDeck@1" }
       ],
       "webview/context": [
         { "command": "dbDeck.copySelection", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "1_copy@1" },
@@ -102,6 +145,13 @@
       "commandPalette": [
         { "command": "dbDeck.previewTable", "when": "false" },
         { "command": "dbDeck.runStatement", "when": "false" },
+        { "command": "dbDeck.runSavedQuery", "when": "false" },
+        { "command": "dbDeck.renameSavedQuery", "when": "false" },
+        { "command": "dbDeck.deleteSavedQuery", "when": "false" },
+        { "command": "dbDeck.openHistoryEntry", "when": "false" },
+        { "command": "dbDeck.runHistoryEntry", "when": "false" },
+        { "command": "dbDeck.copyHistorySql", "when": "false" },
+        { "command": "dbDeck.deleteHistoryEntry", "when": "false" },
         { "command": "dbDeck.disconnect", "when": "false" },
         { "command": "dbDeck.copySelection", "when": "false" },
         { "command": "dbDeck.copySelectionWithHeaders", "when": "false" },
@@ -114,18 +164,34 @@
         { "command": "dbDeck.selectConnection", "when": "editorLangId == sql" }
       ]
     },
+    "configuration": {
+      "title": "DB Deck",
+      "properties": {
+        "dbDeck.history.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Record queries run from SQL editors in the **Query History** view (per workspace, the 1,000 newest). The SQL is stored locally exactly as typed. Turning this off stops recording; use **Clear Query History** to remove what's there."
+        }
+      }
+    },
     "keybindings": [
       {
         "command": "dbDeck.runQuery",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
-        "when": "editorTextFocus && editorLangId == sql"
+        "when": "editorTextFocus && editorLangId == sql && dbDeck.editorLinked"
       },
       {
         "command": "dbDeck.runAll",
         "key": "ctrl+shift+enter",
         "mac": "cmd+shift+enter",
-        "when": "editorTextFocus && editorLangId == sql"
+        "when": "editorTextFocus && editorLangId == sql && dbDeck.editorLinked"
+      },
+      {
+        "command": "dbDeck.saveQuery",
+        "key": "ctrl+s",
+        "mac": "cmd+s",
+        "when": "editorTextFocus && editorLangId == sql && resourceScheme == untitled && dbDeck.editorLinked"
       }
     ]
   },
