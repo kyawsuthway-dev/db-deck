@@ -23,6 +23,7 @@ paths:
 - Inline actions use `group: "inline@N"`; context-menu groups are `1_query`, `2_manage`, `3_remove`.
 - SQL editor actions use `editorLangId == sql`.
 - The results grid's right-click menu is `webview/context`, matched with `webviewId == 'dbDeck.results' && webviewSection == 'grid'`; the grid element sets `data-vscode-context`. Those commands are hidden from the Command Palette.
+- Grid edit commands (Set to NULL, Delete Rows, Add Row) also require `dbDeckEditable`, which the grid sets in `data-vscode-context` only for editable table views; they use group `3_edit`.
 
 ## Tree
 
