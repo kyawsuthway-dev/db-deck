@@ -5,8 +5,10 @@ import type {
   ChangeStatement,
   ColumnInfo,
   ConnectionConfig,
+  DbObject,
   Driver,
   FilterOperator,
+  IndexInfo,
   RowChange,
   StatementResult,
   TableInfo,
@@ -73,6 +75,118 @@ export class MysqlDriver implements Driver {
       nullable: String(r.nullable) === 'YES',
       primaryKey: String(r.k) === 'PRI',
     }));
+  }
+
+  async listObjects(): Promise<DbObject[]> {
+    const conn = await this.getConnection();
+    const db = this.config.database;
+    const where = (column: string) => (db ? `${column} = ?` : `${column} NOT IN (?)`);
+    const param = db ? db : SYSTEM_SCHEMAS;
+    const schemaOf = (s: unknown) => (db ? undefined : String(s));
+    const [relations] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT TABLE_SCHEMA AS s, TABLE_NAME AS n, TABLE_TYPE AS t FROM information_schema.TABLES
+        WHERE ${where('TABLE_SCHEMA')} ORDER BY TABLE_SCHEMA, TABLE_NAME`,
+      [param],
+    );
+    const [routines] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT ROUTINE_SCHEMA AS s, ROUTINE_NAME AS n, ROUTINE_TYPE AS t FROM information_schema.ROUTINES
+        WHERE ${where('ROUTINE_SCHEMA')} ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME`,
+      [param],
+    );
+    return [
+      ...relations.map((r): DbObject => ({
+        // MariaDB lists sequences as tables of type SEQUENCE.
+        kind: r.t === 'VIEW' ? 'view' : r.t === 'SEQUENCE' ? 'sequence' : 'table',
+        name: String(r.n),
+        schema: schemaOf(r.s),
+      })),
+      ...routines.map((r): DbObject => ({
+        kind: r.t === 'PROCEDURE' ? 'procedure' : 'function',
+        name: String(r.n),
+        schema: schemaOf(r.s),
+      })),
+    ];
+  }
+
+  async listIndexes(table: TableInfo): Promise<IndexInfo[]> {
+    const rows = await this.indexRows(table);
+    const byName = new Map<string, IndexInfo>();
+    for (const r of rows) {
+      const name = String(r.name);
+      const column = r.col === null ? '(expression)' : String(r.col);
+      const index = byName.get(name);
+      if (index) index.columns += `, ${column}`;
+      else byName.set(name, { name, columns: column, unique: String(r.nonUnique) === '0', primary: name === 'PRIMARY' });
+    }
+    return [...byName.values()];
+  }
+
+  async listTriggers(table: TableInfo): Promise<DbObject[]> {
+    const conn = await this.getConnection();
+    const [rows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT TRIGGER_NAME AS n, ACTION_TIMING AS timing, EVENT_MANIPULATION AS event FROM information_schema.TRIGGERS
+        WHERE EVENT_OBJECT_SCHEMA = COALESCE(?, DATABASE()) AND EVENT_OBJECT_TABLE = ?
+        ORDER BY TRIGGER_NAME`,
+      [table.schema ?? null, table.name],
+    );
+    return rows.map((r) => ({
+      kind: 'trigger',
+      name: String(r.n),
+      schema: table.schema,
+      table: table.name,
+      detail: `${String(r.timing)} ${String(r.event)}`,
+    }));
+  }
+
+  /** SHOW CREATE … for everything but indexes, which are rebuilt from information_schema.STATISTICS. */
+  async objectDdl(object: DbObject): Promise<string> {
+    const name = qualifiedName(object);
+    if (object.kind === 'index') {
+      const rows = (await this.indexRows({ name: object.table ?? '', schema: object.schema, kind: 'table' })).filter((r) => String(r.name) === object.name);
+      if (!rows.length) return `-- No definition found for ${object.name}.
+`;
+      const columns = rows.map((r) => (r.col === null ? '/* expression */' : quoteIdent(String(r.col), '`'))).join(', ');
+      const on = qualifiedName({ name: object.table ?? '', schema: object.schema });
+      if (object.name === 'PRIMARY') return `ALTER TABLE ${on} ADD PRIMARY KEY (${columns});\n`;
+      const unique = String(rows[0].nonUnique) === '0' ? 'UNIQUE ' : '';
+      return `CREATE ${unique}INDEX ${quoteIdent(object.name, '`')} ON ${on} (${columns});\n`;
+    }
+    const what = { table: 'TABLE', view: 'VIEW', function: 'FUNCTION', procedure: 'PROCEDURE', trigger: 'TRIGGER', sequence: 'SEQUENCE' }[object.kind];
+    const conn = await this.getConnection();
+    const [rows] = await conn.query<mysql.RowDataPacket[]>(`SHOW CREATE ${what} ${name}`);
+    const row = rows[0] ?? {};
+    const key = Object.keys(row).find((k) => /^Create (Table|View|Function|Procedure|Sequence)$|^SQL Original Statement$/.test(k));
+    const sql = key ? row[key] : null;
+    if (sql === null || sql === undefined) {
+      return `-- The server didn't return a definition for ${object.name} (it may need more privileges).\n`;
+    }
+    const body = `${String(sql).trim().replace(/;$/, '')};\n`;
+    // Routine and trigger bodies contain ';', which DB Deck's runner would split on (no DELIMITER support).
+    const note = object.kind === 'function' || object.kind === 'procedure' || object.kind === 'trigger'
+      ? '-- For reading. Running this needs a client that supports DELIMITER: DB Deck splits statements at ";".\n'
+      : '';
+    return note + body;
+  }
+
+  async listDatabases(): Promise<string[]> {
+    const conn = await this.getConnection();
+    const [rows] = await conn.query<mysql.RowDataPacket[]>('SHOW DATABASES');
+    return rows.map((r) => String(Object.values(r)[0])).filter((d) => !SYSTEM_SCHEMAS.includes(d.toLowerCase()));
+  }
+
+  defaultSchemaLabel(): string | undefined {
+    return this.config.database || undefined;
+  }
+
+  private async indexRows(table: TableInfo): Promise<mysql.RowDataPacket[]> {
+    const conn = await this.getConnection();
+    const [rows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT INDEX_NAME AS name, NON_UNIQUE AS nonUnique, COLUMN_NAME AS col FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ?
+        ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME, SEQ_IN_INDEX`,
+      [table.schema ?? null, table.name],
+    );
+    return rows;
   }
 
   async query(sql: string): Promise<StatementResult[]> {
@@ -187,7 +301,7 @@ export class MysqlDriver implements Driver {
   }
 }
 
-function qualifiedName(table: TableInfo): string {
+function qualifiedName(table: { name: string; schema?: string }): string {
   const name = quoteIdent(table.name, '`');
   return table.schema ? `${quoteIdent(table.schema, '`')}.${name}` : name;
 }

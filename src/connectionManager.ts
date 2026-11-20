@@ -46,6 +46,16 @@ export class ConnectionManager implements vscode.Disposable {
     this.changed.fire();
   }
 
+  /** Saves changed settings (not the password) and disconnects, so the next use connects with them. */
+  async update(config: ConnectionConfig): Promise<void> {
+    await this.disconnect(config.id);
+    await this.context.globalState.update(
+      CONNECTIONS_KEY,
+      this.list().map((c) => (c.id === config.id ? config : c)),
+    );
+    this.changed.fire();
+  }
+
   /** Returns a connected driver, connecting first if needed. Concurrent callers share one attempt. */
   getDriver(id: string): Promise<Driver> {
     let pending = this.drivers.get(id);

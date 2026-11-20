@@ -8,7 +8,8 @@ import { QueryHistory } from './history/queryHistory';
 import { PAGE_SIZE, QueryController } from './query/runQuery';
 import { SqlEditor } from './query/sqlEditor';
 import { SavedQueries } from './saved/savedQueries';
-import { ConnectionNode, ConnectionsTree, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
+import { ConnectionNode, ConnectionsTree, ObjectNode, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
+import { ObjectCommands } from './tree/objectCommands';
 import { HistoryNode, HistoryTree } from './tree/HistoryTree';
 import { SavedQueriesTree, SavedQueryNode } from './tree/SavedQueriesTree';
 import { ResultsPanel } from './views/ResultsPanel';
@@ -25,6 +26,8 @@ export function activate(context: vscode.ExtensionContext) {
   const historyTree = new HistoryTree(history);
   const saved = new SavedQueries(context, manager, queries);
   const savedTree = new SavedQueriesTree(saved);
+  const connectionsView = vscode.window.createTreeView('dbDeck.connections', { treeDataProvider: tree, showCollapseAll: true });
+  const objects = new ObjectCommands(manager, queries, tree, connectionsView);
 
   const command = (id: string, handler: (...args: any[]) => unknown) =>
     vscode.commands.registerCommand(`dbDeck.${id}`, handler);
@@ -40,7 +43,7 @@ export function activate(context: vscode.ExtensionContext) {
     historyTree,
     saved,
     savedTree,
-    vscode.window.createTreeView('dbDeck.connections', { treeDataProvider: tree, showCollapseAll: true }),
+    connectionsView,
     vscode.window.createTreeView('dbDeck.savedQueries', { treeDataProvider: savedTree, showCollapseAll: true }),
     vscode.window.createTreeView('dbDeck.history', { treeDataProvider: historyTree, showCollapseAll: true }),
     // Removed or added connections change how both views label their entries.
@@ -94,6 +97,17 @@ export function activate(context: vscode.ExtensionContext) {
     // ▶ Run CodeLens: the document and the statement's offset (see SqlEditor).
     command('runStatement', (uri?: unknown, offset?: unknown) => queries.runStatementAt(uri, offset)),
     command('selectConnection', () => queries.selectConnectionForActiveEditor()),
+
+    // Connections tree objects.
+    command('showDdl', (node?: TableNode | ObjectNode) => objects.showDdl(node)),
+    command('generateSelect', (node?: TableNode) => objects.generateSql(node, 'select')),
+    command('generateInsert', (node?: TableNode) => objects.generateSql(node, 'insert')),
+    command('generateUpdate', (node?: TableNode) => objects.generateSql(node, 'update')),
+    command('generateDelete', (node?: TableNode) => objects.generateSql(node, 'delete')),
+    command('copyName', (node?: TreeNode) => objects.copyName(node, false)),
+    command('copyQualifiedName', (node?: TreeNode) => objects.copyName(node, true)),
+    command('findObject', () => objects.findObject()),
+    command('switchDatabase', (node?: ConnectionNode) => objects.switchDatabase(node)),
 
     // Saved Queries view and SQL editors.
     command('saveQuery', () => saved.saveActiveEditor()),

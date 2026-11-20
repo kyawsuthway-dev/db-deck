@@ -13,7 +13,7 @@ Put new code where the layer dictates, not where it's convenient.
 | -------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Activation / wiring  | `src/extension.ts`                       | Create the services, register commands, push disposables. Small command handlers that only route to a service. No database logic.     |
 | Services             | `connectionManager.ts`, `query/runQuery.ts`, `query/sqlEditor.ts` | State and orchestration: saved connections, secrets, open drivers, editor ↔ connection binding; SQL editor completion, CodeLens and formatting providers. May use the `vscode` API. |
-| UI                   | `connectionWizard.ts`, `tree/`, `views/` | Talk to the user (quick picks, tree items, webview panel). Call services; never call a database client directly. Trees: `ConnectionsTree`, `SavedQueriesTree`, `HistoryTree`. |
+| UI                   | `connectionWizard.ts`, `tree/`, `views/` | Talk to the user (quick picks, tree items, webview panel). Call services; never call a database client directly. Trees: `ConnectionsTree`, `SavedQueriesTree`, `HistoryTree`; `tree/objectCommands.ts` (Show DDL, Generate SQL, Copy Name, Find Object…, Switch Database…). |
 | Drivers              | `src/drivers/`                           | Everything database-specific: connecting, metadata queries, running SQL, identifier quoting. **Never import `vscode`.**                 |
 | Pure helpers         | `src/query/splitSql.ts`, `query/completion.ts`, `query/formatSql.ts`, `drivers/common.ts` | No `vscode`, no I/O. Testable in plain Node. (`query/schemaCache.ts` caches driver metadata and doesn't import `vscode` either.) |
 | Export               | `src/export/`                            | `formats.ts` is a pure helper (no `vscode`, no I/O). `readAll.ts` (batched reads through `Driver.selectPage`) and `fileOut.ts` (streamed file writes) don't import `vscode`, so they're smoke-tested in plain Node. `exportResults.ts` is a service: dialogs, progress, clipboard. |
@@ -40,7 +40,7 @@ If code is about to `switch` on `config.type` outside `src/drivers/`, stop: that
 
 1. Add the type to `DbType` in `src/types.ts`.
 2. Write `src/drivers/<name>.ts` implementing `Driver`, following `postgres.ts` / `mysql.ts`.
-3. Register it in `createDriver`, `DB_KINDS` and `SQL_DIALECTS` (formatter language, extra keywords) in `src/drivers/index.ts`. TypeScript's exhaustive `switch` and the `Record<DbType, …>` flag anything missed.
+3. Register it in `createDriver`, `DB_KINDS`, `SQL_DIALECTS` (formatter language, extra keywords) and `DATABASE_SCOPE` (none / required / optional database setting) in `src/drivers/index.ts`. TypeScript's exhaustive `switch` and the `Record<DbType, …>` flag anything missed.
 4. Add a dialect to `splitSql` if its quoting or comments differ.
 5. Add a test database to `docker-compose.yml` with a seed in `docker/seed/`, mirroring the existing `customers` / `orders` / `paid_orders` shape.
 6. Update the README features and `CHANGELOG.md`.

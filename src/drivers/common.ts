@@ -1,5 +1,5 @@
 import { splitSql } from '../query/splitSql';
-import type { Cell, ChangeStatement, ColumnValue, DbType, FilterOperator, RowChange, StatementResult, TablePage } from '../types';
+import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, FilterOperator, RowChange, StatementResult, TablePage } from '../types';
 
 /** Rows kept per statement; the grid shows a "truncated" note beyond this. */
 export const MAX_ROWS = 10_000;
@@ -241,5 +241,43 @@ export class ChangeConflict extends Error {
         : `Change ${index + 1} matched ${affected} rows instead of one. Nothing was saved.`,
     );
     this.name = 'ChangeConflict';
+  }
+}
+
+export type TemplateKind = 'select' | 'insert' | 'update' | 'delete';
+
+/**
+ * Starting SQL for a table (Generate SQL). It's opened in an editor, never run by DB Deck. Run unedited,
+ * INSERT inserts NULLs and UPDATE / DELETE match no row (`WHERE <key> = NULL`, or `WHERE 1 = 0` without a
+ * key), so a forgotten edit can't change existing rows. `name` is the table as it should be written;
+ * `ident` writes a column name (quoted only when needed).
+ */
+export function buildTemplate(kind: TemplateKind, name: string, columns: ColumnInfo[], ident: (name: string) => string): string {
+  // Column names and types go into `--` comments; a line break in a quoted name must not end the comment.
+  const note = (c: ColumnInfo) => `${c.name} ${c.type}${c.nullable ? '' : ' NOT NULL'}`.replace(/[\r\n]+/g, ' ');
+  const key = columns.filter((c) => c.primaryKey);
+  const where = key.length
+    ? `WHERE ${key.map((c) => `${ident(c.name)} = NULL`).join(' AND ')}; -- matches no row until you fill in the key`
+    : 'WHERE 1 = 0; -- no primary key: replace with a condition';
+  const list = (items: string[], comments: string[]) =>
+    items.map((item, i) => `  ${item}${i < items.length - 1 ? ',' : ''} -- ${comments[i]}`).join('\n');
+  switch (kind) {
+    case 'select':
+      return `SELECT\n${columns.map((c, i) => `  ${ident(c.name)}${i < columns.length - 1 ? ',' : ''}`).join('\n')}\nFROM ${name}\nLIMIT 100;\n`;
+    case 'insert':
+      return `INSERT INTO ${name} (\n${columns.map((c, i) => `  ${ident(c.name)}${i < columns.length - 1 ? ',' : ''}`).join('\n')}\n) VALUES (\n${list(
+        columns.map(() => 'NULL'),
+        columns.map(note),
+      )}\n);\n`;
+    case 'update': {
+      const set = columns.filter((c) => !c.primaryKey);
+      const targets = set.length ? set : columns;
+      return `UPDATE ${name}\nSET\n${list(
+        targets.map((c) => `${ident(c.name)} = NULL`),
+        targets.map(note),
+      )}\n${where}\n`;
+    }
+    case 'delete':
+      return `DELETE FROM ${name}\n${where}\n`;
   }
 }

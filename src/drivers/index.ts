@@ -59,3 +59,13 @@ export const SQL_DIALECTS: Record<DbType, SqlDialect> = {
     keywords: ['INSERT OR REPLACE', 'INSERT OR IGNORE', 'AUTOINCREMENT', 'WITHOUT ROWID', 'PRAGMA', 'GLOB', 'VACUUM'],
   },
 };
+
+/**
+ * Whether a connection has a database setting: none (SQLite, a file), required (PostgreSQL connects to one),
+ * or optional (MySQL: empty shows all databases). Used by Switch Database….
+ */
+export const DATABASE_SCOPE: Record<DbType, 'none' | 'required' | 'optional'> = {
+  sqlite: 'none',
+  postgres: 'required',
+  mysql: 'optional',
+};

@@ -20,8 +20,8 @@ paths:
 
 ## Menus and `when` clauses
 
-- Tree item menus key off `contextValue`: `connection`, `connection.connected`, `table`. Match with `viewItem == …` or `viewItem =~ /^connection/`. If you add a `contextValue`, check every `when` clause that matches by regex.
-- Inline actions use `group: "inline@N"`; context-menu groups are `1_query`, `2_manage`, `3_remove`.
+- Tree item menus key off `contextValue`. Connection items are `connection[.connected][.server]` (match with regexes, e.g. `/^connection\.connected/`); objects use their kind: `schema`, `table`, `view`, `function`, `procedure`, `sequence`, `index`, `trigger`, `column`. If you add a `contextValue`, check every `when` clause that matches by regex.
+- Inline actions use `group: "inline@N"`; context-menu groups are `1_query`, `2_manage`, `3_remove`, `4_copy`. Generate SQL is the submenu `dbDeck.generateSql` (in `1_query`).
 - SQL editor actions use `editorLangId == sql`.
 - The results grid's right-click menu is `webview/context`, matched with `webviewId == 'dbDeck.results' && webviewSection == 'grid'`; the grid element sets `data-vscode-context`. Those commands are hidden from the Command Palette.
 - Grid edit commands (Set to NULL, Delete Rows, Add Row) also require `dbDeckEditable`, which the grid sets in `data-vscode-context` only for editable table views; they use group `3_edit`.
@@ -30,7 +30,7 @@ paths:
 
 ## Tree
 
-- VS Code remembers expansion by `TreeItem.id`. Ids are path-like (`<connectionId>#<generation>/tables/<name>`), and must stay stable across refreshes. Disconnect bumps the generation on purpose so the node collapses instead of reconnecting.
+- VS Code remembers expansion by `TreeItem.id`. Ids are path-like (`<connectionId>#<generation>/tables/<name>`), and must stay stable across refreshes. Disconnect bumps the generation on purpose so the node collapses instead of reconnecting. Nodes implement `getParent` so `TreeView.reveal` works (Find Object…).
 - Errors while loading children become an error node plus a notification — never an unhandled rejection.
 
 ## UX conventions

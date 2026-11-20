@@ -10,7 +10,12 @@ A free, open-source database explorer for VS Code. Browse local and remote datab
 
 - **Connections sidebar** — a database icon in the activity bar lists your saved connections. Add, remove, refresh, and disconnect.
 - **Add Connection wizard** — pick a database type, then a file (SQLite) or host, port, user, password, and database. The connection is tested before it's saved.
-- **Browse your schema** — Connection → Tables / Views → Columns, with each column's type and primary keys marked.
+- **Browse your schema** — Connection → Tables, Views, Functions, Procedures and Sequences, with schema (PostgreSQL) or database (MySQL) folders when there's more than one. Tables expand to their columns (type and primary key marked), **Indexes** and **Triggers**.
+- **Show DDL** — right-click any object, or click a function, procedure, sequence, index or trigger, to see its definition in a new SQL editor. PostgreSQL table and sequence DDL is rebuilt from the catalog (PostgreSQL has no `SHOW CREATE TABLE`) and says what it leaves out.
+- **Generate SQL** — right-click a table → **Generate SQL** → SELECT, INSERT, UPDATE or DELETE opens starting SQL in an editor. It's never run for you, and run unedited it can't change existing rows: UPDATE and DELETE start with `WHERE <key> = NULL`, which matches nothing.
+- **Find Object…** — the 🔍 button in the Connections view searches tables, views, functions, procedures and sequences in your open connections, shows the one you pick in the tree and opens its rows or definition.
+- **Copy Name / Copy Qualified Name** on objects and columns, quoted only when needed.
+- **Switch Database…** — right-click a PostgreSQL or MySQL connection to reconnect it to another database on the same server.
 - **Click a table** to see its rows, 100 per page. Use **Previous** / **Next** to page through, and click a column header to sort (ascending, descending, then back to the default). Pages are ordered by primary key unless you sort.
 - **Filter a table** — type a SQL condition in the **WHERE** box above the rows, such as `(id = 1) AND (name = 'Hotel')` or `total > 100 OR status IS NULL`, and press **Enter**. **Escape** or **✕** clears it. Paging and sorting keep the filter. As you type, the box suggests column names (with their types) and, after a column, operators. Use **↑**/**↓** and **Tab** or **Enter** to insert one, and **Ctrl+Space** to open the list on demand.
 - **Run SQL** — **New Query** opens a SQL editor tied to a connection. Press **Ctrl+Enter** (**Cmd+Enter** on macOS) to run the selection, or the statement the cursor is in if nothing is selected. Click **▶ Run** above a statement to run just that one. **Run All** (**Ctrl+Shift+Enter** / **Cmd+Shift+Enter**, or ▶ in the editor title) runs the whole editor. Several `;`-separated statements each get their own result. Click a column header to sort the loaded rows; your SQL isn't run again.
@@ -45,7 +50,9 @@ The extension isn't published yet. To try it, build a `.vsix` (see [CONTRIBUTING
 | Select Connection for This Editor | Status bar, Command Palette |
 | Save Query… | Bookmark icon in a SQL editor's title bar, right-click in a SQL editor, Saved Queries view toolbar, `Ctrl+S` / `Cmd+S` in a New Query editor |
 | Search / Clear Query History | Query History view toolbar, Command Palette |
-| Refresh / Disconnect / Remove Connection | Right-click a connection |
+| Refresh / Disconnect / Switch Database… / Remove Connection | Right-click a connection |
+| Show DDL / Generate SQL / Copy Name | Right-click a table, view or other object |
+| Find Object… | Connections view toolbar, Command Palette |
 
 All commands are in the Command Palette under **DB Deck**.
 
@@ -64,6 +71,9 @@ All commands are in the Command Palette under **DB Deck**.
 - Encrypted connections: choose **SSL** (verifies the certificate) or **SSL, allow self-signed** in the wizard.
 - MySQL `DELIMITER` scripts aren't supported yet, for running or formatting.
 - **Keyboard shortcuts** (**Ctrl+Enter**, **Ctrl+Shift+Enter**, and **Ctrl+S** in a New Query editor) apply only in SQL editors linked to a DB Deck connection, so other SQL extensions keep theirs in their own editors. If another extension also uses **Ctrl+Enter** in the same editor, VS Code picks one of them: change one in **Keyboard Shortcuts** (search for `dbDeck.runQuery`), or use DB Deck's ▶ buttons.
+- **PostgreSQL** objects need PostgreSQL 12 or newer. Functions that belong to an extension (such as `pgcrypto`) aren't listed.
+- **MySQL** function, procedure and trigger DDL contains `;` inside its body. DB Deck shows it for reading; running it needs a client that supports `DELIMITER`.
+- **Switch Database…** reconnects, so it asks first when the connection is open: an open transaction ends.
 - **Autocomplete** reads the tables in the current statement (`FROM`, `JOIN`, `UPDATE`, `INSERT INTO`) without running anything. After you change the schema outside DB Deck, use **Refresh** on the connection to update the suggestions.
 - The **WHERE** filter is plain SQL for your database, with its own rules. For example, `LIKE` is case-sensitive in PostgreSQL (use `ILIKE`), but usually not in MySQL. It must be a single condition: anything after a `;` is rejected, not run.
 - **Export and copy** write values exactly as shown. NULL is an empty field in CSV and copied text (an empty string is `""`), and `null` in JSON. JSON values stay text, so large numbers keep every digit. CSV files start with a UTF-8 byte order mark so Excel reads non-English text correctly.
