@@ -12,6 +12,7 @@ A free, open-source database explorer for VS Code. Browse local and remote datab
 - **Add Connection wizard** — pick a database type, then a file (SQLite) or host, port, user, password, and database. The connection is tested before it's saved.
 - **Browse your schema** — Connection → Tables / Views → Columns, with each column's type and primary keys marked.
 - **Click a table** to see its rows, 100 per page. Use **Previous** / **Next** to page through, and click a column header to sort (ascending, descending, then back to the default). Pages are ordered by primary key unless you sort.
+- **Filter a table** — type a SQL condition in the **WHERE** box above the rows, such as `(id = 1) AND (name = 'Hotel')` or `total > 100 OR status IS NULL`, and press **Enter**. **Escape** or **✕** clears it. Paging and sorting keep the filter. As you type, the box suggests column names (with their types) and, after a column, operators. Use **↑**/**↓** and **Tab** or **Enter** to insert one, and **Ctrl+Space** to open the list on demand.
 - **Run SQL** — **New Query** opens a SQL editor tied to a connection. Press **Ctrl+Enter** (**Cmd+Enter** on macOS), or click ▶, to run the selection, or the whole editor if nothing is selected. Several `;`-separated statements each get their own result. Click a column header to sort the loaded rows; your SQL isn't run again.
 - **Pick the connection per editor** — the status bar shows which connection a SQL editor uses; click it to change. Saved `.sql` files remember their connection.
 - **Works everywhere VS Code does** — no native modules, so it runs the same on Windows, macOS, Linux, WSL, and remote hosts.
@@ -51,6 +52,7 @@ All commands are in the Command Palette under **DB Deck**.
 - **PostgreSQL and MySQL** keep one connection open per saved connection, so `BEGIN` … `COMMIT` across several runs works.
 - Encrypted connections: choose **SSL** (verifies the certificate) or **SSL, allow self-signed** in the wizard.
 - MySQL `DELIMITER` scripts aren't supported yet.
+- The **WHERE** filter is plain SQL for your database, with its own rules. For example, `LIKE` is case-sensitive in PostgreSQL (use `ILIKE`), but usually not in MySQL. It must be a single condition: anything after a `;` is rejected, not run.
 
 ## Contributing
 

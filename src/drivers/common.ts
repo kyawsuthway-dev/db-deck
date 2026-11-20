@@ -1,4 +1,5 @@
-import type { Cell, StatementResult, TablePage } from '../types';
+import { splitSql } from '../query/splitSql';
+import type { Cell, DbType, FilterOperator, StatementResult, TablePage } from '../types';
 
 /** Rows kept per statement; the grid shows a "truncated" note beyond this. */
 export const MAX_ROWS = 10_000;
@@ -75,15 +76,66 @@ export function quoteIdent(name: string, quote: '"' | '`'): string {
   return quote + name.split(quote).join(quote + quote) + quote;
 }
 
+
 /**
- * `SELECT * … ORDER BY … LIMIT … OFFSET …` for a table view. `from` is the already-quoted table name.
- * LIMIT/OFFSET is the same in every supported database; a database that differs builds its own.
+ * `SELECT * … WHERE (…) ORDER BY … LIMIT … OFFSET …` for a table view. `from` is the already-quoted table name;
+ * `condition` comes from `filterCondition()`. LIMIT/OFFSET is the same in every supported database;
+ * a database that differs would build its own.
  */
-export function selectPageSql(from: string, quote: '"' | '`', page: TablePage): string {
+export function buildPageQuery(from: string, quote: '"' | '`', page: TablePage, condition?: string): string {
   const limit = Math.max(0, Math.trunc(page.limit));
   const offset = Math.max(0, Math.trunc(page.offset));
+  // On its own lines, so a trailing `-- comment` in the condition ends before ORDER BY / LIMIT.
+  const where = condition ? ` WHERE (\n${condition}\n)` : '';
   const orderBy = page.orderBy.length
     ? ` ORDER BY ${page.orderBy.map((k) => `${quoteIdent(k.column, quote)} ${k.direction === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`
     : '';
-  return `SELECT * FROM ${from}${orderBy} LIMIT ${limit}${offset ? ` OFFSET ${offset}` : ''};`;
+  return `SELECT * FROM ${from}${where}${orderBy} LIMIT ${limit}${offset ? ` OFFSET ${offset}` : ''};`;
+}
+
+/**
+ * The filter box's condition, checked to be a single statement so `1=1; DROP TABLE t` never runs.
+ * A trailing `;` is dropped. Returns undefined when nothing but whitespace or comments was typed.
+ */
+export function filterCondition(where: string | undefined, dialect: DbType): string | undefined {
+  if (!where?.trim()) return undefined;
+  const parts = splitSql(where, dialect);
+  if (parts.length > 1) throw new Error('The filter must be a single condition. Remove the ";" that ends it early.');
+  return parts[0];
+}
+
+/** Operators the WHERE box suggests in every database. A driver may add its own (PostgreSQL: ILIKE). */
+export const FILTER_OPERATORS: FilterOperator[] = [
+  { label: '=', insert: '= ' },
+  { label: '<>', insert: '<> ' },
+  { label: '<', insert: '< ' },
+  { label: '<=', insert: '<= ' },
+  { label: '>', insert: '> ' },
+  { label: '>=', insert: '>= ' },
+  { label: 'LIKE', insert: 'LIKE ' },
+  { label: 'NOT LIKE', insert: 'NOT LIKE ' },
+  { label: 'IN (…)', insert: 'IN ()', caret: 4 },
+  { label: 'NOT IN (…)', insert: 'NOT IN ()', caret: 8 },
+  { label: 'IS NULL', insert: 'IS NULL ' },
+  { label: 'IS NOT NULL', insert: 'IS NOT NULL ' },
+  { label: 'BETWEEN … AND …', insert: 'BETWEEN  AND ', caret: 8 },
+];
+
+/**
+ * Reserved words that are also common column names. A column with one of these names is quoted when
+ * suggested, so `order = 1` doesn't become a syntax error. Not exhaustive: anything missing is still
+ * valid SQL once the user quotes it.
+ */
+const RESERVED = new Set(
+  ('all and any as asc between by case cast check collate column constraint create cross current_date ' +
+    'current_time current_timestamp current_user default desc distinct do else end except false fetch for ' +
+    'foreign from full grant group having in index inner insert intersect interval into is join key left ' +
+    'like limit natural not null offset on or order outer primary range rank references right row rows ' +
+    'select session_user set some table then to true union unique update user using values when where window with')
+    .split(' '),
+);
+
+/** `name` bare when it matches `safe` and isn't a reserved word, otherwise quoted. */
+export function identifierFor(name: string, quote: '"' | '`', safe: RegExp): string {
+  return safe.test(name) && !RESERVED.has(name.toLowerCase()) ? name : quoteIdent(name, quote);
 }

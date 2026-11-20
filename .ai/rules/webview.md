@@ -22,6 +22,7 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 
 - `src/webview/results.ts` is a separate esbuild entry (browser, IIFE) → `dist/webview/results.js` + `results.css` (imported from the TS file).
 - It runs in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`).
+- Other `src/webview/*.ts` modules (e.g. `autocomplete.ts`) are imported by `results.ts` and bundled into it. Keep their logic DOM-free where possible so it can be smoke-tested in plain Node.
 
 ## Messaging
 

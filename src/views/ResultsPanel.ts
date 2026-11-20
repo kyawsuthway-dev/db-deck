@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { SortKey, StatementResult } from '../types';
+import type { FilterHints, SortKey, StatementResult } from '../types';
 
 /** Paging and sort state of a table view; absent for query results. */
 export interface TableViewState {
@@ -10,6 +10,10 @@ export interface TableViewState {
   sort?: SortKey;
   /** True when the default order is the primary key, so pages are stable. */
   orderedByKey: boolean;
+  /** The applied filter condition (the WHERE box); undefined when unfiltered. */
+  where?: string;
+  /** Column names and operators the WHERE box suggests. */
+  hints: FilterHints;
 }
 
 /** Messages sent to the webview (src/webview/results.ts). */
@@ -21,7 +25,8 @@ export type ResultsMessage =
 export type ResultsRequest =
   | { type: 'ready' }
   | { type: 'page'; offset: number }
-  | { type: 'sort'; sort?: SortKey };
+  | { type: 'sort'; sort?: SortKey }
+  | { type: 'filter'; where: string };
 
 /** One reusable "Results" editor tab showing the latest run. */
 export class ResultsPanel implements vscode.Disposable {
@@ -93,7 +98,7 @@ export class ResultsPanel implements vscode.Disposable {
       // The webview asks for data once its script loads, including after being hidden and shown again.
       if (msg?.type === 'ready') {
         if (this.last) void webview.postMessage(this.last);
-      } else if (msg?.type === 'page' || msg?.type === 'sort') {
+      } else if (msg?.type === 'page' || msg?.type === 'sort' || msg?.type === 'filter') {
         this.requests.fire(msg as Exclude<ResultsRequest, { type: 'ready' }>);
       }
     });

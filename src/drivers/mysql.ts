@@ -1,7 +1,7 @@
 import mysql from 'mysql2/promise';
 import { splitSql } from '../query/splitSql';
-import type { ColumnInfo, ConnectionConfig, Driver, StatementResult, TableInfo, TablePage } from '../types';
-import { quoteIdent, runEach, selectPageSql } from './common';
+import type { ColumnInfo, ConnectionConfig, Driver, FilterOperator, StatementResult, TableInfo, TablePage } from '../types';
+import { buildPageQuery, FILTER_OPERATORS, filterCondition, identifierFor, quoteIdent, runEach } from './common';
 
 const SYSTEM_SCHEMAS = ['mysql', 'information_schema', 'performance_schema', 'sys'];
 
@@ -70,8 +70,27 @@ export class MysqlDriver implements Driver {
   }
 
   previewSql(table: TableInfo, page: TablePage): string {
-    const name = quoteIdent(table.name, '`');
-    return selectPageSql(table.schema ? `${quoteIdent(table.schema, '`')}.${name}` : name, '`', page);
+    return buildPageQuery(qualifiedName(table), '`', page);
+  }
+
+  async selectPage(table: TableInfo, page: TablePage, where?: string): Promise<StatementResult> {
+    const sql = buildPageQuery(qualifiedName(table), '`', page, filterCondition(where, 'mysql'));
+    const conn = await this.getConnection();
+    const [result] = await runEach([sql], async (statement) => {
+      // A prepared statement refuses a second statement, a backstop to filterCondition's check.
+      const [rows, fields] = await conn.execute({ sql: statement, rowsAsArray: true });
+      return { columns: (fields ?? []).map((f) => f.name), rows: rows as unknown[][] };
+    });
+    return result;
+  }
+
+  /** Column names aren't case-sensitive in MySQL, so only odd characters and reserved words need backticks. */
+  filterIdentifier(name: string): string {
+    return identifierFor(name, '`', /^[A-Za-z_][A-Za-z0-9_]*$/);
+  }
+
+  filterOperators(): FilterOperator[] {
+    return FILTER_OPERATORS;
   }
 
   async close(): Promise<void> {
@@ -108,4 +127,9 @@ export class MysqlDriver implements Driver {
     this.conn = conn;
     return conn;
   }
+}
+
+function qualifiedName(table: TableInfo): string {
+  const name = quoteIdent(table.name, '`');
+  return table.schema ? `${quoteIdent(table.schema, '`')}.${name}` : name;
 }

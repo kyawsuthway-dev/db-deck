@@ -8,6 +8,7 @@
 - Tree of tables, views and columns (type and primary key).
 - Click a table to show its rows, 100 per page with Previous / Next, ordered by primary key by default.
 - Click a column header to sort: table views sort in the database; query results sort the rows already loaded.
+- Filter table views with a SQL condition in the WHERE box above the rows (Enter applies, Escape or ✕ clears). It works with paging and sorting, and only a single condition is accepted. Column names (with types) and operators are suggested as you type.
 - New Query editor with Run Query (Ctrl/Cmd+Enter), multi-statement results grid.
 - Contributor setup: `Taskfile.yml` (`task setup`), pre-commit check, `CONTRIBUTING.md`, shared rules in `.ai/rules/` and `AGENTS.md`.
 
