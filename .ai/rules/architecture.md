@@ -16,6 +16,7 @@ Put new code where the layer dictates, not where it's convenient.
 | UI                   | `connectionWizard.ts`, `tree/`, `views/` | Talk to the user (quick picks, tree items, webview panel). Call services; never call a database client directly.                       |
 | Drivers              | `src/drivers/`                           | Everything database-specific: connecting, metadata queries, running SQL, identifier quoting. **Never import `vscode`.**                 |
 | Pure helpers         | `src/query/splitSql.ts`, `drivers/common.ts` | No `vscode`, no I/O. Testable in plain Node.                                                                                        |
+| Export               | `src/export/`                            | `formats.ts` is a pure helper (no `vscode`, no I/O). `readAll.ts` (batched reads through `Driver.selectPage`) and `fileOut.ts` (streamed file writes) don't import `vscode`, so they're smoke-tested in plain Node. `exportResults.ts` is a service: dialogs, progress, clipboard. |
 | Webview (browser)    | `src/webview/`                           | Runs in the webview's browser context. Never imports Node or `vscode` modules; only `import type` from extension code.                |
 | Shared types         | `src/types.ts`                           | Types used across layers. Types used by one file stay in that file.                                                                     |
 

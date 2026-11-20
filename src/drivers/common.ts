@@ -139,3 +139,19 @@ const RESERVED = new Set(
 export function identifierFor(name: string, quote: '"' | '`', safe: RegExp): string {
   return safe.test(name) && !RESERVED.has(name.toLowerCase()) ? name : quoteIdent(name, quote);
 }
+
+/**
+ * `INSERT INTO … (…) VALUES (…);` per row, for export. Every value is a string literal, which each
+ * database converts to the column's type; NULL stays NULL. `literal` quotes a value for the database.
+ */
+export function insertStatements(from: string, quote: '"' | '`', columns: string[], rows: Cell[][], literal: (value: string) => string): string {
+  const cols = columns.map((c) => quoteIdent(c, quote)).join(', ');
+  return rows
+    .map((row) => `INSERT INTO ${from} (${cols}) VALUES (${row.map((v) => (v === null ? 'NULL' : literal(v))).join(', ')});\n`)
+    .join('');
+}
+
+/** A standard SQL string literal: quotes doubled. Right for PostgreSQL (standard_conforming_strings) and SQLite. */
+export function standardLiteral(value: string): string {
+  return `'${value.split("'").join("''")}'`;
+}

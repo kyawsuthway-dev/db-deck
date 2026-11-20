@@ -21,12 +21,24 @@ export type ResultsMessage =
   | { type: 'loading'; title: string; sql: string }
   | { type: 'results'; title: string; results: StatementResult[]; table?: TableViewState };
 
+/** How copied cells are put on the clipboard. */
+export type CopyFormat = 'tsv' | 'tsvHeaders' | 'csv' | 'json';
+
+/** One-off commands to the webview. Unlike ResultsMessage, they're never replayed on reload. */
+export type ResultsCommand = { type: 'copyRequest'; format: CopyFormat };
+
 /** Messages the webview sends back. Treat them as untrusted input. */
 export type ResultsRequest =
   | { type: 'ready' }
   | { type: 'page'; offset: number }
   | { type: 'sort'; sort?: SortKey }
-  | { type: 'filter'; where: string };
+  | { type: 'filter'; where: string }
+  /** `order`: the row order shown, when query results were sorted in the webview. */
+  | { type: 'export'; index: number; order?: number[] }
+  /** `rows`: original row indexes in display order; `columns`: the first and last column. */
+  | { type: 'copy'; index: number; rows: number[]; columns: [number, number]; format: CopyFormat };
+
+const REQUEST_TYPES = new Set(['page', 'sort', 'filter', 'export', 'copy']);
 
 /** One reusable "Results" editor tab showing the latest run. */
 export class ResultsPanel implements vscode.Disposable {
@@ -53,6 +65,17 @@ export class ResultsPanel implements vscode.Disposable {
 
   showResults(token: number, title: string, results: StatementResult[], table?: TableViewState): void {
     if (token === this.runId) this.post({ type: 'results', title, results, table });
+  }
+
+  /** The results on screen (for export and copy), or undefined while loading or before any run. */
+  lastResults(): Extract<ResultsMessage, { type: 'results' }> | undefined {
+    return this.last?.type === 'results' ? this.last : undefined;
+  }
+
+  /** Asks the webview to send its selected cells back as a `copy` request (from the context menu). */
+  requestCopy(format: CopyFormat): void {
+    const command: ResultsCommand = { type: 'copyRequest', format };
+    if (this.panel) void this.panel.webview.postMessage(command);
   }
 
   dispose(): void {
@@ -98,7 +121,7 @@ export class ResultsPanel implements vscode.Disposable {
       // The webview asks for data once its script loads, including after being hidden and shown again.
       if (msg?.type === 'ready') {
         if (this.last) void webview.postMessage(this.last);
-      } else if (msg?.type === 'page' || msg?.type === 'sort' || msg?.type === 'filter') {
+      } else if (typeof msg?.type === 'string' && REQUEST_TYPES.has(msg.type)) {
         this.requests.fire(msg as Exclude<ResultsRequest, { type: 'ready' }>);
       }
     });

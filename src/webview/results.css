@@ -302,3 +302,35 @@ th button.sort:focus-visible {
   color: inherit;
   opacity: 0.8;
 }
+
+/* Cell selection for copy. */
+.table-wrap {
+  user-select: none;
+}
+.table-wrap:focus {
+  outline: none;
+}
+.table-wrap:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+tbody td.selected,
+tbody tr:hover td.selected {
+  color: var(--vscode-editor-selectionForeground, inherit);
+  background: var(--vscode-editor-selectionBackground);
+}
+.table-wrap:not(:focus) tbody td.selected {
+  background: var(--vscode-editor-inactiveSelectionBackground, var(--vscode-editor-selectionBackground));
+}
+tbody td.rownum {
+  cursor: pointer;
+}
+tbody td.rownum.selected-row {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+
+/* Export button in a result's header. */
+header .pager-button {
+  flex: none;
+}

@@ -1,7 +1,16 @@
 import { Client, type CustomTypesConfig, type QueryResult } from 'pg';
 import { splitSql } from '../query/splitSql';
-import type { ColumnInfo, ConnectionConfig, Driver, FilterOperator, SslMode, StatementResult, TableInfo, TablePage } from '../types';
-import { buildPageQuery, FILTER_OPERATORS, filterCondition, identifierFor, quoteIdent, runEach } from './common';
+import type { Cell, ColumnInfo, ConnectionConfig, Driver, FilterOperator, SslMode, StatementResult, TableInfo, TablePage } from '../types';
+import {
+  buildPageQuery,
+  FILTER_OPERATORS,
+  filterCondition,
+  identifierFor,
+  insertStatements,
+  quoteIdent,
+  runEach,
+  standardLiteral,
+} from './common';
 
 const BOOL_OID = 16;
 
@@ -86,6 +95,10 @@ export class PostgresDriver implements Driver {
   /** Unquoted names fold to lowercase in PostgreSQL, so anything with uppercase must be quoted. */
   filterIdentifier(name: string): string {
     return identifierFor(name, '"', /^[a-z_][a-z0-9_]*$/);
+  }
+
+  insertSql(table: TableInfo, columns: string[], rows: Cell[][]): string {
+    return insertStatements(qualifiedName(table), '"', columns, rows, standardLiteral);
   }
 
   filterOperators(): FilterOperator[] {

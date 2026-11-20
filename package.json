@@ -58,7 +58,11 @@
       { "command": "dbDeck.newQuery", "title": "New Query", "category": "DB Deck", "icon": "$(new-file)" },
       { "command": "dbDeck.previewTable", "title": "Show Rows", "category": "DB Deck", "icon": "$(table)" },
       { "command": "dbDeck.runQuery", "title": "Run Query", "category": "DB Deck", "icon": "$(play)" },
-      { "command": "dbDeck.selectConnection", "title": "Select Connection for This Editor", "category": "DB Deck", "icon": "$(database)" }
+      { "command": "dbDeck.selectConnection", "title": "Select Connection for This Editor", "category": "DB Deck", "icon": "$(database)" },
+      { "command": "dbDeck.copySelection", "title": "Copy", "category": "DB Deck" },
+      { "command": "dbDeck.copySelectionWithHeaders", "title": "Copy with Headers", "category": "DB Deck" },
+      { "command": "dbDeck.copySelectionAsCsv", "title": "Copy as CSV", "category": "DB Deck" },
+      { "command": "dbDeck.copySelectionAsJson", "title": "Copy as JSON", "category": "DB Deck" }
     ],
     "menus": {
       "view/title": [
@@ -81,9 +85,19 @@
       "editor/title": [
         { "command": "dbDeck.runQuery", "when": "editorLangId == sql", "group": "navigation@1" }
       ],
+      "webview/context": [
+        { "command": "dbDeck.copySelection", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "1_copy@1" },
+        { "command": "dbDeck.copySelectionWithHeaders", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "1_copy@2" },
+        { "command": "dbDeck.copySelectionAsCsv", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "2_copyAs@1" },
+        { "command": "dbDeck.copySelectionAsJson", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "2_copyAs@2" }
+      ],
       "commandPalette": [
         { "command": "dbDeck.previewTable", "when": "false" },
         { "command": "dbDeck.disconnect", "when": "false" },
+        { "command": "dbDeck.copySelection", "when": "false" },
+        { "command": "dbDeck.copySelectionWithHeaders", "when": "false" },
+        { "command": "dbDeck.copySelectionAsCsv", "when": "false" },
+        { "command": "dbDeck.copySelectionAsJson", "when": "false" },
         { "command": "dbDeck.runQuery", "when": "editorLangId == sql" },
         { "command": "dbDeck.selectConnection", "when": "editorLangId == sql" }
       ]

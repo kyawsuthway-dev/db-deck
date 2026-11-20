@@ -92,5 +92,7 @@ export interface Driver {
   filterIdentifier(name: string): string;
   /** Operators the WHERE box suggests for this database. */
   filterOperators(): FilterOperator[];
+  /** `INSERT` statements (one per row, each ending in `;\n`) that recreate these rows in `table`. For export. */
+  insertSql(table: TableInfo, columns: string[], rows: Cell[][]): string;
   close(): Promise<void>;
 }

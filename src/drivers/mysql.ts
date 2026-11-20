@@ -1,7 +1,7 @@
 import mysql from 'mysql2/promise';
 import { splitSql } from '../query/splitSql';
-import type { ColumnInfo, ConnectionConfig, Driver, FilterOperator, StatementResult, TableInfo, TablePage } from '../types';
-import { buildPageQuery, FILTER_OPERATORS, filterCondition, identifierFor, quoteIdent, runEach } from './common';
+import type { Cell, ColumnInfo, ConnectionConfig, Driver, FilterOperator, StatementResult, TableInfo, TablePage } from '../types';
+import { buildPageQuery, FILTER_OPERATORS, filterCondition, identifierFor, insertStatements, quoteIdent, runEach } from './common';
 
 const SYSTEM_SCHEMAS = ['mysql', 'information_schema', 'performance_schema', 'sys'];
 
@@ -93,6 +93,10 @@ export class MysqlDriver implements Driver {
     return FILTER_OPERATORS;
   }
 
+  insertSql(table: TableInfo, columns: string[], rows: Cell[][]): string {
+    return insertStatements(qualifiedName(table), '`', columns, rows, mysqlLiteral);
+  }
+
   async close(): Promise<void> {
     const conn = this.conn;
     this.conn = undefined;
@@ -132,4 +136,12 @@ export class MysqlDriver implements Driver {
 function qualifiedName(table: TableInfo): string {
   const name = quoteIdent(table.name, '`');
   return table.schema ? `${quoteIdent(table.schema, '`')}.${name}` : name;
+}
+
+/**
+ * MySQL treats a backslash in a string literal as an escape (unless the server runs with
+ * NO_BACKSLASH_ESCAPES, documented in the README), so backslashes are doubled as well as quotes.
+ */
+function mysqlLiteral(value: string): string {
+  return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
 }

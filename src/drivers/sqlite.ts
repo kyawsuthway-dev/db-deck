@@ -2,8 +2,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
-import type { ColumnInfo, Driver, FilterOperator, StatementResult, TableInfo, TablePage } from '../types';
-import { buildPageQuery, FILTER_OPERATORS, filterCondition, identifierFor, MAX_ROWS, quoteIdent, runEach } from './common';
+import type { Cell, ColumnInfo, Driver, FilterOperator, StatementResult, TableInfo, TablePage } from '../types';
+import {
+  buildPageQuery,
+  FILTER_OPERATORS,
+  filterCondition,
+  identifierFor,
+  insertStatements,
+  MAX_ROWS,
+  quoteIdent,
+  runEach,
+  standardLiteral,
+} from './common';
 
 let sqlJs: Promise<SqlJsStatic> | undefined;
 
@@ -87,6 +97,10 @@ export class SqliteDriver implements Driver {
 
   filterOperators(): FilterOperator[] {
     return FILTER_OPERATORS;
+  }
+
+  insertSql(table: TableInfo, columns: string[], rows: Cell[][]): string {
+    return insertStatements(quoteIdent(table.name, '"'), '"', columns, rows, standardLiteral);
   }
 
   async close(): Promise<void> {

@@ -30,6 +30,8 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 - The webview posts `{ type: 'ready' }` when its script loads; the panel replies with the last message. This covers first load and reload after the panel was hidden — keep the handshake when changing either side.
 - `ResultsPanel` tokens (`showLoading` → `showResults`) drop results from an older run. Keep that guarantee for anything asynchronous.
 - Messages from the webview are the `ResultsRequest` union in the same file. They are untrusted: the service checks every field (offsets, column names) before using it. Paging uses `startRun()` instead of `showLoading()`, so the grid stays on screen while the webview shows its own busy state.
+- One-off commands to the webview (`copyRequest`) are the `ResultsCommand` union: posted directly, never stored as the panel's `last` message, so they're not replayed on reload.
+- Export and copy formatting happens in the extension (`src/export/formats.ts`). The webview only sends which result, which rows (original indexes, in display order) and which columns.
 
 ## Look and feel
 

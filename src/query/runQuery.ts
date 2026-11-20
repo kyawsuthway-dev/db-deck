@@ -27,6 +27,16 @@ interface TableView {
   hints: FilterHints;
 }
 
+/** What the export service needs to re-read the open table view. */
+export interface TableExportSource {
+  connectionId: string;
+  table: TableInfo;
+  where?: string;
+  /** The sort, or the primary key order; empty when neither exists (batches may then repeat or skip rows). */
+  orderBy: SortKey[];
+  columnTypes: string[];
+}
+
 /** Longest filter condition accepted from the webview. */
 const MAX_WHERE_LENGTH = 10_000;
 
@@ -118,6 +128,19 @@ export class QueryController implements vscode.Disposable {
     await this.showTablePage(this.tableView, true);
   }
 
+  /** The table shown in the panel, with its filter and order, for "Export all matching rows". */
+  currentTableView(): TableExportSource | undefined {
+    const view = this.tableView;
+    if (!view) return undefined;
+    return {
+      connectionId: view.connectionId,
+      table: view.table,
+      where: view.where,
+      orderBy: view.sort ? [view.sort] : view.keyOrder,
+      columnTypes: view.hints.columns.map((c) => c.type),
+    };
+  }
+
   /** Lets the user pick the connection for the active SQL editor. */
   async selectConnectionForActiveEditor(): Promise<void> {
     const doc = vscode.window.activeTextEditor?.document;
@@ -133,7 +156,8 @@ export class QueryController implements vscode.Disposable {
   /** Page and sort requests come from the webview, so they're checked against the open table view. */
   private onPanelRequest(request: Exclude<ResultsRequest, { type: 'ready' }>): void {
     const view = this.tableView;
-    if (!view) return;
+    // Export and copy are handled by ResultsExporter.
+    if (!view || request.type === 'export' || request.type === 'copy') return;
     if (request.type === 'page') {
       if (!Number.isSafeInteger(request.offset) || request.offset < 0) return;
       view.offset = request.offset;
@@ -142,7 +166,7 @@ export class QueryController implements vscode.Disposable {
       // Typed by the user and run as their own SQL (core.md rule 4); the driver checks it's one statement.
       view.where = request.where.trim() || undefined;
       view.offset = 0;
-    } else {
+    } else if (request.type === 'sort') {
       const sort = request.sort;
       if (sort && (!view.columns.includes(sort.column) || (sort.direction !== 'asc' && sort.direction !== 'desc'))) return;
       view.sort = sort && { column: sort.column, direction: sort.direction };

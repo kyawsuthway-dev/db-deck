@@ -22,6 +22,7 @@ paths:
 - Tree item menus key off `contextValue`: `connection`, `connection.connected`, `table`. Match with `viewItem == …` or `viewItem =~ /^connection/`. If you add a `contextValue`, check every `when` clause that matches by regex.
 - Inline actions use `group: "inline@N"`; context-menu groups are `1_query`, `2_manage`, `3_remove`.
 - SQL editor actions use `editorLangId == sql`.
+- The results grid's right-click menu is `webview/context`, matched with `webviewId == 'dbDeck.results' && webviewSection == 'grid'`; the grid element sets `data-vscode-context`. Those commands are hidden from the Command Palette.
 
 ## Tree
 

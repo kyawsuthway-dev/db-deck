@@ -1,8 +1,9 @@
 // Runs inside the Results webview (a browser context), bundled separately to dist/webview/results.js.
 // Values are only ever inserted with textContent, never as HTML.
 import type { Cell, SortKey, StatementResult } from '../types';
-import type { ResultsMessage, ResultsRequest, TableViewState } from '../views/ResultsPanel';
+import type { CopyFormat, ResultsCommand, ResultsMessage, ResultsRequest, TableViewState } from '../views/ResultsPanel';
 import { attachAutocomplete } from './autocomplete';
+import { copyRequestOf, inRange, rangeOf, selectAll, selectCell, type CellRange, type GridSelection } from './selection';
 import './results.css';
 
 declare function acquireVsCodeApi(): { postMessage(message: ResultsRequest): void };
@@ -18,14 +19,33 @@ let current: Extract<ResultsMessage, { type: 'results' }> | undefined;
 let draftWhere: string | undefined;
 /** Caret to restore in the WHERE box once the filtered page arrives. */
 let pendingFocus: { start: number | null; end: number | null } | undefined;
+/** Selected cells (one grid at a time). Cleared on every render. */
+let selection: GridSelection | undefined;
+/** Per result section: original row index for each displayed row (differs after an in-grid sort). */
+let orders = new Map<number, number[]>();
+let dragging = false;
 
-window.addEventListener('message', (event: MessageEvent<ResultsMessage>) => {
+window.addEventListener('message', (event: MessageEvent<ResultsMessage | ResultsCommand>) => {
+  const msg = event.data;
+  if (msg.type === 'copyRequest') {
+    copySelection(msg.format);
+    return;
+  }
   localSorts = new Map();
-  render(event.data);
+  render(msg);
+});
+window.addEventListener('mouseup', () => (dragging = false));
+// Ctrl/Cmd+C (and Edit > Copy) arrive as a copy event. Formatting happens in the extension.
+document.addEventListener('copy', (event) => {
+  if (!selection || !(document.activeElement instanceof HTMLElement) || !document.activeElement.classList.contains('table-wrap')) return;
+  event.preventDefault();
+  copySelection('tsv');
 });
 vscode.postMessage({ type: 'ready' });
 
 function render(msg: ResultsMessage): void {
+  selection = undefined;
+  orders = new Map();
   if (msg.type === 'loading') {
     current = undefined;
     draftWhere = undefined;
@@ -52,6 +72,13 @@ function renderResult(result: StatementResult, index: number, table: TableViewSt
   const sql = el('div', 'sql-line', result.sql.replace(/\s+/g, ' '));
   sql.title = result.sql;
   header.append(sql);
+  if (!result.error && result.columns.length) {
+    // The extension asks for format, scope and file; it already has the rows.
+    header.append(button('Export…', false, () => {
+      const order = !table && localSorts.has(index) ? orders.get(index) : undefined;
+      vscode.postMessage({ type: 'export', index, order });
+    }));
+  }
   section.append(header);
   // The filter bar stays above an error too, so a bad condition can be fixed in place.
   if (table) section.append(renderFilterBar(table), renderPager(result, table));
@@ -218,7 +245,84 @@ function renderTable(result: StatementResult, index: number, table: TableViewSta
   }
   grid.append(body);
   wrap.append(grid);
+  orders.set(index, order);
+  attachSelection(wrap, body, index, result.columns.length);
   return wrap;
+}
+
+/**
+ * Click a cell, Shift+click or drag for a range, click row numbers for whole rows, Ctrl/Cmd+A for all.
+ * The grid takes focus so Ctrl+C copies it (see the document 'copy' listener). Right-click opens
+ * VS Code's own menu (package.json webview/context) for the grid section.
+ */
+function attachSelection(wrap: HTMLElement, body: HTMLTableSectionElement, index: number, columnCount: number): void {
+  wrap.tabIndex = 0;
+  wrap.dataset.index = String(index);
+  wrap.dataset.vscodeContext = JSON.stringify({ webviewSection: 'grid', preventDefaultContextMenuItems: true });
+  wrap.setAttribute('aria-label', 'Results grid. Ctrl+A selects all, Ctrl+C copies.');
+
+  const cellAt = (target: EventTarget | null) => {
+    const td = target instanceof Element ? target.closest('td') : null;
+    const tr = td?.parentElement;
+    if (!td || !(tr instanceof HTMLTableRowElement) || tr.parentElement !== body) return undefined;
+    const rowHeader = td.classList.contains('rownum');
+    return { row: tr.sectionRowIndex, col: rowHeader ? 0 : td.cellIndex - 1, rowHeader };
+  };
+
+  wrap.addEventListener('mousedown', (event) => {
+    const at = cellAt(event.target);
+    if (!at) return;
+    // Right-click inside the selection keeps it, so the context menu acts on it.
+    if (event.button === 2 && selection?.index === index && inRange(rangeOf(selection, columnCount), at.row, at.col)) return;
+    if (event.button !== 0 && event.button !== 2) return;
+    event.preventDefault(); // no text selection while dragging
+    wrap.focus({ preventScroll: true });
+    setSelection(selectCell(selection, index, { row: at.row, col: at.col }, event.shiftKey, at.rowHeader), columnCount);
+    dragging = event.button === 0;
+  });
+  wrap.addEventListener('mouseover', (event) => {
+    if (!dragging || selection?.index !== index) return;
+    const at = cellAt(event.target);
+    if (at) setSelection({ ...selection, focus: { row: at.row, col: at.col } }, columnCount);
+  });
+  wrap.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      setSelection(selectAll(index, body.rows.length, columnCount), columnCount);
+    }
+  });
+}
+
+/** Repaints only the rows the old or new selection touches. */
+function setSelection(next: GridSelection | undefined, columnCount: number): void {
+  const previous = selection;
+  selection = next;
+  for (const sel of [previous, next]) {
+    if (!sel) continue;
+    const body = root.querySelector<HTMLElement>(`.table-wrap[data-index="${sel.index}"] tbody`);
+    if (!(body instanceof HTMLTableSectionElement)) continue;
+    const old = previous && previous.index === sel.index ? rangeOf(previous, columnCount) : undefined;
+    const now = next && next.index === sel.index ? rangeOf(next, columnCount) : undefined;
+    paintRows(body, old, now);
+  }
+}
+
+function paintRows(body: HTMLTableSectionElement, old: CellRange | undefined, now: CellRange | undefined): void {
+  const top = Math.min(old?.top ?? Infinity, now?.top ?? Infinity);
+  const bottom = Math.max(old?.bottom ?? -1, now?.bottom ?? -1);
+  for (let r = Math.max(0, top); r <= bottom && r < body.rows.length; r++) {
+    const cells = body.rows[r].cells;
+    for (let c = 1; c < cells.length; c++) cells[c].classList.toggle('selected', inRange(now, r, c - 1));
+    cells[0].classList.toggle('selected-row', !!now && r >= now.top && r <= now.bottom);
+  }
+}
+
+function copySelection(format: CopyFormat): void {
+  const sel = selection;
+  const order = sel && orders.get(sel.index);
+  const columns = sel && current?.results[sel.index]?.columns.length;
+  if (!sel || !order || !columns) return;
+  vscode.postMessage({ type: 'copy', index: sel.index, format, ...copyRequestOf(sel, order, columns) });
 }
 
 function renderHeader(name: string, active: SortKey['direction'] | undefined, onSort: () => void): HTMLElement {
