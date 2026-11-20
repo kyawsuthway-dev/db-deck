@@ -1,8 +1,22 @@
 import { Client, type CustomTypesConfig, type QueryResult } from 'pg';
 import { splitSql } from '../query/splitSql';
-import type { Cell, ColumnInfo, ConnectionConfig, Driver, FilterOperator, SslMode, StatementResult, TableInfo, TablePage } from '../types';
+import type {
+  Cell,
+  ChangeStatement,
+  ColumnInfo,
+  ConnectionConfig,
+  Driver,
+  FilterOperator,
+  RowChange,
+  SslMode,
+  StatementResult,
+  TableInfo,
+  TablePage,
+} from '../types';
 import {
+  buildChangeStatements,
   buildPageQuery,
+  ChangeConflict,
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
@@ -10,9 +24,18 @@ import {
   quoteIdent,
   runEach,
   standardLiteral,
+  type WriteDialect,
 } from './common';
 
 const BOOL_OID = 16;
+
+const WRITE_DIALECT: WriteDialect = {
+  quote: '"',
+  placeholder: (n) => `$${n}`,
+  nullSafeEquals: 'IS NOT DISTINCT FROM',
+  allDefaults: 'DEFAULT VALUES',
+  literal: standardLiteral,
+};
 
 /** Keep PostgreSQL's own text form for every value (exact numerics, timestamps as stored), except booleans. */
 const textTypes: CustomTypesConfig = {
@@ -124,9 +147,33 @@ export class PostgresDriver implements Driver {
     return this.connecting;
   }
 
-  private async open(): Promise<Client> {
+  changeStatements(table: TableInfo, changes: RowChange[]): ChangeStatement[] {
+    return buildChangeStatements(qualifiedName(table), WRITE_DIALECT, changes);
+  }
+
+  /** On its own connection, so the editor's session (and any open transaction) is never touched. */
+  async applyChanges(statements: ChangeStatement[]): Promise<void> {
+    const client = this.newClient('DB Deck (edit)');
+    client.on('error', () => {}); // a dropped connection fails the pending query instead of crashing
+    await client.connect();
+    try {
+      await client.query('BEGIN');
+      for (const [i, s] of statements.entries()) {
+        const r = await client.query({ text: s.sql, values: s.params });
+        if (r.rowCount !== 1) throw new ChangeConflict(i, r.rowCount ?? 0);
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  private newClient(applicationName: string): Client {
     const c = this.config;
-    const client = new Client({
+    return new Client({
       host: c.host,
       port: c.port,
       user: c.user,
@@ -134,9 +181,13 @@ export class PostgresDriver implements Driver {
       database: c.database || 'postgres',
       ssl: sslOption(c.ssl),
       connectionTimeoutMillis: 10_000,
-      application_name: 'DB Deck',
+      application_name: applicationName,
       types: textTypes,
     });
+  }
+
+  private async open(): Promise<Client> {
+    const client = this.newClient('DB Deck');
     const drop = () => {
       if (this.client === client) this.client = undefined;
     };

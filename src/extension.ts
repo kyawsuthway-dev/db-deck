@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
 import { runConnectionWizard, type WizardResult } from './connectionWizard';
 import { errorMessage } from './drivers/common';
+import { TableEditor } from './edit/applyEdits';
 import { ResultsExporter } from './export/exportResults';
 import { PAGE_SIZE, QueryController } from './query/runQuery';
 import { ConnectionNode, ConnectionsTree, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
@@ -13,6 +14,7 @@ export function activate(context: vscode.ExtensionContext) {
   const panel = new ResultsPanel(context.extensionUri);
   const queries = new QueryController(context, manager, panel);
   const exporter = new ResultsExporter(manager, panel, queries);
+  const editor = new TableEditor(manager, panel, queries);
 
   const command = (id: string, handler: (...args: any[]) => unknown) =>
     vscode.commands.registerCommand(`dbDeck.${id}`, handler);
@@ -22,6 +24,7 @@ export function activate(context: vscode.ExtensionContext) {
     panel,
     queries,
     exporter,
+    editor,
     vscode.window.createTreeView('dbDeck.connections', { treeDataProvider: tree, showCollapseAll: true }),
 
     command('addConnection', () => addConnection(manager)),
@@ -68,6 +71,9 @@ export function activate(context: vscode.ExtensionContext) {
     command('copySelectionWithHeaders', () => panel.requestCopy('tsvHeaders')),
     command('copySelectionAsCsv', () => panel.requestCopy('csv')),
     command('copySelectionAsJson', () => panel.requestCopy('json')),
+    command('setNull', () => panel.requestEdit('setNull')),
+    command('deleteRows', () => panel.requestEdit('deleteRows')),
+    command('addRow', () => panel.requestEdit('addRow')),
   );
 }
 

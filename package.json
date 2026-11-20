@@ -62,7 +62,10 @@
       { "command": "dbDeck.copySelection", "title": "Copy", "category": "DB Deck" },
       { "command": "dbDeck.copySelectionWithHeaders", "title": "Copy with Headers", "category": "DB Deck" },
       { "command": "dbDeck.copySelectionAsCsv", "title": "Copy as CSV", "category": "DB Deck" },
-      { "command": "dbDeck.copySelectionAsJson", "title": "Copy as JSON", "category": "DB Deck" }
+      { "command": "dbDeck.copySelectionAsJson", "title": "Copy as JSON", "category": "DB Deck" },
+      { "command": "dbDeck.setNull", "title": "Set to NULL", "category": "DB Deck" },
+      { "command": "dbDeck.deleteRows", "title": "Delete Rows", "category": "DB Deck" },
+      { "command": "dbDeck.addRow", "title": "Add Row", "category": "DB Deck" }
     ],
     "menus": {
       "view/title": [
@@ -89,7 +92,10 @@
         { "command": "dbDeck.copySelection", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "1_copy@1" },
         { "command": "dbDeck.copySelectionWithHeaders", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "1_copy@2" },
         { "command": "dbDeck.copySelectionAsCsv", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "2_copyAs@1" },
-        { "command": "dbDeck.copySelectionAsJson", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "2_copyAs@2" }
+        { "command": "dbDeck.copySelectionAsJson", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "2_copyAs@2" },
+        { "command": "dbDeck.setNull", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid' && dbDeckEditable", "group": "3_edit@1" },
+        { "command": "dbDeck.addRow", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid' && dbDeckEditable", "group": "3_edit@2" },
+        { "command": "dbDeck.deleteRows", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid' && dbDeckEditable", "group": "3_edit@3" }
       ],
       "commandPalette": [
         { "command": "dbDeck.previewTable", "when": "false" },
@@ -98,6 +104,9 @@
         { "command": "dbDeck.copySelectionWithHeaders", "when": "false" },
         { "command": "dbDeck.copySelectionAsCsv", "when": "false" },
         { "command": "dbDeck.copySelectionAsJson", "when": "false" },
+        { "command": "dbDeck.setNull", "when": "false" },
+        { "command": "dbDeck.deleteRows", "when": "false" },
+        { "command": "dbDeck.addRow", "when": "false" },
         { "command": "dbDeck.runQuery", "when": "editorLangId == sql" },
         { "command": "dbDeck.selectConnection", "when": "editorLangId == sql" }
       ]

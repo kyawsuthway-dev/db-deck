@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
 import { errorMessage } from '../drivers/common';
 import { typeLabel } from '../drivers';
+import { isBinaryType } from '../export/formats';
 import type { ColumnInfo, Driver, FilterHints, SortKey, StatementResult, TableInfo } from '../types';
 import type { ResultsPanel, ResultsRequest, TableViewState } from '../views/ResultsPanel';
 
@@ -27,14 +28,18 @@ interface TableView {
   hints: FilterHints;
 }
 
-/** What the export service needs to re-read the open table view. */
-export interface TableExportSource {
+/** What the export and edit services need to know about the open table view. */
+export interface TableViewSource {
   connectionId: string;
   table: TableInfo;
+  label: string;
   where?: string;
   /** The sort, or the primary key order; empty when neither exists (batches may then repeat or skip rows). */
   orderBy: SortKey[];
-  columnTypes: string[];
+  /** Column names and types, in table order. */
+  columns: { name: string; type: string }[];
+  /** Primary key column names; empty when there is none. */
+  key: string[];
 }
 
 /** Longest filter condition accepted from the webview. */
@@ -49,6 +54,8 @@ export class QueryController implements vscode.Disposable {
   private readonly statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   private readonly disposables: vscode.Disposable[] = [];
   private tableView?: TableView;
+  /** Pending edits the grid reports; replacing the view asks first when there are any. */
+  private pendingCount = 0;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -98,11 +105,13 @@ export class QueryController implements vscode.Disposable {
       await this.setConnection(doc, connectionId);
     }
     const name = this.manager.get(connectionId)?.name ?? 'Query';
+    if (!(await this.confirmDiscard())) return;
     await this.execute(connectionId, sql, `Query · ${name}`, vscode.ViewColumn.Beside);
   }
 
   /** Opens a table view at its first page, ordered by primary key when there is one. */
   async previewTable(connectionId: string, table: TableInfo, label: string): Promise<void> {
+    if (!(await this.confirmDiscard())) return;
     let columns: ColumnInfo[];
     let hints: FilterHints;
     try {
@@ -128,17 +137,44 @@ export class QueryController implements vscode.Disposable {
     await this.showTablePage(this.tableView, true);
   }
 
-  /** The table shown in the panel, with its filter and order, for "Export all matching rows". */
-  currentTableView(): TableExportSource | undefined {
+  /** The table shown in the panel, with its filter, order and key, for export and editing. */
+  currentTableView(): TableViewSource | undefined {
     const view = this.tableView;
     if (!view) return undefined;
     return {
       connectionId: view.connectionId,
       table: view.table,
+      label: view.label,
       where: view.where,
       orderBy: view.sort ? [view.sort] : view.keyOrder,
-      columnTypes: view.hints.columns.map((c) => c.type),
+      columns: view.hints.columns.map((c) => ({ name: c.name, type: c.type })),
+      key: view.keyOrder.map((k) => k.column),
     };
+  }
+
+  /** Reloads the open table page, keeping its filter, sort and offset (after saving edits). */
+  async reloadTablePage(): Promise<void> {
+    if (this.tableView) await this.showTablePage(this.tableView, false);
+  }
+
+  /** Forgets the grid's pending edits (saved, or the user chose to discard them). */
+  clearPending(): void {
+    this.pendingCount = 0;
+    this.panel.clearPending();
+  }
+
+  /** True when there are no pending edits, or the user agreed to discard them. */
+  private async confirmDiscard(): Promise<boolean> {
+    const n = this.pendingCount;
+    if (n === 0) return true;
+    const choice = await vscode.window.showWarningMessage(
+      `Discard ${n} pending change${n === 1 ? '' : 's'} in the Results grid?`,
+      { modal: true, detail: 'They haven’t been saved to the database.' },
+      'Discard',
+    );
+    if (choice !== 'Discard') return false;
+    this.clearPending();
+    return true;
   }
 
   /** Lets the user pick the connection for the active SQL editor. */
@@ -155,9 +191,15 @@ export class QueryController implements vscode.Disposable {
 
   /** Page and sort requests come from the webview, so they're checked against the open table view. */
   private onPanelRequest(request: Exclude<ResultsRequest, { type: 'ready' }>): void {
+    if (request.type === 'pending') {
+      if (Number.isSafeInteger(request.count) && request.count >= 0) this.pendingCount = request.count;
+      return;
+    }
     const view = this.tableView;
-    // Export and copy are handled by ResultsExporter.
-    if (!view || request.type === 'export' || request.type === 'copy') return;
+    // Export and copy are handled by ResultsExporter, save by TableEditor.
+    if (!view || request.type === 'export' || request.type === 'copy' || request.type === 'save' || request.type === 'applySave' || request.type === 'cancelSave') {
+      return;
+    }
     if (request.type === 'page') {
       if (!Number.isSafeInteger(request.offset) || request.offset < 0) return;
       view.offset = request.offset;
@@ -274,5 +316,16 @@ function tableState(view: TableView, hasMore: boolean): TableViewState {
     orderedByKey: view.keyOrder.length > 0,
     where: view.where,
     hints: view.hints,
+    edit: editability(view),
+  };
+}
+
+/** Only tables with a primary key are editable, so every change targets exactly one row. Binary columns stay read-only. */
+function editability(view: TableView): TableViewState['edit'] {
+  if (view.table.kind !== 'table') return { reason: 'Views are read-only.' };
+  if (!view.keyOrder.length) return { reason: 'Read-only: this table has no primary key.' };
+  return {
+    key: view.keyOrder.map((k) => k.column),
+    readOnly: view.hints.columns.filter((c) => isBinaryType(c.type)).map((c) => c.name),
   };
 }

@@ -334,3 +334,129 @@ tbody td.rownum.selected-row {
 header .pager-button {
   flex: none;
 }
+
+/* Table editing: pending changes are marked until Save or Discard. */
+.edit-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.edit-bar .note {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+.pending-count {
+  color: var(--vscode-gitDecoration-modifiedResourceForeground, var(--vscode-foreground));
+  font-weight: 600;
+}
+.pager-button.primary {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+.pager-button.primary:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+tbody td.edited {
+  background: var(--vscode-diffEditor-insertedTextBackground, rgba(155, 185, 85, 0.2));
+}
+tbody tr.inserted td {
+  background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.1));
+}
+tbody tr.deleted td:not(.rownum) {
+  text-decoration: line-through;
+  opacity: 0.55;
+  background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.1));
+}
+tbody td.readonly {
+  color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
+}
+.default {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+tbody td.editing {
+  padding: 0;
+  overflow: visible;
+}
+.cell-editor {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 120px;
+  min-height: 22px;
+  margin: 0;
+  padding: 2px 6px;
+  resize: vertical;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-focusBorder);
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  white-space: pre;
+}
+.cell-editor:focus {
+  outline: none;
+}
+
+/* Save confirmation, between the edit bar and the grid. Looks like VS Code's own notification dialogs. */
+.confirm {
+  max-width: 720px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  color: var(--vscode-notifications-foreground, var(--vscode-foreground));
+  background: var(--vscode-notifications-background, var(--vscode-editorWidget-background));
+  border: 1px solid var(--vscode-notifications-border, var(--vscode-widget-border, var(--vscode-panel-border)));
+  border-left: 3px solid var(--vscode-notificationsWarningIcon-foreground, var(--vscode-editorWarning-foreground));
+  border-radius: 4px;
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, transparent);
+}
+.confirm:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.confirm-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.confirm-icon {
+  color: var(--vscode-notificationsWarningIcon-foreground, var(--vscode-editorWarning-foreground));
+  font-size: 1.4em;
+  line-height: 1;
+}
+.confirm-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.confirm-detail,
+.confirm-note {
+  color: var(--vscode-descriptionForeground);
+}
+.confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.confirm-actions .pager-button {
+  padding: 4px 14px;
+}
+.confirm-note {
+  margin-top: 10px;
+  font-style: italic;
+}
+.confirm-sql {
+  max-height: 40vh;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  color: var(--vscode-editor-foreground);
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-panel-border);
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  white-space: pre;
+  user-select: text;
+}
