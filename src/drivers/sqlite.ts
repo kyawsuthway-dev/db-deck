@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
-import type { Cell, ChangeStatement, ColumnInfo, Driver, FilterOperator, RowChange, StatementResult, TableInfo, TablePage } from '../types';
+import type { Cell, ChangeStatement, ColumnInfo, DbObject, Driver, FilterOperator, IndexInfo, RowChange, StatementResult, TableInfo, TablePage } from '../types';
 import {
   buildChangeStatements,
   buildPageQuery,
@@ -75,6 +75,51 @@ export class SqliteDriver implements Driver {
       nullable: notnull === 0,
       primaryKey: Number(pk) > 0,
     }));
+  }
+
+  async listObjects(): Promise<DbObject[]> {
+    return this.listTables();
+  }
+
+  async listIndexes(table: TableInfo): Promise<IndexInfo[]> {
+    const db = await this.database();
+    // Columns: seq, name, unique, origin (c = CREATE INDEX, u = UNIQUE, pk = PRIMARY KEY), partial
+    const [list] = db.exec(`PRAGMA index_list(${quoteIdent(table.name, '"')})`);
+    return (list?.values ?? [])
+      .map(([, name, unique, origin]) => {
+        // Columns: seqno, cid, name (null for an expression)
+        const [info] = db.exec(`PRAGMA index_info(${quoteIdent(String(name), '"')})`);
+        const columns = (info?.values ?? []).map(([, , col]) => (col === null ? '(expression)' : String(col))).join(', ');
+        return { name: String(name), columns, unique: Number(unique) === 1, primary: origin === 'pk' };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async listTriggers(table: TableInfo): Promise<DbObject[]> {
+    const db = await this.database();
+    const [result] = db.exec(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? ORDER BY name`, [table.name]);
+    return (result?.values ?? []).map(([name]) => ({ kind: 'trigger', name: String(name), table: table.name }));
+  }
+
+  /** Exactly the SQL SQLite stored. Indexes SQLite made itself (for PRIMARY KEY / UNIQUE) have none. */
+  async objectDdl(object: DbObject): Promise<string> {
+    const db = await this.database();
+    const [result] = db.exec(`SELECT sql FROM sqlite_master WHERE type = ? AND name = ?`, [object.kind, object.name]);
+    const sql = result?.values[0]?.[0];
+    if (typeof sql !== 'string') {
+      return object.kind === 'index'
+        ? `-- ${object.name} was created by SQLite for a PRIMARY KEY or UNIQUE constraint of ${object.table ?? 'its table'}; see the table's DDL.\n`
+        : `-- No definition found for ${object.name}.\n`;
+    }
+    return `${sql.trim().replace(/;$/, '')};\n`;
+  }
+
+  async listDatabases(): Promise<string[]> {
+    return [];
+  }
+
+  defaultSchemaLabel(): string | undefined {
+    return undefined;
   }
 
   async query(sql: string): Promise<StatementResult[]> {

@@ -112,7 +112,7 @@ async function serverSteps(id: string, kind: DbKind, previous?: WizardResult): P
   );
   if (!ssl) return undefined;
 
-  const defaultName = `${user}@${host}${database ? `/${database}` : ''}`;
+  const defaultName = defaultServerName(user.trim(), host.trim(), database.trim() || undefined);
   const name = await ask(title, 'Connection name', prev?.name ?? defaultName, requireText);
   if (name === undefined) return undefined;
 
@@ -129,6 +129,11 @@ async function serverSteps(id: string, kind: DbKind, previous?: WizardResult): P
     },
     password: password || undefined,
   };
+}
+
+/** The name the wizard suggests for a server connection; Switch Database… keeps it in step when unchanged. */
+export function defaultServerName(user: string | undefined, host: string | undefined, database: string | undefined): string {
+  return `${user ?? ''}@${host ?? ''}${database ? `/${database}` : ''}`;
 }
 
 function ask(title: string, prompt: string, value: string, validateInput?: (v: string) => string | undefined) {

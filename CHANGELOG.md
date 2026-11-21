@@ -18,6 +18,10 @@
 - Format SQL with Format Document / Format Selection, in the connection's dialect (`sql-formatter`).
 - Query History view: runs from SQL editors per workspace, grouped by day, with open, Run Again, Copy SQL, Delete, Search and Clear; setting `dbDeck.history.enabled`.
 - Saved Queries view: Save Query… (editor title, right-click, view toolbar, or Ctrl/Cmd+S in a New Query editor) keeps a SQL editor's query as a `.sql` file under its connection; open, run, rename and delete from the view.
+- Tree: schema/database folders (when there's more than one); functions, procedures and sequences; indexes and triggers under tables.
+- Show DDL for every object; Generate SQL (SELECT, INSERT, UPDATE, DELETE) for tables, safe if run unedited; Copy Name / Copy Qualified Name.
+- Find Object… searches objects in open connections and reveals the one you pick.
+- Switch Database… for PostgreSQL and MySQL connections.
 - DB Deck's Ctrl/Cmd+Enter and Ctrl/Cmd+Shift+Enter now apply only in SQL editors linked to a DB Deck connection, so other SQL extensions keep theirs.
 - Contributor setup: `Taskfile.yml` (`task setup`), pre-commit check, `CONTRIBUTING.md`, shared rules in `.ai/rules/` and `AGENTS.md`.
 

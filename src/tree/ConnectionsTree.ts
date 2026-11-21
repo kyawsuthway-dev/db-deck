@@ -1,58 +1,121 @@
 import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
 import { errorMessage } from '../drivers/common';
-import { typeLabel } from '../drivers';
-import type { ColumnInfo, ConnectionConfig, TableInfo } from '../types';
+import { DATABASE_SCOPE, typeLabel } from '../drivers';
+import type { ColumnInfo, ConnectionConfig, DbObject, ObjectKind, TableInfo } from '../types';
 
-export class ConnectionNode {
+/** Every node knows its parent, so `TreeView.reveal` (Find Object…) can walk up from it. */
+interface Base {
+  readonly treeId: string;
+  readonly parent?: TreeNode;
+}
+
+export class ConnectionNode implements Base {
   readonly kind = 'connection';
+  readonly parent = undefined;
   constructor(
     readonly config: ConnectionConfig,
     readonly treeId: string,
   ) {}
 }
 
-export class GroupNode {
-  readonly kind = 'group';
+/** A schema (PostgreSQL) or database (MySQL), shown only when a connection has more than one. */
+export class SchemaNode implements Base {
+  readonly kind = 'schema';
   constructor(
     readonly connectionId: string,
-    readonly label: 'Tables' | 'Views',
-    readonly tables: TableInfo[],
+    readonly label: string,
+    readonly objects: DbObject[],
     readonly treeId: string,
+    readonly parent: TreeNode,
   ) {}
 }
 
-export class TableNode {
+/** Tables / Views / Functions / … under a connection or schema; Indexes / Triggers under a table. */
+export class FolderNode implements Base {
+  readonly kind = 'folder';
+  constructor(
+    readonly connectionId: string,
+    readonly label: string,
+    readonly objects: DbObject[],
+    readonly treeId: string,
+    readonly parent: TreeNode,
+  ) {}
+}
+
+/** A table or view: click shows its rows; expands to columns, indexes and triggers. */
+export class TableNode implements Base {
   readonly kind = 'table';
+  readonly table: TableInfo;
+  constructor(
+    readonly connectionId: string,
+    readonly object: DbObject,
+    readonly treeId: string,
+    readonly parent?: TreeNode,
+  ) {
+    this.table = { name: object.name, schema: object.schema, kind: object.kind === 'view' ? 'view' : 'table' };
+  }
+}
+
+/** A function, procedure, sequence, index or trigger: click shows its DDL. */
+export class ObjectNode implements Base {
+  readonly kind = 'object';
+  constructor(
+    readonly connectionId: string,
+    readonly object: DbObject,
+    readonly treeId: string,
+    readonly parent: TreeNode,
+  ) {}
+}
+
+export class ColumnNode implements Base {
+  readonly kind = 'column';
   constructor(
     readonly connectionId: string,
     readonly table: TableInfo,
-    readonly treeId: string,
-  ) {}
-}
-
-class ColumnNode {
-  readonly kind = 'column';
-  constructor(
     readonly column: ColumnInfo,
     readonly treeId: string,
+    readonly parent: TreeNode,
   ) {}
 }
 
-class MessageNode {
+class MessageNode implements Base {
   readonly kind = 'message';
   constructor(
     readonly message: string,
     readonly detail: string,
     readonly treeId: string,
+    readonly parent: TreeNode,
   ) {}
 }
 
-export type TreeNode = ConnectionNode | GroupNode | TableNode | ColumnNode | MessageNode;
+export type TreeNode = ConnectionNode | SchemaNode | FolderNode | TableNode | ObjectNode | ColumnNode | MessageNode;
 
-export function tableLabel(table: TableInfo): string {
+export function tableLabel(table: { name: string; schema?: string }): string {
   return table.schema ? `${table.schema}.${table.name}` : table.name;
 }
+
+/** Folders under a connection or schema, in this order; empty ones aren't shown. */
+const FOLDERS: { kind: ObjectKind; label: string }[] = [
+  { kind: 'table', label: 'Tables' },
+  { kind: 'view', label: 'Views' },
+  { kind: 'function', label: 'Functions' },
+  { kind: 'procedure', label: 'Procedures' },
+  { kind: 'sequence', label: 'Sequences' },
+];
+
+const ICONS: Record<ObjectKind, string> = {
+  table: 'table',
+  view: 'eye',
+  function: 'symbol-method',
+  procedure: 'symbol-event',
+  sequence: 'symbol-number',
+  index: 'list-ordered',
+  trigger: 'zap',
+};
+
+/** Whether the connection's tree items offer server-only actions (Switch Database…). */
+const isServer = (c: ConnectionConfig) => DATABASE_SCOPE[c.type] !== 'none';
 
 export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
   private readonly changed = new vscode.EventEmitter<TreeNode | undefined>();
@@ -75,6 +138,10 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
     this.generations.set(connectionId, (this.generations.get(connectionId) ?? 0) + 1);
   }
 
+  getParent(node: TreeNode): TreeNode | undefined {
+    return node.parent;
+  }
+
   getTreeItem(node: TreeNode): vscode.TreeItem {
     const C = vscode.TreeItemCollapsibleState;
     switch (node.kind) {
@@ -85,21 +152,40 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
         item.description = c.type === 'sqlite' ? typeLabel(c.type) : `${typeLabel(c.type)} · ${c.host}:${c.port}`;
         item.tooltip = c.type === 'sqlite' ? c.filePath : `${c.user}@${c.host}:${c.port}${c.database ? `/${c.database}` : ''}`;
         item.iconPath = new vscode.ThemeIcon('database', connected ? new vscode.ThemeColor('charts.green') : undefined);
-        item.contextValue = connected ? 'connection.connected' : 'connection';
+        // connection[.connected][.server]: menus match with regexes (vscode-api.md).
+        item.contextValue = `connection${connected ? '.connected' : ''}${isServer(c) ? '.server' : ''}`;
         return withId(item, node);
       }
-      case 'group': {
-        const item = new vscode.TreeItem(node.label, node.tables.length ? C.Collapsed : C.None);
-        item.description = String(node.tables.length);
+      case 'schema': {
+        const item = new vscode.TreeItem(node.label, C.Collapsed);
+        item.iconPath = new vscode.ThemeIcon('symbol-namespace');
+        item.contextValue = 'schema';
+        return withId(item, node);
+      }
+      case 'folder': {
+        const item = new vscode.TreeItem(node.label, node.objects.length ? C.Collapsed : C.None);
+        item.description = String(node.objects.length);
         item.iconPath = new vscode.ThemeIcon('folder');
         return withId(item, node);
       }
       case 'table': {
-        const item = new vscode.TreeItem(tableLabel(node.table), C.Collapsed);
-        item.iconPath = new vscode.ThemeIcon(node.table.kind === 'view' ? 'eye' : 'table');
-        item.contextValue = 'table';
-        item.tooltip = `${node.table.kind === 'view' ? 'View' : 'Table'} ${tableLabel(node.table)} — click to show the first 100 rows`;
+        const o = node.object;
+        const item = new vscode.TreeItem(tableLabel(o), C.Collapsed);
+        item.iconPath = new vscode.ThemeIcon(ICONS[o.kind]);
+        item.description = o.detail;
+        item.contextValue = o.kind === 'view' ? 'view' : 'table';
+        item.tooltip = `${o.kind === 'view' ? 'View' : 'Table'} ${tableLabel(o)} — click to show the first 100 rows`;
         item.command = { command: 'dbDeck.previewTable', title: 'Show Rows', arguments: [node] };
+        return withId(item, node);
+      }
+      case 'object': {
+        const o = node.object;
+        const item = new vscode.TreeItem(o.table ? o.name : tableLabel(o), C.None);
+        item.iconPath = new vscode.ThemeIcon(ICONS[o.kind]);
+        item.description = o.detail;
+        item.contextValue = o.kind;
+        item.tooltip = `${o.name}${o.detail ? ` ${o.detail}` : ''} — click to show its definition`;
+        item.command = { command: 'dbDeck.showDdl', title: 'Show DDL', arguments: [node] };
         return withId(item, node);
       }
       case 'column': {
@@ -108,6 +194,7 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
         item.description = col.primaryKey ? `${col.type} · PK` : col.type;
         item.iconPath = new vscode.ThemeIcon(col.primaryKey ? 'key' : 'symbol-field');
         item.tooltip = `${col.name} ${col.type}${col.primaryKey ? ' PRIMARY KEY' : ''}${col.nullable ? '' : ' NOT NULL'}`;
+        item.contextValue = 'column';
         return withId(item, node);
       }
       case 'message': {
@@ -127,18 +214,45 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
       switch (node.kind) {
         case 'connection': {
           const id = node.config.id;
-          const tables = await (await this.manager.getDriver(id)).listTables();
-          return [
-            new GroupNode(id, 'Tables', tables.filter((t) => t.kind === 'table'), `${node.treeId}/tables`),
-            new GroupNode(id, 'Views', tables.filter((t) => t.kind === 'view'), `${node.treeId}/views`),
-          ];
+          const driver = await this.manager.getDriver(id);
+          const objects = await driver.listObjects();
+          // Objects without a schema are in the connection's default one; it's listed first.
+          const schemas = [...new Set(objects.map((o) => o.schema))].sort((a, b) =>
+            a === undefined ? -1 : b === undefined ? 1 : a.localeCompare(b),
+          );
+          if (schemas.length <= 1) return folders(id, objects, node);
+          return schemas.map((schema) => {
+            const label = schema ?? driver.defaultSchemaLabel() ?? 'default';
+            return new SchemaNode(id, label, objects.filter((o) => o.schema === schema), `${node.treeId}/schema:${label}`, node);
+          });
         }
-        case 'group':
-          return node.tables.map((t) => new TableNode(node.connectionId, t, `${node.treeId}/${tableLabel(t)}`));
+        case 'schema':
+          return folders(node.connectionId, node.objects, node);
+        case 'folder':
+          return node.objects.map((o) =>
+            o.kind === 'table' || o.kind === 'view'
+              ? new TableNode(node.connectionId, o, `${node.treeId}/${o.name}`, node)
+              : new ObjectNode(node.connectionId, o, `${node.treeId}/${o.name}${o.id ? `#${o.id}` : ''}`, node),
+          );
         case 'table': {
           const driver = await this.manager.getDriver(node.connectionId);
-          const columns = await driver.listColumns(node.table);
-          return columns.map((col) => new ColumnNode(col, `${node.treeId}/${col.name}`));
+          const table = node.table;
+          const [columns, indexes, triggers] = await Promise.all([
+            driver.listColumns(table),
+            table.kind === 'table' ? driver.listIndexes(table) : Promise.resolve([]),
+            driver.listTriggers(table),
+          ]);
+          const children: TreeNode[] = columns.map((col) => new ColumnNode(node.connectionId, table, col, `${node.treeId}/${col.name}`, node));
+          const indexObjects = indexes.map((ix): DbObject => ({
+            kind: 'index',
+            name: ix.name,
+            schema: table.schema,
+            table: table.name,
+            detail: `(${ix.columns})${ix.primary ? ' · PRIMARY' : ix.unique ? ' · UNIQUE' : ''}`,
+          }));
+          if (indexObjects.length) children.push(new FolderNode(node.connectionId, 'Indexes', indexObjects, `${node.treeId}/:indexes`, node));
+          if (triggers.length) children.push(new FolderNode(node.connectionId, 'Triggers', triggers, `${node.treeId}/:triggers`, node));
+          return children;
         }
         default:
           return [];
@@ -146,10 +260,38 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
     } catch (err) {
       const message = errorMessage(err);
       void vscode.window.showErrorMessage(`DB Deck: ${message}`);
-      return [new MessageNode(message.split('\n')[0], `${message}\n\nUse Refresh to try again.`, `${node.treeId}/error`)];
+      return [new MessageNode(message.split('\n')[0], `${message}\n\nUse Refresh to try again.`, `${node.treeId}/error`, node)];
     }
   }
+
+  /**
+   * The tree node for an object, found by walking the tree the way VS Code would (same ids), so it can be
+   * revealed. Undefined when it isn't there (e.g. the schema changed since the list was made).
+   */
+  async findNode(connectionId: string, object: DbObject): Promise<TreeNode | undefined> {
+    let level = (await this.getChildren()).find((n) => n.kind === 'connection' && n.config.id === connectionId);
+    const wanted = (n: TreeNode) =>
+      (n.kind === 'table' || n.kind === 'object') && n.object.kind === object.kind && n.object.name === object.name &&
+      n.object.schema === object.schema && n.object.id === object.id;
+    for (let depth = 0; level && depth < 4; depth++) {
+      if (wanted(level)) return level;
+      const children = await this.getChildren(level);
+      level =
+        children.find(wanted) ??
+        children.find((n) => n.kind === 'schema' && n.objects.some((o) => same(o, object))) ??
+        children.find((n) => n.kind === 'folder' && n.objects.some((o) => same(o, object)));
+    }
+    return level && wanted(level) ? level : undefined;
+  }
 }
+
+function folders(connectionId: string, objects: DbObject[], parent: TreeNode): FolderNode[] {
+  return FOLDERS.map(({ kind, label }) => ({ label, objects: objects.filter((o) => o.kind === kind) }))
+    .filter((f) => f.objects.length > 0 || f.label === 'Tables')
+    .map((f) => new FolderNode(connectionId, f.label, f.objects, `${parent.treeId}/${f.label.toLowerCase()}`, parent));
+}
+
+const same = (a: DbObject, b: DbObject) => a.kind === b.kind && a.name === b.name && a.schema === b.schema && a.id === b.id;
 
 function withId(item: vscode.TreeItem, node: TreeNode): vscode.TreeItem {
   item.id = node.treeId;

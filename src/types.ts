@@ -24,6 +24,31 @@ export interface TableInfo {
   kind: 'table' | 'view';
 }
 
+/** Kinds of database objects the tree shows. */
+export type ObjectKind = 'table' | 'view' | 'function' | 'procedure' | 'sequence' | 'index' | 'trigger';
+
+/** A database object in the tree. Tables and views also fit `TableInfo`. */
+export interface DbObject {
+  kind: ObjectKind;
+  name: string;
+  /** Set only when the object is outside the connection's default schema/database (as `TableInfo`). */
+  schema?: string;
+  /** Indexes and triggers: the table they belong to (in the same schema). */
+  table?: string;
+  /** A database id that tells overloads apart (PostgreSQL function oid). */
+  id?: string;
+  /** Shown next to the name: a function's arguments, a trigger's timing, "materialized". */
+  detail?: string;
+}
+
+export interface IndexInfo {
+  name: string;
+  /** The indexed columns or expressions, as the database shows them. */
+  columns: string;
+  unique: boolean;
+  primary: boolean;
+}
+
 export interface ColumnInfo {
   name: string;
   type: string;
@@ -117,6 +142,17 @@ export interface Driver {
   connect(): Promise<void>;
   listTables(): Promise<TableInfo[]>;
   listColumns(table: TableInfo): Promise<ColumnInfo[]>;
+  /** Tables, views, functions, procedures and sequences, for the tree and Find Object. Read-only. */
+  listObjects(): Promise<DbObject[]>;
+  listIndexes(table: TableInfo): Promise<IndexInfo[]>;
+  /** Triggers on a table or view (`kind: 'trigger'`, `table` set). */
+  listTriggers(table: TableInfo): Promise<DbObject[]>;
+  /** The object's definition as SQL text, for reading (Show DDL). Never run by DB Deck. */
+  objectDdl(object: DbObject): Promise<string>;
+  /** Other databases on the server, for Switch Database; empty when that doesn't apply (SQLite). */
+  listDatabases(): Promise<string[]>;
+  /** The name of the schema/database that objects without `schema` belong to (PostgreSQL `public`). */
+  defaultSchemaLabel(): string | undefined;
   /** Runs one or more `;`-separated statements in order, stopping at the first error. */
   query(sql: string): Promise<StatementResult[]>;
   /** SQL text that selects one page of a table, for opening in an editor. Read-only. */
