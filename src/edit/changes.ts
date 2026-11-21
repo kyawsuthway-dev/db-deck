@@ -17,6 +17,8 @@ export interface EditContext {
   readOnly: Set<string>;
   /** Columns left out of the conflict check (float/double/real: their text may not compare equal). */
   approximate: Set<string>;
+  /** Columns checked by their text (json: no equality against text in MySQL or PostgreSQL). */
+  asText: Set<string>;
 }
 
 /** Thrown for a change set the extension won't apply; the message is shown to the user. */
@@ -25,6 +27,15 @@ export class InvalidChanges extends Error {}
 /** Column types whose displayed text may not compare equal to the stored value. */
 export function isApproximateType(type: string): boolean {
   return /\b(float\d*|double|real)\b/i.test(type);
+}
+
+/**
+ * Column types compared by their text in the conflict check. MySQL never finds a JSON value equal to a
+ * string, and PostgreSQL's `json` has no equality operator; the loaded text is the server's own text, so
+ * comparing text matches an unchanged row. (`jsonb` compares fine as a value.)
+ */
+export function isTextComparedType(type: string): boolean {
+  return /^json$/i.test(type.trim());
 }
 
 export function buildRowChanges(input: unknown, page: EditContext): RowChange[] {
@@ -62,7 +73,13 @@ export function buildRowChanges(input: unknown, page: EditContext): RowChange[] 
       .filter(([col, value]) => value !== page.rows[row][col])
       .map(([col, value]) => {
         const column = page.columns[col];
-        return { column, value, original: page.rows[row][col], check: !page.approximate.has(column) };
+        return {
+          column,
+          value,
+          original: page.rows[row][col],
+          check: !page.approximate.has(column),
+          asText: page.asText.has(column) || undefined,
+        };
       });
     if (set.length) changes.push({ kind: 'update', key: keyOf(row), set });
   }

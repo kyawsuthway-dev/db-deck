@@ -26,6 +26,8 @@ const WRITE_DIALECT: WriteDialect = {
   nullSafeEquals: 'IS',
   allDefaults: 'DEFAULT VALUES',
   literal: standardLiteral,
+  // SQLite stores JSON as text already.
+  asText: (column) => column,
 };
 
 let sqlJs: Promise<SqlJsStatic> | undefined;

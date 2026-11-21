@@ -26,6 +26,8 @@
 - Find Object… searches objects in open connections and reveals the one you pick.
 - Switch Database… for PostgreSQL and MySQL connections.
 - DB Deck's Ctrl/Cmd+Enter and Ctrl/Cmd+Shift+Enter now apply only in SQL editors linked to a DB Deck connection, so other SQL extensions keep theirs.
+- Fixed: MySQL `JSON` values are shown exactly as the server sends them. They used to be re-printed, which turned `1.0` into `1` and large integers into quoted strings or rounded numbers.
+- Fixed: saving an edited `json` cell (MySQL `JSON`, PostgreSQL `json`) no longer fails. The conflict check compares the cell's text with the loaded text; `jsonb` keeps comparing values.
 - Contributor setup: `Taskfile.yml` (`task setup`), pre-commit check, `CONTRIBUTING.md`, shared rules in `.ai/rules/` and `AGENTS.md`.
 
 ## 0.0.1

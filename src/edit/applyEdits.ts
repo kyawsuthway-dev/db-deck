@@ -6,7 +6,7 @@ import { isBinaryType } from '../export/formats';
 import type { QueryController } from '../query/runQuery';
 import type { ChangeStatement, Driver } from '../types';
 import type { ResultsPanel, ResultsRequest } from '../views/ResultsPanel';
-import { buildRowChanges, describeChanges, InvalidChanges, isApproximateType } from './changes';
+import { buildRowChanges, describeChanges, InvalidChanges, isApproximateType, isTextComparedType } from './changes';
 
 /** A validated change set waiting for the user's Apply in the grid's confirmation. */
 interface PreparedSave {
@@ -67,6 +67,7 @@ export class TableEditor implements vscode.Disposable {
         key: view.key,
         readOnly: new Set(view.columns.filter((c) => isBinaryType(c.type)).map((c) => c.name)),
         approximate: new Set(view.columns.filter((c) => isApproximateType(c.type)).map((c) => c.name)),
+        asText: new Set(view.columns.filter((c) => isTextComparedType(c.type)).map((c) => c.name)),
       });
     } catch (err) {
       void vscode.window.showErrorMessage(err instanceof InvalidChanges ? err.message : errorMessage(err));

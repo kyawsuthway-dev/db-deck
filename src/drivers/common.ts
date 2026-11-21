@@ -182,6 +182,8 @@ export interface WriteDialect {
   allDefaults: string;
   /** A value as a SQL literal, for the review text only. */
   literal(value: string): string;
+  /** A column's value as text, for conflict checks on types with no equality against text (json). */
+  asText(column: string): string;
 }
 
 /**
@@ -219,7 +221,7 @@ export function buildChangeStatements(from: string, dialect: WriteDialect, chang
         add(' WHERE ');
         keyMatch(change.key);
         for (const s of change.set.filter((s) => s.check)) {
-          add(` AND ${q(s.column)} ${dialect.nullSafeEquals} `);
+          add(` AND ${s.asText ? dialect.asText(q(s.column)) : q(s.column)} ${dialect.nullSafeEquals} `);
           value(s.original);
         }
         break;
