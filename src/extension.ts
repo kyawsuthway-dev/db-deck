@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
-import { runConnectionWizard, type WizardResult } from './connectionWizard';
+import { askFolderName, pickFolder } from './connectionFolders';
 import { errorMessage } from './drivers/common';
 import { TableEditor } from './edit/applyEdits';
 import { ResultsExporter } from './export/exportResults';
@@ -8,15 +8,16 @@ import { QueryHistory } from './history/queryHistory';
 import { PAGE_SIZE, QueryController } from './query/runQuery';
 import { SqlEditor } from './query/sqlEditor';
 import { SavedQueries } from './saved/savedQueries';
-import { ConnectionNode, ConnectionsTree, ObjectNode, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
+import { ConnectionFolderNode, ConnectionNode, ConnectionsTree, ObjectNode, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
 import { ObjectCommands } from './tree/objectCommands';
 import { HistoryNode, HistoryTree } from './tree/HistoryTree';
 import { SavedQueriesTree, SavedQueryNode } from './tree/SavedQueriesTree';
+import { ConnectionForms } from './views/ConnectionForm';
 import { ResultsPanel } from './views/ResultsPanel';
 
 export function activate(context: vscode.ExtensionContext) {
   const manager = new ConnectionManager(context);
-  const tree = new ConnectionsTree(manager);
+  const tree = new ConnectionsTree(manager, context.extensionUri);
   const panel = new ResultsPanel(context.extensionUri);
   const queries = new QueryController(context, manager, panel);
   const exporter = new ResultsExporter(manager, panel, queries);
@@ -28,6 +29,7 @@ export function activate(context: vscode.ExtensionContext) {
   const savedTree = new SavedQueriesTree(saved);
   const connectionsView = vscode.window.createTreeView('dbDeck.connections', { treeDataProvider: tree, showCollapseAll: true });
   const objects = new ObjectCommands(manager, queries, tree, connectionsView);
+  const forms = new ConnectionForms(context.extensionUri, manager, tree);
 
   const command = (id: string, handler: (...args: any[]) => unknown) =>
     vscode.commands.registerCommand(`dbDeck.${id}`, handler);
@@ -35,6 +37,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     manager,
     panel,
+    forms,
     queries,
     exporter,
     editor,
@@ -52,13 +55,31 @@ export function activate(context: vscode.ExtensionContext) {
       historyTree.refresh();
     }),
 
-    command('addConnection', () => addConnection(manager)),
+    command('addConnection', () => forms.openAdd()),
+
+    command('editConnection', async (node?: ConnectionNode) => {
+      const config = node?.config ?? (await pickConnection(manager, 'Connection to edit'));
+      if (config) forms.openEdit(config);
+    }),
+
+    command('moveToFolder', async (node?: ConnectionNode) => {
+      const config = node?.config ?? (await pickConnection(manager, 'Connection to move'));
+      if (!config) return;
+      const picked = await pickFolder(`Move "${config.name}" to Folder`, manager.folders(), config.folder);
+      if (picked && picked.value !== config.folder) await manager.moveToFolder(config.id, picked.value);
+    }),
+
+    command('renameFolder', async (node?: ConnectionFolderNode) => {
+      if (!node) return;
+      const name = await askFolderName(`Rename Folder "${node.name}"`, node.name);
+      if (name && name !== node.name) await manager.renameFolder(node.name, name);
+    }),
 
     command('removeConnection', async (node?: ConnectionNode) => {
       const config = node?.config ?? (await pickConnection(manager, 'Connection to remove'));
       if (!config) return;
       const confirm = await vscode.window.showWarningMessage(
-        `Remove connection "${config.name}"? Its saved password is deleted too. The database itself is not touched.`,
+        `Remove connection "${config.name}"? Its saved passwords are deleted too. The database itself is not touched.`,
         { modal: true },
         'Remove',
       );
@@ -137,33 +158,6 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {}
-
-/** Wizard → test → save. On a failed test the user can edit the settings or save anyway. */
-async function addConnection(manager: ConnectionManager): Promise<void> {
-  let result: WizardResult | undefined;
-  for (;;) {
-    result = await runConnectionWizard(result);
-    if (!result) return;
-    const { config, password } = result;
-    try {
-      await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `Connecting to ${config.name}…` },
-        () => ConnectionManager.test(config, password),
-      );
-    } catch (err) {
-      const choice = await vscode.window.showErrorMessage(
-        `Could not connect to "${config.name}": ${errorMessage(err)}`,
-        'Edit Settings',
-        'Save Anyway',
-      );
-      if (choice === 'Edit Settings') continue;
-      if (choice !== 'Save Anyway') return;
-    }
-    await manager.add(config, password);
-    void vscode.window.showInformationMessage(`Saved connection "${config.name}".`);
-    return;
-  }
-}
 
 async function pickConnection(manager: ConnectionManager, placeHolder: string) {
   const picked = await vscode.window.showQuickPick(

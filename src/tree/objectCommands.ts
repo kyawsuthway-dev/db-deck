@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
-import { defaultServerName } from '../connectionWizard';
+import { defaultServerName } from '../connectionForm/fields';
 import { buildTemplate, errorMessage, type TemplateKind } from '../drivers/common';
 import { DATABASE_SCOPE } from '../drivers';
 import type { QueryController } from '../query/runQuery';

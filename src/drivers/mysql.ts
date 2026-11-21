@@ -11,6 +11,7 @@ import type {
   IndexInfo,
   RowChange,
   StatementResult,
+  StreamOpener,
   TableInfo,
   TablePage,
 } from '../types';
@@ -39,6 +40,8 @@ export class MysqlDriver implements Driver {
   constructor(
     private readonly config: ConnectionConfig,
     private readonly password: string | undefined,
+    /** Set when the connection goes through an SSH tunnel. */
+    private readonly opener?: StreamOpener,
   ) {}
 
   async connect(): Promise<void> {
@@ -269,7 +272,7 @@ export class MysqlDriver implements Driver {
    * already has must not look like a conflict. MyISAM tables ignore the transaction (README).
    */
   async applyChanges(statements: ChangeStatement[]): Promise<void> {
-    const conn = await mysql.createConnection({ ...this.options(), flags: ['FOUND_ROWS'] });
+    const conn = await this.createConnection(['FOUND_ROWS']);
     conn.on('error', () => {}); // a dropped connection fails the pending query instead of crashing
     try {
       await conn.query('START TRANSACTION');
@@ -285,6 +288,25 @@ export class MysqlDriver implements Driver {
     } finally {
       await conn.end().catch(() => {});
     }
+  }
+
+  /** A new connection: through the tunnel if there is one, and read-only when the connection is. */
+  private async createConnection(flags?: string[]): Promise<mysql.Connection> {
+    const c = this.config;
+    // Through a tunnel, mysql2 still gets the real host: TLS checks the certificate against it.
+    const stream = this.opener ? await this.opener(c.host ?? 'localhost', c.port ?? 3306) : undefined;
+    const conn = await mysql.createConnection({ ...this.options(), stream, flags });
+    if (c.readOnly) {
+      // Before anything else runs, on every connection (also the edit one). Not a security boundary:
+      // the session can turn it off again (README).
+      try {
+        await conn.query('SET SESSION TRANSACTION READ ONLY');
+      } catch (err) {
+        await conn.end().catch(() => {});
+        throw err;
+      }
+    }
+    return conn;
   }
 
   private options(): mysql.ConnectionOptions {
@@ -307,7 +329,7 @@ export class MysqlDriver implements Driver {
   }
 
   private async open(): Promise<mysql.Connection> {
-    const conn = await mysql.createConnection(this.options());
+    const conn = await this.createConnection();
     conn.on('error', () => {
       if (this.conn === conn) this.conn = undefined;
     });

@@ -23,7 +23,7 @@ task setup
 
 1. writes `.env` with your user and group ids, so files the container creates belong to you;
 2. runs `npm install` in the container;
-3. starts the watch build and two test databases (PostgreSQL 16 and MySQL 8.4, seeded from `docker/seed/`);
+3. starts the watch build, two test databases (PostgreSQL 16 and MySQL 8.4, seeded from `docker/seed/`) and a test SSH server;
 4. enables the pre-commit hook and links `.claude/rules` to `.ai/rules` (for Claude Code users; harmless otherwise).
 
 Then open the folder in VS Code and press **F5**. A second window, the **Extension Development Host**, opens with the extension loaded. Click the database icon in the activity bar.
@@ -33,7 +33,7 @@ Then open the folder in VS Code and press **F5**. A second window, the **Extensi
 | Command | What it does |
 | --- | --- |
 | `task` | List all tasks |
-| `task up` / `task down` | Start / stop the watch build and test databases |
+| `task up` / `task down` | Start / stop the watch build, test databases and test SSH server |
 | `task logs -- node` | Follow build output (`[watch] build finished`, errors) |
 | `task check` | Type check and build — run before committing (the hook does) |
 | `task npm -- install <pkg>` | Run npm in the container |
@@ -51,7 +51,9 @@ The watcher rebuilds on save. Press `Ctrl+R` (`Cmd+R`) in the Extension Developm
 | PostgreSQL 16 | `localhost:5432` | `postgres` | `postgres` | `sample` |
 | MySQL 8.4 | `localhost:3306` | `root` | `mysql` | `sample` |
 
-Both contain `customers` and `orders` tables and a `paid_orders` view. If a port is already taken on your machine, change the left side of its `ports` entry in `docker-compose.yml` (don't commit that change).
+Both contain `customers` and `orders` tables and a `paid_orders` view.
+
+To try the SSH tunnel, edit a PostgreSQL or MySQL connection and set **SSH Tunnel** to host `localhost`, port `2222`, user `dbdeck`, password `dbdeck`. The database host is then as seen from the SSH server: `postgres` port `5432`, or `mysql` port `3306`. The SSH server makes new host keys whenever its container is recreated, so DB Deck then asks you to trust the new key. If a port is already taken on your machine, change the left side of its `ports` entry in `docker-compose.yml` (don't commit that change).
 
 ## Project rules
 
@@ -73,12 +75,14 @@ src/
   extension.ts           activation and command registration
   types.ts               shared types, including the Driver interface
   connectionManager.ts   saved connections, passwords, open drivers
-  connectionWizard.ts    the Add Connection steps
+  connectionFolders.ts   Move to Folder… / Rename Folder… quick picks
+  connectionForm/        the connection form's field checks (no vscode)
+  ssh/                   the SSH tunnel (ssh2)
   drivers/               one file per database + index.ts registry
   query/                 statement splitting, running queries from SQL editors
   tree/                  the Connections sidebar
-  views/                 the Results panel (extension side)
-  webview/               the Results grid (browser side)
+  views/                 the Results panel and the connection form (extension side)
+  webview/               the Results grid and the connection form (browser side)
 ```
 
 Adding a database? Follow the checklist in [`.ai/rules/architecture.md`](.ai/rules/architecture.md#adding-a-database).

@@ -38,6 +38,13 @@ services:
       - ./docker/seed/mysql.sql:/docker-entrypoint-initdb.d/seed.sql:ro
       - mysqldata:/var/lib/mysql
 
+  # Test SSH server, for the SSH tunnel. Log in as dbdeck/dbdeck at localhost:2222;
+  # through it, the databases are postgres:5432 and mysql:3306.
+  sshd:
+    build: ./docker/sshd
+    ports:
+      - "2222:22"
+
 volumes:
   pgdata:
   mysqldata:

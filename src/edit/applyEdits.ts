@@ -54,6 +54,11 @@ export class TableEditor implements vscode.Disposable {
     const shown = this.panel.lastResults();
     const page = shown?.table ? shown.results[0] : undefined;
     if (!view || !shown || !page || page.error) return;
+    // Checked here too, not only by the grid hiding its edit controls.
+    if (this.manager.get(view.connectionId)?.readOnly) {
+      void vscode.window.showErrorMessage('This connection is read-only, so its tables can’t be edited.');
+      return;
+    }
     if (view.table.kind !== 'table' || !view.key.length) {
       void vscode.window.showErrorMessage('This table can’t be edited: it needs a primary key.');
       return;
@@ -106,6 +111,12 @@ export class TableEditor implements vscode.Disposable {
     this.prepared = undefined;
     if (this.panel.lastResults() !== prepared.shown) {
       this.panel.closeConfirm();
+      return;
+    }
+    // The connection may have been made read-only since the confirmation was shown.
+    if (this.manager.get(prepared.connectionId)?.readOnly) {
+      this.panel.closeConfirm();
+      void vscode.window.showErrorMessage('This connection is read-only, so its tables can’t be edited.');
       return;
     }
 

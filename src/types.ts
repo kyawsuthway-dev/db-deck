@@ -1,3 +1,5 @@
+import type { Duplex } from 'stream';
+
 export type DbType = 'sqlite' | 'postgres' | 'mysql';
 
 /** off: plain TCP. require: TLS with certificate checks. no-verify: TLS, accept self-signed certificates. */
@@ -15,7 +17,27 @@ export interface ConnectionConfig {
   user?: string;
   database?: string;
   ssl?: SslMode;
+  /** Reach the database through an SSH host (servers only). Its password or key passphrase is in SecretStorage. */
+  ssh?: SshConfig;
+  /** One level of grouping in the Connections view. */
+  folder?: string;
+  /** The database session is read-only, and DB Deck doesn't offer edits (a guard against mistakes, not a security boundary). */
+  readOnly?: boolean;
 }
+
+/** The SSH host in front of a database. `host`/`port` on the connection are then as seen from this host. */
+export interface SshConfig {
+  host: string;
+  port: number;
+  user: string;
+  auth: 'password' | 'key';
+  /** Private key file (auth `key`). Read when connecting, never stored. */
+  keyPath?: string;
+}
+
+
+/** Opens a socket-like stream to host:port (through an SSH tunnel). Drivers use it instead of a TCP connection. */
+export type StreamOpener = (host: string, port: number) => Promise<Duplex>;
 
 export interface TableInfo {
   name: string;

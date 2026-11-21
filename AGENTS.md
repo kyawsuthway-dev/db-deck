@@ -15,7 +15,7 @@ A free, open-source (MIT) VS Code extension for browsing SQLite, PostgreSQL, MyS
 
 - **Never run `node`, `npm`, `npx`, or `tsc` on the host.** Everything runs in the Docker Compose `node` service, through [Task](https://taskfile.dev): `task --list` shows every command.
 - `task up` starts the watch build and the test databases. `task check` type checks and builds. `task npm -- <args>` runs npm in the container.
-- Test databases: PostgreSQL at `localhost:5432` (from the container: `postgres:5432`), user `postgres`/`postgres`; MySQL at `localhost:3306` (container: `mysql:3306`), user `root`/`mysql`; both with database `sample`.
+- Test databases: PostgreSQL at `localhost:5432` (from the container: `postgres:5432`), user `postgres`/`postgres`; MySQL at `localhost:3306` (container: `mysql:3306`), user `root`/`mysql`; both with database `sample`. Test SSH server (for SSH tunnels) at `localhost:2222` (container: `sshd:22`), user `dbdeck`/`dbdeck`; through it the databases are `postgres:5432` and `mysql:3306`.
 - The extension itself runs in the Extension Development Host (F5 in VS Code). If you can't drive VS Code, give the person exact manual steps to check UI changes, and say what you did and didn't verify.
 
 ## Working rules

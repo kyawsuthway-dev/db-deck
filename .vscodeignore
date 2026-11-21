@@ -18,3 +18,4 @@ Taskfile.yml
 AGENTS.md
 CLAUDE.md
 CONTRIBUTING.md
+media/**/*.md

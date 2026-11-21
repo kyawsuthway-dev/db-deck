@@ -1,0 +1,581 @@
+/* Add / Edit Connection form. Theme variables only, so light, dark and high-contrast themes work (webview.md). */
+:root {
+  --radius: 6px;
+  --gap: 14px;
+  --border: var(--vscode-widget-border, var(--vscode-contrastBorder, var(--vscode-panel-border, rgba(128, 128, 128, 0.35))));
+  --surface: var(--vscode-editorWidget-background, var(--vscode-sideBar-background, var(--vscode-editor-background)));
+  --accent: var(--vscode-focusBorder);
+  --muted: var(--vscode-descriptionForeground);
+  --control-height: 30px;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  line-height: 1.4;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.page {
+  flex: 1;
+  width: 100%;
+  max-width: 760px;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 28px 28px 24px;
+}
+
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Header. */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 26px;
+}
+.badge {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+.badge .icon {
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.2;
+}
+.header h1 {
+  margin: 0;
+  font-size: 1.55em;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.subtitle {
+  margin: 2px 0 0;
+  color: var(--muted);
+}
+
+.section {
+  margin-bottom: 22px;
+}
+.section-title {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.85em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Database type: compact chips (logo + name) that wrap, so more databases fit. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 14px 0 10px;
+  color: var(--vscode-foreground);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.chip:hover {
+  border-color: var(--accent);
+}
+.chip[aria-checked='true'] {
+  border-color: var(--accent);
+  background: var(--vscode-list-inactiveSelectionBackground, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Database logos (media/logos): the light-theme file, or the dark-theme one in dark and high-contrast dark themes. */
+.logo {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+.logo img {
+  grid-area: 1 / 1;
+  width: 18px;
+  height: 18px;
+}
+.logo-dark,
+body.vscode-dark .logo-light,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) .logo-light {
+  display: none;
+}
+body.vscode-dark .logo-dark,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) .logo-dark {
+  display: block;
+}
+
+/* Fields: a 6-column grid, labels above inputs. */
+.fields {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--gap);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.span-2 { grid-column: span 2; }
+.span-3 { grid-column: span 3; }
+.span-4 { grid-column: span 4; }
+.span-6 { grid-column: span 6; }
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.field-label {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-weight: 500;
+}
+.required {
+  color: var(--vscode-errorForeground);
+}
+.optional {
+  margin-left: 4px;
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.9em;
+}
+
+.control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.control .leading {
+  position: absolute;
+  left: 9px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0 9px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: var(--radius);
+  font: inherit;
+  transition: border-color 0.12s;
+}
+.has-icon .input {
+  padding-left: 32px;
+}
+.control:has(.icon-button) .input {
+  padding-right: 34px;
+}
+.input::placeholder {
+  color: var(--vscode-input-placeholderForeground);
+}
+.input:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.input:focus {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.input[aria-invalid='true'] {
+  border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+}
+.select {
+  appearance: none;
+  padding-right: 28px;
+  color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
+  background: var(--vscode-dropdown-background, var(--vscode-input-background));
+  cursor: pointer;
+}
+/* The select's arrow, drawn with borders so no image or inline style is needed. */
+.control:has(.select)::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.icon-button {
+  position: absolute;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.icon-button:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+.icon-button:focus-visible {
+  outline: 1px solid var(--accent);
+}
+
+.error {
+  color: var(--vscode-errorForeground);
+  font-size: 0.9em;
+}
+.error:empty {
+  display: none;
+}
+.hint {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.error-text {
+  color: var(--vscode-errorForeground);
+}
+.ok-text {
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+}
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 12px;
+  color: var(--muted);
+  background: var(--vscode-textBlockQuote-background, var(--surface));
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+}
+.note .icon {
+  margin-top: 1px;
+}
+
+/* Tabs. */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 18px;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  margin-bottom: -1px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.tab:hover {
+  color: var(--vscode-foreground);
+}
+.tab[aria-selected='true'] {
+  color: var(--vscode-foreground);
+  border-bottom-color: var(--accent);
+}
+.tab:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+
+/* Switches. */
+.switch-wrap {
+  margin-bottom: 16px;
+}
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.switch-title {
+  font-weight: 600;
+}
+.switch-description {
+  color: var(--muted);
+  font-size: 0.92em;
+}
+.switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 18px;
+  margin: 0;
+  border-radius: 9px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--border));
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s, background 0.15s;
+}
+.switch:checked {
+  background: var(--vscode-button-background);
+  border-color: var(--vscode-button-background);
+}
+.switch:checked::before {
+  transform: translateX(16px);
+  background: var(--vscode-button-foreground);
+}
+.switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+fieldset.off {
+  opacity: 0.5;
+}
+
+/* Segmented control (SSH login). */
+.segmented {
+  display: flex;
+  padding: 2px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: var(--radius);
+  height: var(--control-height);
+  box-sizing: border-box;
+}
+.segment {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+.segment[aria-checked='true'] {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+.segment:disabled {
+  cursor: default;
+}
+.segment:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Buttons. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-height);
+  padding: 0 14px;
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: var(--radius);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+.button.primary {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+.button.primary:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+.button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Action bar, always visible at the bottom. */
+.action-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 28px;
+  background: var(--vscode-editor-background);
+  border-top: 1px solid var(--border);
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 260px;
+}
+.status:empty {
+  display: none;
+}
+.status-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.status.error {
+  color: var(--vscode-errorForeground);
+}
+.status.ok {
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+.status.busy,
+.status.info {
+  color: var(--muted);
+}
+.status .button {
+  color: var(--vscode-button-secondaryForeground);
+}
+.icon-spinner {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+[hidden] {
+  display: none !important;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+@media (max-width: 600px) {
+  .page {
+    padding: 18px 16px;
+  }
+  .action-bar {
+    padding: 10px 16px;
+  }
+  .span-2,
+  .span-3,
+  .span-4 {
+    grid-column: span 6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+  .icon-spinner {
+    animation: none;
+  }
+}
