@@ -301,6 +301,8 @@ export class MysqlDriver implements Driver {
       dateStrings: true,
       supportBigNumbers: true,
       bigNumberStrings: true,
+      // JSON columns as the server's text. Parsed, 1.10 became 1.1 and big integers lost digits (core.md rule 5).
+      jsonStrings: true,
     };
   }
 
@@ -333,4 +335,5 @@ const WRITE_DIALECT: WriteDialect = {
   nullSafeEquals: '<=>',
   allDefaults: '() VALUES ()',
   literal: mysqlLiteral,
+  asText: (column) => `CAST(${column} AS CHAR)`,
 };

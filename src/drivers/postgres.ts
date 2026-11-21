@@ -43,6 +43,7 @@ const WRITE_DIALECT: WriteDialect = {
   nullSafeEquals: 'IS NOT DISTINCT FROM',
   allDefaults: 'DEFAULT VALUES',
   literal: standardLiteral,
+  asText: (column) => `${column}::text`,
 };
 
 /** Keep PostgreSQL's own text form for every value (exact numerics, timestamps as stored), except booleans. */

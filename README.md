@@ -88,7 +88,8 @@ All commands are in the Command Palette under **DB Deck**.
 - **Table edits** need a primary key; views and tables without one are read-only, and so are binary columns.
   - Values are typed as text and the database converts them. An empty cell is an empty string; use **Set to NULL** for NULL.
   - Saving uses its own short connection, so a transaction you left open in a query editor isn't affected. For SQLite, the save is written straight to the file.
-  - The conflict check compares the cells you edited with what was loaded, except `float`/`double`/`real` columns, whose text form may not match exactly. Those rows are still matched by primary key.
+  - The conflict check compares the cells you edited with what was loaded, except `float`/`double`/`real` columns, whose text form may not match exactly. Those rows are still matched by primary key. `json` columns are compared by their text.
+  - MySQL normalises `JSON` when it stores it (for example `1.10` becomes `1.1`, and integers beyond 64 bits become floating-point numbers), so that's what DB Deck shows.
   - MySQL tables using the MyISAM engine don't support transactions, so a failed save there may be partly applied.
   - Unsaved edits are lost if you close the Results tab.
 - **Query history** keeps the 1,000 newest runs per workspace (fewer when queries are very long). SQL over 100,000 characters is kept shortened and can't be run again from history. Table views, paging and filters aren't recorded.

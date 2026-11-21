@@ -45,7 +45,7 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 - Identifiers that must be in SQL text (previews) go through `quoteIdent()` with the dialect's quote character.
 - Metadata and preview queries are read-only (`core.md` rule 4).
 - The table-view filter (`where`) is SQL the user typed. Pass it through `filterCondition()` (rejects a second statement) and `buildPageQuery()` (wraps it in `(\n…\n)` so a `--` comment can't remove ORDER BY/LIMIT). Never add it to SQL any other way.
-- Table edits are parameterized statements from `buildChangeStatements()`. UPDATE and DELETE match the primary key (`=`) and the original values of the edited cells (null-safe); any statement not affecting exactly one row rolls back the whole save. A statement's `display` text has literals for Review SQL only and is never executed.
+- Table edits are parameterized statements from `buildChangeStatements()`. UPDATE and DELETE match the primary key (`=`) and the original values of the edited cells (null-safe); any statement not affecting exactly one row rolls back the whole save. Columns of a type with no equality against text (`json`; see `isTextComparedType`) are checked by their text through `WriteDialect.asText()`. A statement's `display` text has literals for Review SQL only and is never executed.
 - MySQL: run parameterized SQL with `conn.execute()`, not `conn.query(sql, values)` — the latter substitutes `?` on the client and doesn't skip quoted identifiers.
 
 ## Values
@@ -53,7 +53,7 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 Drivers return values as the database's text representation (`core.md` rule 5):
 
 - `pg`: custom type parsers return raw text (booleans become `true`/`false`); `rowMode: 'array'` keeps duplicate column names.
-- `mysql2`: `dateStrings`, `supportBigNumbers`, `bigNumberStrings`, `rowsAsArray`.
+- `mysql2`: `dateStrings`, `supportBigNumbers`, `bigNumberStrings`, `jsonStrings`, `rowsAsArray`.
 - Binary → `0x…` hex (truncated); JSON objects → `JSON.stringify`. All in `toCell()`.
 
 ## SQLite (`sql.js`) specifics

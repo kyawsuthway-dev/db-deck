@@ -111,8 +111,11 @@ export type RowChange =
       kind: 'update';
       /** The row's primary key, as loaded. */
       key: ColumnValue[];
-      /** `original` is what the grid showed; when `check` is set it must still match (conflict detection). */
-      set: { column: string; value: Cell; original: Cell; check: boolean }[];
+      /**
+       * `original` is what the grid showed; when `check` is set it must still match (conflict detection).
+       * `asText`: compare the column's text, for types with no equality against text (json).
+       */
+      set: { column: string; value: Cell; original: Cell; check: boolean; asText?: boolean }[];
     }
   | { kind: 'insert'; values: ColumnValue[] }
   | { kind: 'delete'; key: ColumnValue[] };
