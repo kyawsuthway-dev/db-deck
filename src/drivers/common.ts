@@ -93,6 +93,21 @@ export function buildPageQuery(from: string, quote: '"' | '`', page: TablePage, 
   return `SELECT * FROM ${from}${where}${orderBy} LIMIT ${limit}${offset ? ` OFFSET ${offset}` : ''};`;
 }
 
+/** `SELECT COUNT(*)` for a table view's Count button, with the filter wrapped exactly as buildPageQuery does. */
+export function buildCountQuery(from: string, condition?: string): string {
+  const where = condition ? ` WHERE (\n${condition}\n)` : '';
+  return `SELECT COUNT(*) FROM ${from}${where};`;
+}
+
+/** The count from a COUNT(*) result, as text (very large counts stay exact). Throws the statement's error. */
+export function countFrom(result: StatementResult | undefined): string {
+  if (!result) throw new Error('The count returned nothing.');
+  if (result.error) throw new Error(result.error);
+  const value = result.rows[0]?.[0];
+  if (value === null || value === undefined) throw new Error('The count returned nothing.');
+  return value;
+}
+
 /**
  * The filter box's condition, checked to be a single statement so `1=1; DROP TABLE t` never runs.
  * A trailing `;` is dropped. Returns undefined when nothing but whitespace or comments was typed.

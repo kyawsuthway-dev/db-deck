@@ -47,10 +47,10 @@ export function selectAll(index: number, rowCount: number, columnCount: number):
 }
 
 /**
- * What to send for a copy: original row indexes (in display order) and the column span.
- * `order[displayRow]` is the original row index.
+ * What to send for a copy: original row indexes (in display order) and original column indexes (in
+ * display order). `order[displayRow]` is the original row index; `visible[screenColumn]` the original column.
  */
-export function copyRequestOf(sel: GridSelection, order: number[], columnCount: number): { rows: number[]; columns: [number, number] } {
-  const r = rangeOf(sel, columnCount);
-  return { rows: order.slice(r.top, r.bottom + 1), columns: [r.left, r.right] };
+export function copyRequestOf(sel: GridSelection, order: number[], visible: number[]): { rows: number[]; columns: number[] } {
+  const r = rangeOf(sel, visible.length);
+  return { rows: order.slice(r.top, r.bottom + 1), columns: visible.slice(r.left, r.right + 1) };
 }

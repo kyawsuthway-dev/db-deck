@@ -3,6 +3,7 @@
 import type { Cell, SortKey, StatementResult } from '../types';
 import type { CopyFormat, EditCommand, ResultsCommand, ResultsMessage, ResultsRequest, TableViewState } from '../views/ResultsPanel';
 import { attachAutocomplete } from './autocomplete';
+import { hiddenFromNames, hideColumn, setColumnVisible, visibleColumns } from './columns';
 import {
   addRow,
   deserialize,
@@ -17,6 +18,7 @@ import {
   toPendingChanges,
   type Pending,
 } from './edits';
+import { indentJson, isJsonContainer } from './jsonText';
 import { copyRequestOf, inRange, rangeOf, selectAll, selectCell, type CellRange, type GridSelection } from './selection';
 import './results.css';
 
@@ -52,6 +54,18 @@ let finishEditing: (() => void) | undefined;
  * saved. Not kept in webview state: if the panel reloads, the user clicks Save… again.
  */
 let confirm: { token: string; title: string; detail: string; statements: string[]; showSql: boolean; saving: boolean; focus: boolean } | undefined;
+/** Hidden columns of query results, per result index (original indexes); until the next run. Table views use table.hidden. */
+let hiddenByResult = new Map<number, Set<number>>();
+/** The header last right-clicked, for VS Code's "Hide Column" menu item. */
+let lastHeader: { index: number; col: number } | undefined;
+/** Which result's Columns… checklist is open. */
+let columnsMenu: number | undefined;
+/** Waiting for a COUNT(*) (the Count button). */
+let counting = false;
+/** The value detail pane: open or closed, JSON or Raw. Kept in webview state. */
+let detail: { open: boolean; mode: 'json' | 'raw' } = { open: false, mode: 'json' };
+/** Text typed in the pane's editor but not applied yet, for the cell it belongs to (`row:col`). */
+let detailDraft: { key: string; value: string } | undefined;
 
 window.addEventListener('message', (event: MessageEvent<ResultsMessage | ResultsCommand>) => {
   const msg = event.data;
@@ -78,20 +92,43 @@ window.addEventListener('message', (event: MessageEvent<ResultsMessage | Results
         rerender();
       }
       return;
+    case 'hideColumn':
+      finishEditing?.();
+      if (lastHeader) setHidden(lastHeader.index, hideColumn(columnCount(lastHeader.index), hiddenOf(lastHeader.index), lastHeader.col));
+      return;
+    case 'tableState':
+      counting = false;
+      if (current?.table) {
+        finishEditing?.();
+        current = { ...current, table: msg.table };
+        rerender();
+      }
+      return;
     default:
       confirm = undefined;
       localSorts = new Map();
       selection = undefined;
+      hiddenByResult = new Map();
+      columnsMenu = undefined;
+      counting = false;
+      detailDraft = undefined;
       restorePending(msg);
       render(msg);
   }
 });
 window.addEventListener('mouseup', () => (dragging = false));
-// Escape anywhere in the panel cancels the save confirmation.
+// Escape anywhere in the panel cancels the save confirmation, or closes the Columns… checklist. F4 toggles the detail pane.
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && confirm && !confirm.saving) {
     event.preventDefault();
     cancelConfirm();
+  } else if (event.key === 'Escape' && columnsMenu !== undefined) {
+    event.preventDefault();
+    columnsMenu = undefined;
+    rerender();
+  } else if (event.key === 'F4' && current) {
+    event.preventDefault();
+    toggleDetail();
   }
 });
 // Ctrl/Cmd+C (and Edit > Copy) arrive as a copy event. Formatting happens in the extension.
@@ -100,6 +137,7 @@ document.addEventListener('copy', (event) => {
   event.preventDefault();
   copySelection('tsv');
 });
+restoreDetailSettings();
 vscode.postMessage({ type: 'ready' });
 
 function render(msg: ResultsMessage): void {
@@ -118,8 +156,12 @@ function render(msg: ResultsMessage): void {
     root.replaceChildren(el('div', 'status', 'Nothing to run.'));
     return;
   }
-  root.className = msg.results.length === 1 ? 'single' : '';
-  root.replaceChildren(...msg.results.map((result, i) => renderResult(result, i, msg.table)));
+  root.className = `${msg.results.length === 1 ? 'single' : ''}${detail.open ? ' with-detail' : ''}`;
+  // Results on the left, the detail pane (when open) on the right, or below on a narrow panel.
+  const main = el('div', 'results-main');
+  main.append(...msg.results.map((result, i) => renderResult(result, i, msg.table)));
+  root.replaceChildren(main);
+  if (detail.open) root.append(renderDetail());
   restoreFocus();
   if (confirm?.focus) {
     confirm.focus = false;
@@ -138,8 +180,7 @@ function rerender(): void {
     again.scrollTop = scroll.top;
     again.scrollLeft = scroll.left;
   }
-  const columns = selection && current.results[selection.index]?.columns.length;
-  if (selection && columns) setSelection(selection, columns);
+  if (selection) setSelection(selection);
 }
 
 function renderResult(result: StatementResult, index: number, table: TableViewState | undefined): HTMLElement {
@@ -150,13 +191,31 @@ function renderResult(result: StatementResult, index: number, table: TableViewSt
   sql.title = result.sql;
   header.append(sql);
   if (!result.error && result.columns.length) {
-    // The extension asks for format, scope and file; it already has the rows.
-    header.append(button('Export…', false, () => {
+    const hidden = hiddenOf(index);
+    if (hidden.size) {
+      header.append(
+        el('span', 'hidden-count', `${hidden.size} hidden`),
+        button('Show All', false, () => setHidden(index, new Set())),
+      );
+    }
+    const columnsButton = button('Columns…', false, () => {
+      columnsMenu = columnsMenu === index ? undefined : index;
+      rerender();
+    });
+    columnsButton.setAttribute('aria-expanded', String(columnsMenu === index));
+    const details = button('Details', false, toggleDetail);
+    details.setAttribute('aria-pressed', String(detail.open));
+    details.title = 'Show the selected cell’s full value (F4)';
+    // The extension asks for format, scope and file; it already has the rows. Hidden columns are left out.
+    const exportButton = button('Export…', false, () => {
       const order = !table && localSorts.has(index) ? orders.get(index) : undefined;
-      vscode.postMessage({ type: 'export', index, order });
-    }));
+      const columns = hidden.size ? visibleOf(index) : undefined;
+      vscode.postMessage({ type: 'export', index, order, columns });
+    });
+    header.append(columnsButton, details, exportButton);
   }
   section.append(header);
+  if (columnsMenu === index && !result.error) section.append(renderColumnsMenu(result, index));
   // The filter bar stays above an error too, so a bad condition can be fixed in place.
   if (table) section.append(renderFilterBar(table), renderPager(result, table));
   if (table && !result.error) section.append(renderEditBar(table));
@@ -273,12 +332,20 @@ function renderPager(result: StatementResult, table: TableViewState): HTMLElemen
   if (dirty()) prev.title = next.title = DIRTY_HINT;
   const shown = result.rows.length;
   const empty = table.offset ? 'No rows on this page' : table.where ? 'No matching rows' : 'No rows';
+  // The total is text from the database, so huge counts stay exact; it's shown as the database sent it.
+  const of = table.total !== undefined ? ` of ${table.total}` : '';
   const range = el(
     'span',
     'range',
-    shown ? `Rows ${(table.offset + 1).toLocaleString()}–${(table.offset + shown).toLocaleString()}` : empty,
+    shown ? `Rows ${(table.offset + 1).toLocaleString()}–${(table.offset + shown).toLocaleString()}${of}` : `${empty}${of}`,
   );
-  pager.append(prev, range, next);
+  const count = button(counting ? 'Counting…' : table.total !== undefined ? 'Recount' : 'Count', counting || !!result.error, () => {
+    counting = true;
+    rerender();
+    vscode.postMessage({ type: 'count' });
+  });
+  count.title = table.where ? 'Count the rows matching the WHERE filter (SELECT COUNT(*))' : 'Count all rows (SELECT COUNT(*))';
+  pager.append(prev, range, next, count);
   if (!table.sort && !table.orderedByKey) {
     pager.append(el('span', 'note', 'No primary key: rows may move between pages. Sort by a column for a stable order.'));
   }
@@ -389,14 +456,16 @@ function renderTable(result: StatementResult, index: number, table: TableViewSta
   // Table views sort in the database; query results sort here, over the rows already loaded.
   const sort = table ? table.sort : localSorts.get(index);
   const editing = table ? editTarget() : undefined;
+  const visible = visibleOf(index);
   const wrap = el('div', 'table-wrap');
   const grid = el('table');
   const headRow = el('tr');
   headRow.append(el('th', 'rownum', '#'));
-  result.columns.forEach((name, col) => {
+  visible.forEach((col) => {
+    const name = result.columns[col];
     // Query results can repeat a column name, so they sort by position; table views sort by name in the database.
     const active = sort && sort.column === (table ? name : String(col)) ? sort.direction : undefined;
-    headRow.append(renderHeader(name, active, !!table && dirty(), () => {
+    headRow.append(renderHeader(name, index, col, active, !!table && dirty(), () => {
       const next = nextSort(active);
       if (table) {
         requestSort(next && { column: name, direction: next });
@@ -424,7 +493,8 @@ function renderTable(result: StatementResult, index: number, table: TableViewSta
     // The number is the row's position in the result, so it stays with the row when sorted here.
     tr.append(el('td', 'rownum', String((table?.offset ?? 0) + i + 1)));
     if (editing && pending.deleted.has(i)) tr.classList.add('deleted');
-    result.rows[i].forEach((original, col) => {
+    visible.forEach((col) => {
+      const original = result.rows[i][col];
       const td = valueCell(editing ? shownValue(pending, i, col, original) : original);
       if (editing && isEdited(pending, i, col)) td.classList.add('edited');
       if (editing?.readOnly.has(col)) td.classList.add('readonly');
@@ -437,7 +507,7 @@ function renderTable(result: StatementResult, index: number, table: TableViewSta
     pending.inserted.forEach((cells) => {
       const tr = el('tr', 'inserted');
       tr.append(el('td', 'rownum', '+'));
-      result.columns.forEach((_, col) => {
+      visible.forEach((col) => {
         const td = cells.has(col) ? valueCell(cells.get(col)!) : el('td', undefined, '');
         if (cells.has(col)) td.classList.add('edited');
         else td.append(el('span', 'default', 'DEFAULT'));
@@ -450,7 +520,7 @@ function renderTable(result: StatementResult, index: number, table: TableViewSta
   grid.append(body);
   wrap.append(grid);
   orders.set(index, order);
-  attachSelection(wrap, body, index, result.columns.length, !!editing);
+  attachSelection(wrap, body, index, visible.length, !!editing);
   return wrap;
 }
 
@@ -497,13 +567,13 @@ function attachSelection(wrap: HTMLElement, body: HTMLTableSectionElement, index
     if (event.button !== 0 && event.button !== 2) return;
     event.preventDefault(); // no text selection while dragging
     wrap.focus({ preventScroll: true });
-    setSelection(selectCell(selection, index, { row: at.row, col: at.col }, event.shiftKey, at.rowHeader), columnCount);
+    setSelection(selectCell(selection, index, { row: at.row, col: at.col }, event.shiftKey, at.rowHeader));
     dragging = event.button === 0;
   });
   wrap.addEventListener('mouseover', (event) => {
     if (!dragging || selection?.index !== index) return;
     const at = cellAt(event.target);
-    if (at) setSelection({ ...selection, focus: { row: at.row, col: at.col } }, columnCount);
+    if (at) setSelection({ ...selection, focus: { row: at.row, col: at.col } });
   });
   wrap.addEventListener('dblclick', (event) => {
     const at = cellAt(event.target);
@@ -513,7 +583,7 @@ function attachSelection(wrap: HTMLElement, body: HTMLTableSectionElement, index
     const mod = event.ctrlKey || event.metaKey;
     if (mod && event.key.toLowerCase() === 'a') {
       event.preventDefault();
-      setSelection(selectAll(index, body.rows.length, columnCount), columnCount);
+      setSelection(selectAll(index, body.rows.length, columnCount));
     } else if (editable && mod && event.key === '0') {
       event.preventDefault();
       runEditCommand('setNull');
@@ -529,12 +599,15 @@ function attachSelection(wrap: HTMLElement, body: HTMLTableSectionElement, index
  * Escape cancels, Tab / Shift+Tab move to the next / previous editable cell. Leaving the cell keeps
  * the value too. Opening and closing without typing changes nothing (so a NULL stays NULL).
  */
-function openEditor(rowPos: number, col: number): void {
+function openEditor(rowPos: number, screenCol: number): void {
   const target = editTarget();
   const body = root.querySelector<HTMLTableSectionElement>('.table-wrap[data-index="0"] tbody');
   if (confirm) return;
-  const td = body?.rows[rowPos]?.cells[col + 1];
-  if (!target || !td || target.readOnly.has(col)) return;
+  // Pending edits use original column indexes; the grid works in screen positions (hidden columns skipped).
+  const visible = visibleOf(0);
+  const col = visible[screenCol];
+  const td = body?.rows[rowPos]?.cells[screenCol + 1];
+  if (!target || !td || col === undefined || target.readOnly.has(col)) return;
   const existing = rowPos < target.result.rows.length;
   const insertIndex = rowPos - target.result.rows.length;
   if (existing && pending.deleted.has(rowPos)) return;
@@ -566,7 +639,7 @@ function openEditor(rowPos: number, col: number): void {
     } else {
       rerender();
     }
-    const next = move && nextEditableColumn(col, move, target.readOnly, target.result.columns.length);
+    const next = move && nextEditableColumn(screenCol, move, target.readOnly, visible);
     if (next !== undefined) openEditor(rowPos, next);
     else root.querySelector<HTMLElement>('.table-wrap')?.focus({ preventScroll: true });
   };
@@ -587,8 +660,9 @@ function openEditor(rowPos: number, col: number): void {
   finishEditing = () => close(true);
 }
 
-function nextEditableColumn(col: number, step: 1 | -1, readOnly: Set<number>, count: number): number | undefined {
-  for (let c = col + step; c >= 0 && c < count; c += step) if (!readOnly.has(c)) return c;
+/** The next screen column (from `screenCol`, in `step` direction) whose original column can be edited. */
+function nextEditableColumn(screenCol: number, step: 1 | -1, readOnly: Set<number>, visible: number[]): number | undefined {
+  for (let c = screenCol + step; c >= 0 && c < visible.length; c += step) if (!readOnly.has(visible[c])) return c;
   return undefined;
 }
 
@@ -598,14 +672,15 @@ function runEditCommand(command: EditCommand): void {
   const target = editTarget();
   if (!target || confirm) return;
   const rowCount = target.result.rows.length;
-  const columns = target.result.columns.length;
-  const range = selection?.index === 0 ? rangeOf(selection, columns) : undefined;
+  const visible = visibleOf(0);
+  const range = selection?.index === 0 ? rangeOf(selection, visible.length) : undefined;
 
   if (command === 'addRow') {
     const i = addRow(pending);
     pendingChanged();
-    // Start typing in the first column that isn't the key (usually generated) and isn't read-only.
-    const first = [...Array(columns).keys()].find((c) => !target.key.has(c) && !target.readOnly.has(c)) ?? nextEditableColumn(-1, 1, target.readOnly, columns);
+    // Start typing in the first visible column that isn't the key (usually generated) and isn't read-only.
+    const preferred = visible.findIndex((c) => !target.key.has(c) && !target.readOnly.has(c));
+    const first = preferred >= 0 ? preferred : nextEditableColumn(-1, 1, target.readOnly, visible);
     if (first !== undefined) openEditor(rowCount + i, first);
     return;
   }
@@ -616,7 +691,7 @@ function runEditCommand(command: EditCommand): void {
     selection = undefined;
   } else {
     for (let r = range.top; r <= range.bottom; r++) {
-      for (let c = range.left; c <= range.right; c++) {
+      for (const c of visible.slice(range.left, range.right + 1)) {
         if (target.readOnly.has(c)) continue;
         if (r < rowCount) {
           if (!pending.deleted.has(r)) setCell(pending, r, c, null, target.result.rows[r][c]);
@@ -629,9 +704,14 @@ function runEditCommand(command: EditCommand): void {
   pendingChanged();
 }
 
+/** Webview state: pending edits (for one page) and the detail pane's settings. */
+function saveState(): void {
+  vscode.setState({ key: pendingKey, pending: serialize(pending), detail });
+}
+
 /** Saves pending edits in webview state, tells the extension the count, and redraws. */
 function pendingChanged(): void {
-  vscode.setState({ key: pendingKey, pending: serialize(pending) });
+  saveState();
   vscode.postMessage({ type: 'pending', count: pendingCount(pending) });
   rerender();
 }
@@ -646,23 +726,25 @@ function restorePending(msg: ResultsMessage): void {
   pending = key && saved?.key === key ? deserialize(saved.pending) : emptyPending();
   pendingKey = key;
   if (msg.type === 'results') {
-    vscode.setState({ key: pendingKey, pending: serialize(pending) });
+    saveState();
     vscode.postMessage({ type: 'pending', count: pendingCount(pending) });
   }
 }
 
-/** Repaints only the rows the old or new selection touches. */
-function setSelection(next: GridSelection | undefined, columnCount: number): void {
+/** Repaints only the rows the old or new selection touches, and points the detail pane at the new cell. */
+function setSelection(next: GridSelection | undefined): void {
   const previous = selection;
   selection = next;
   for (const sel of [previous, next]) {
     if (!sel) continue;
     const body = root.querySelector<HTMLElement>(`.table-wrap[data-index="${sel.index}"] tbody`);
     if (!(body instanceof HTMLTableSectionElement)) continue;
+    const columnCount = visibleOf(sel.index).length;
     const old = previous && previous.index === sel.index ? rangeOf(previous, columnCount) : undefined;
     const now = next && next.index === sel.index ? rangeOf(next, columnCount) : undefined;
     paintRows(body, old, now);
   }
+  if (detail.open) updateDetail();
 }
 
 function paintRows(body: HTMLTableSectionElement, old: CellRange | undefined, now: CellRange | undefined): void {
@@ -678,13 +760,15 @@ function paintRows(body: HTMLTableSectionElement, old: CellRange | undefined, no
 function copySelection(format: CopyFormat): void {
   const sel = selection;
   const order = sel && orders.get(sel.index);
-  const columns = sel && current?.results[sel.index]?.columns.length;
-  if (!sel || !order || !columns) return;
-  vscode.postMessage({ type: 'copy', index: sel.index, format, ...copyRequestOf(sel, order, columns) });
+  if (!sel || !order || !current?.results[sel.index]) return;
+  vscode.postMessage({ type: 'copy', index: sel.index, format, ...copyRequestOf(sel, order, visibleOf(sel.index)) });
 }
 
-function renderHeader(name: string, active: SortKey['direction'] | undefined, disabled: boolean, onSort: () => void): HTMLElement {
+function renderHeader(name: string, index: number, col: number, active: SortKey['direction'] | undefined, disabled: boolean, onSort: () => void): HTMLElement {
   const th = el('th');
+  // Right-click opens VS Code's menu for headers (Hide Column); it acts on the header remembered here.
+  th.dataset.vscodeContext = JSON.stringify({ webviewSection: 'header', preventDefaultContextMenuItems: true });
+  th.addEventListener('contextmenu', () => (lastHeader = { index, col }));
   th.setAttribute('aria-sort', active === 'asc' ? 'ascending' : active === 'desc' ? 'descending' : 'none');
   const sortButton = el('button', 'sort');
   sortButton.type = 'button';
@@ -734,6 +818,285 @@ function setBusy(): void {
   root.classList.add('busy');
   root.querySelectorAll('button').forEach((b) => (b.disabled = true));
   root.querySelectorAll('input').forEach((i) => (i.readOnly = true));
+}
+
+/** Original indexes of a result's hidden columns. Table views remember names (per table); query results, indexes. */
+function hiddenOf(index: number): Set<number> {
+  const result = current?.results[index];
+  if (!result) return new Set();
+  if (current?.table && index === 0) return hiddenFromNames(result.columns, current.table.hidden);
+  return hiddenByResult.get(index) ?? new Set();
+}
+
+/** Screen position → original column index for a result. */
+function visibleOf(index: number): number[] {
+  return visibleColumns(columnCount(index), hiddenOf(index));
+}
+
+function columnCount(index: number): number {
+  return current?.results[index]?.columns.length ?? 0;
+}
+
+/** Applies a new set of hidden columns; table views also tell the extension, which remembers it per table. */
+function setHidden(index: number, hidden: Set<number>): void {
+  const result = current?.results[index];
+  if (!current || !result) return;
+  finishEditing?.();
+  if (current.table && index === 0) {
+    const names = result.columns.filter((_, i) => hidden.has(i));
+    current = { ...current, table: { ...current.table, hidden: names } };
+    vscode.postMessage({ type: 'hideColumns', names });
+  } else {
+    hiddenByResult.set(index, hidden);
+  }
+  // Screen positions changed, so the selection would point at other cells.
+  if (selection?.index === index) selection = undefined;
+  rerender();
+}
+
+/** The Columns… checklist. The last visible column can't be unchecked. */
+function renderColumnsMenu(result: StatementResult, index: number): HTMLElement {
+  const menu = el('div', 'columns-menu');
+  menu.setAttribute('role', 'group');
+  menu.setAttribute('aria-label', 'Visible columns');
+  const hidden = hiddenOf(index);
+  const visibleCount = result.columns.length - hidden.size;
+  result.columns.forEach((name, col) => {
+    const item = el('label', 'columns-item');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = !hidden.has(col);
+    box.disabled = box.checked && visibleCount <= 1;
+    box.addEventListener('change', () => setHidden(index, setColumnVisible(result.columns.length, hiddenOf(index), col, box.checked)));
+    item.append(box, el('span', undefined, name));
+    menu.append(item);
+  });
+  const actions = el('div', 'columns-actions');
+  actions.append(
+    button('Show All', hidden.size === 0, () => setHidden(index, new Set())),
+    button('Close', false, () => {
+      columnsMenu = undefined;
+      rerender();
+    }),
+  );
+  menu.append(actions);
+  return menu;
+}
+
+/** The cell the detail pane shows: the selection's focus cell, with its pending value in editable table views. */
+interface DetailTarget {
+  index: number;
+  /** Original column index. */
+  col: number;
+  name: string;
+  /** undefined: a new row's untouched cell, which gets the column's DEFAULT. */
+  value: Cell | undefined;
+  editable: boolean;
+  binary: boolean;
+  /** Original row index of an existing row, or which new row. */
+  existingRow?: number;
+  insertIndex?: number;
+  key: string;
+  rowLabel: string;
+}
+
+function detailTarget(): DetailTarget | undefined {
+  const sel = selection;
+  const result = sel && current?.results[sel.index];
+  if (!sel || !current || !result || result.error) return undefined;
+  const col = visibleOf(sel.index)[sel.focus.col];
+  if (col === undefined) return undefined;
+  const order = orders.get(sel.index) ?? [];
+  const editing = current.table && sel.index === 0 ? editTarget() : undefined;
+  const name = result.columns[col];
+  const binary = !!editing?.readOnly.has(col);
+  if (sel.focus.row < order.length) {
+    const row = order[sel.focus.row];
+    const original = result.rows[row]?.[col];
+    if (original === undefined) return undefined;
+    const deleted = !!editing && pending.deleted.has(row);
+    return {
+      index: sel.index,
+      col,
+      name,
+      value: editing ? shownValue(pending, row, col, original) : original,
+      editable: !!editing && !binary && !deleted && !confirm,
+      binary,
+      existingRow: row,
+      key: `${row}:${col}`,
+      rowLabel: `Row ${((current.table?.offset ?? 0) + row + 1).toLocaleString()}${deleted ? ' (deleted)' : ''}`,
+    };
+  }
+  const insertIndex = sel.focus.row - order.length;
+  const cells = editing ? pending.inserted[insertIndex] : undefined;
+  if (!cells) return undefined;
+  return {
+    index: sel.index,
+    col,
+    name,
+    value: cells.has(col) ? cells.get(col)! : undefined,
+    editable: !binary && !confirm,
+    binary,
+    insertIndex,
+    key: `+${insertIndex}:${col}`,
+    rowLabel: 'New row',
+  };
+}
+
+function toggleDetail(): void {
+  applyDetailDraft();
+  detail = { ...detail, open: !detail.open };
+  saveState();
+  rerender();
+}
+
+function restoreDetailSettings(): void {
+  const saved = vscode.getState() as { detail?: { open?: unknown; mode?: unknown } } | undefined;
+  detail = { open: saved?.detail?.open === true, mode: saved?.detail?.mode === 'raw' ? 'raw' : 'json' };
+}
+
+function renderDetail(): HTMLElement {
+  const pane = el('aside', 'detail-pane');
+  pane.setAttribute('aria-label', 'Value details');
+  fillDetail(pane, detailTarget());
+  return pane;
+}
+
+/** The selection moved: an unapplied edit in the pane is kept as a pending change (like leaving a cell editor). */
+function updateDetail(): void {
+  const pane = root.querySelector<HTMLElement>('.detail-pane');
+  if (!pane) return;
+  const target = detailTarget();
+  if (detailDraft && detailDraft.key !== target?.key) {
+    if (applyDetailDraft()) return; // pendingChanged() redrew everything, the pane included
+  }
+  fillDetail(pane, target);
+}
+
+/** Edits typed in the pane, kept as the user types; applied with Apply, Ctrl/Cmd+Enter, or by moving on. */
+let draftTarget: { target: DetailTarget; owner: typeof current } | undefined;
+
+/** Applies the pane's unapplied edit, if any. Returns true when that changed the pending edits. */
+function applyDetailDraft(): boolean {
+  const draft = detailDraft;
+  const owner = draftTarget;
+  detailDraft = undefined;
+  draftTarget = undefined;
+  if (!draft || !owner || owner.owner !== current) return false;
+  return setDetailValue(owner.target, draft.value);
+}
+
+/** Same rules as the cell editor: unchanged text is no edit (a NULL stays NULL unless something is typed). */
+function setDetailValue(target: DetailTarget, value: Cell): boolean {
+  if (value !== null && value === (target.value ?? '')) return false;
+  if (value === null && target.value === null) return false;
+  if (target.existingRow !== undefined) {
+    const original = current?.results[0]?.rows[target.existingRow]?.[target.col];
+    if (original === undefined) return false;
+    setCell(pending, target.existingRow, target.col, value, original);
+  } else if (target.insertIndex !== undefined) {
+    setInsertedCell(pending, target.insertIndex, target.col, value);
+  }
+  pendingChanged();
+  return true;
+}
+
+function fillDetail(pane: HTMLElement, target: DetailTarget | undefined): void {
+  const head = el('div', 'detail-head');
+  const close = button('✕', false, toggleDetail);
+  close.classList.add('detail-close');
+  close.title = 'Close (F4)';
+  close.setAttribute('aria-label', 'Close details');
+  if (!target) {
+    head.append(el('span', 'detail-title', 'Value'), close);
+    pane.replaceChildren(head, el('div', 'detail-empty', 'Select a cell to see its full value.'));
+    return;
+  }
+  const value = target.value;
+  const status =
+    value === undefined ? 'DEFAULT' : value === null ? 'NULL' : value === '' ? 'empty string' : `${value.length.toLocaleString()} character${value.length === 1 ? '' : 's'}`;
+  const type = current?.table && target.index === 0 ? current.table.types[target.name] : undefined;
+  head.append(el('span', 'detail-title', target.name), close);
+  const meta = el('div', 'detail-meta', [type, target.rowLabel, status].filter(Boolean).join(' · '));
+
+  const json = typeof value === 'string' && isJsonContainer(value);
+  const showJson = json && detail.mode === 'json';
+  const modes = el('div', 'detail-modes');
+  const mode = (label: string, which: 'json' | 'raw', enabled: boolean) => {
+    const b = button(label, !enabled, () => {
+      applyDetailDraft();
+      detail = { ...detail, mode: which };
+      saveState();
+      updateDetail();
+    });
+    b.setAttribute('aria-pressed', String(enabled && (which === 'json' ? showJson : !showJson)));
+    return b;
+  };
+  const copy = button('Copy', typeof value !== 'string', () => {
+    if (typeof value === 'string') vscode.postMessage({ type: 'copyValue', text: value });
+  });
+  copy.title = 'Copy the value as stored (not indented)';
+  modes.append(mode('JSON', 'json', json), mode('Raw', 'raw', true), copy);
+
+  const body = el('div', 'detail-body');
+  if (target.editable && !showJson) {
+    const editor = el('textarea', 'detail-editor');
+    editor.spellcheck = false;
+    editor.value = detailDraft?.key === target.key ? detailDraft.value : (value ?? '');
+    editor.placeholder = value === null ? 'NULL' : value === undefined ? 'DEFAULT' : '';
+    editor.setAttribute('aria-label', `Edit ${target.name}`);
+    editor.addEventListener('input', () => {
+      detailDraft = { key: target.key, value: editor.value };
+      draftTarget = { target, owner: current };
+    });
+    const apply = () => {
+      const text = editor.value;
+      detailDraft = undefined;
+      draftTarget = undefined;
+      if (!setDetailValue(target, text)) updateDetail();
+    };
+    const revert = () => {
+      detailDraft = undefined;
+      draftTarget = undefined;
+      updateDetail();
+    };
+    editor.addEventListener('keydown', (event) => {
+      event.stopPropagation(); // the grid's and the panel's shortcuts don't apply while typing
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        apply();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        revert();
+      }
+    });
+    const applyButton = button('Apply', false, apply);
+    applyButton.classList.add('primary');
+    applyButton.title = 'Keep as a pending change (Ctrl+Enter). Saved with Save….';
+    const setNull = button('Set to NULL', value === null, () => {
+      detailDraft = undefined;
+      draftTarget = undefined;
+      if (!setDetailValue(target, null)) updateDetail();
+    });
+    const format = button('Format JSON', false, () => {
+      // Only on request: indenting changes the text that would be saved.
+      if (!isJsonContainer(editor.value)) return;
+      editor.value = indentJson(editor.value);
+      detailDraft = { key: target.key, value: editor.value };
+      draftTarget = { target, owner: current };
+    });
+    format.title = 'Indent the JSON in the editor (changes the saved text)';
+    const actions = el('div', 'detail-actions');
+    actions.append(applyButton, el('span', 'detail-hint', 'Ctrl+Enter'), button('Revert', false, revert), setNull, format);
+    body.append(editor, actions);
+  } else {
+    if (value === undefined) body.append(el('div', 'detail-placeholder', 'DEFAULT — the database fills this in.'));
+    else if (value === null) body.append(el('div', 'detail-placeholder null', 'NULL'));
+    else body.append(el('pre', 'detail-value', showJson ? indentJson(value) : value));
+    if (json && showJson && target.editable) body.append(el('div', 'detail-note', 'Switch to Raw to edit.'));
+  }
+  if (target.binary) body.append(el('div', 'detail-note', 'Binary column: the grid only has the shortened hex, so it can’t be edited here.'));
+  pane.replaceChildren(head, meta, modes, body);
 }
 
 function button(label: string, disabled: boolean, onClick: () => void): HTMLButtonElement {

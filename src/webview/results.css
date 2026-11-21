@@ -36,6 +36,38 @@ body {
   flex: 1;
   max-height: none;
 }
+#root.single .results-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The detail pane sits beside the results, or below them on a narrow panel. */
+#root.with-detail {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  overflow: hidden;
+}
+#root.with-detail > .results-main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+#root.with-detail.single > .results-main {
+  overflow: hidden;
+}
+@media (max-width: 600px) {
+  #root.with-detail {
+    flex-direction: column;
+  }
+  #root.with-detail > .detail-pane {
+    flex: 0 0 40%;
+    min-width: 0;
+    max-width: none;
+  }
+}
 
 .status {
   color: var(--vscode-descriptionForeground);
@@ -459,4 +491,118 @@ tbody td.editing {
   font-size: var(--vscode-editor-font-size);
   white-space: pre;
   user-select: text;
+}
+
+/* Hidden columns: the count in the header and the Columns… checklist. */
+.hidden-count {
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+.columns-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  max-height: 160px;
+  overflow: auto;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+}
+.columns-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--vscode-editor-font-family);
+}
+.columns-actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Value detail pane. */
+.detail-pane {
+  flex: 0 0 35%;
+  min-width: 240px;
+  max-width: 60%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.detail-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-family: var(--vscode-editor-font-family);
+}
+.detail-close {
+  padding: 0 6px;
+}
+.detail-meta,
+.detail-empty,
+.detail-note,
+.detail-hint {
+  color: var(--vscode-descriptionForeground);
+}
+.detail-note {
+  font-style: italic;
+}
+.detail-modes,
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.detail-modes .pager-button[aria-pressed='true'] {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+.detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+}
+.detail-value {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.detail-placeholder {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+.detail-editor {
+  flex: 1;
+  min-height: 120px;
+  resize: none;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+.detail-editor:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
 }

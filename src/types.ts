@@ -162,6 +162,8 @@ export interface Driver {
    * (the filter box); it's checked to be one statement and can't comment out the page limits.
    */
   selectPage(table: TableInfo, page: TablePage, where?: string): Promise<StatementResult>;
+  /** `SELECT COUNT(*)` with the same filter rules as selectPage (Count button). Read-only; the count as text. */
+  countRows(table: TableInfo, where?: string): Promise<string>;
   /** A column name as it should be typed in a condition: bare when that's safe, quoted otherwise. */
   filterIdentifier(name: string): string;
   /** Operators the WHERE box suggests for this database. */

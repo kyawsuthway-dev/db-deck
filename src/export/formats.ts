@@ -113,3 +113,22 @@ export function streamFormat(format: ExportFormat, insert?: (columns: string[], 
       };
   }
 }
+
+/**
+ * Original column indexes sent by the webview (untrusted): a non-empty list of distinct, valid indexes, or
+ * undefined. Copy and export use it to leave hidden columns out, in the order the grid shows them.
+ */
+export function columnIndexes(value: unknown, count: number): number[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.length > count) return undefined;
+  const seen = new Set<number>();
+  for (const i of value) {
+    if (!Number.isSafeInteger(i) || i < 0 || i >= count || seen.has(i)) return undefined;
+    seen.add(i);
+  }
+  return value as number[];
+}
+
+/** Keeps only the given columns of each row, in that order. */
+export function pickColumns(rows: Cell[][], indexes: number[]): Cell[][] {
+  return rows.map((row) => indexes.map((i) => row[i]));
+}

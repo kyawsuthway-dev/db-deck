@@ -8,6 +8,8 @@ import type { ResultsPanel, ResultsRequest, TableViewState } from '../views/Resu
 import { splitSql, splitSqlRanges, statementAt, stripLeadingComments } from './splitSql';
 
 const FILE_CONNECTIONS_KEY = 'dbDeck.documentConnections';
+/** Hidden table-view columns, by connection and table: `{ [key]: names }`. */
+const HIDDEN_COLUMNS_KEY = 'dbDeck.hiddenColumns';
 
 /** Rows per page in a table view. */
 export const PAGE_SIZE = 100;
@@ -27,6 +29,10 @@ interface TableView {
   where?: string;
   /** Autocomplete for the WHERE box, built once when the table opens. */
   hints: FilterHints;
+  /** Column names the user hid; remembered per table in workspaceState. */
+  hidden: string[];
+  /** The Count button's result for the current filter; cleared when the filter changes or after a save. */
+  total?: string;
 }
 
 /** What the export and edit services need to know about the open table view. */
@@ -227,7 +233,11 @@ export class QueryController implements vscode.Disposable {
       keyOrder: columns.filter((c) => c.primaryKey).map((c): SortKey => ({ column: c.name, direction: 'asc' })),
       offset: 0,
       hints,
+      hidden: [],
     };
+    const remembered = this.context.workspaceState.get<Record<string, string[]>>(HIDDEN_COLUMNS_KEY, {})[hiddenKey(this.tableView)];
+    // Columns that no longer exist are dropped.
+    if (Array.isArray(remembered)) this.tableView.hidden = remembered.filter((n) => this.tableView!.columns.includes(n));
     await this.showTablePage(this.tableView, true);
   }
 
@@ -248,7 +258,36 @@ export class QueryController implements vscode.Disposable {
 
   /** Reloads the open table page, keeping its filter, sort and offset (after saving edits). */
   async reloadTablePage(): Promise<void> {
-    if (this.tableView) await this.showTablePage(this.tableView, false);
+    if (!this.tableView) return;
+    // Inserts and deletes change the count.
+    this.tableView.total = undefined;
+    await this.showTablePage(this.tableView, false);
+  }
+
+  /** The webview already shows the change; this remembers it for the next time the table opens. */
+  private async rememberHidden(view: TableView, names: unknown): Promise<void> {
+    if (!Array.isArray(names) || !names.every((n) => typeof n === 'string' && view.columns.includes(n))) return;
+    view.hidden = [...new Set(names as string[])];
+    const all = this.context.workspaceState.get<Record<string, string[]>>(HIDDEN_COLUMNS_KEY, {});
+    const key = hiddenKey(view);
+    const next = { ...all };
+    if (view.hidden.length) next[key] = view.hidden;
+    else delete next[key];
+    await this.context.workspaceState.update(HIDDEN_COLUMNS_KEY, next);
+  }
+
+  /** SELECT COUNT(*) with the current filter (the Count button). The page on screen gets the total. */
+  private async countRows(view: TableView): Promise<void> {
+    const shown = this.panel.lastResults();
+    if (!shown?.table) return;
+    try {
+      const driver = await this.manager.getDriver(view.connectionId);
+      view.total = await driver.countRows(view.table, view.where);
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Couldn’t count the rows: ${errorMessage(err)}`);
+    }
+    // Sent even after an error, so the webview leaves its "Counting…" state.
+    if (this.tableView === view) this.panel.updateTable(shown, tableState(view, shown.table.hasMore));
   }
 
   /** Forgets the grid's pending edits (saved, or the user chose to discard them). */
@@ -290,8 +329,15 @@ export class QueryController implements vscode.Disposable {
       return;
     }
     const view = this.tableView;
-    // Export and copy are handled by ResultsExporter, save by TableEditor.
-    if (!view || request.type === 'export' || request.type === 'copy' || request.type === 'save' || request.type === 'applySave' || request.type === 'cancelSave') {
+    // Only the table view's own requests are handled here; export and copy go to ResultsExporter, save to
+    // TableEditor. Anything else is ignored, so a new request type can't reload the page by accident.
+    if (!view) return;
+    if (request.type === 'hideColumns') {
+      void this.rememberHidden(view, request.names);
+      return;
+    }
+    if (request.type === 'count') {
+      void this.countRows(view);
       return;
     }
     if (request.type === 'page') {
@@ -302,11 +348,14 @@ export class QueryController implements vscode.Disposable {
       // Typed by the user and run as their own SQL (core.md rule 4); the driver checks it's one statement.
       view.where = request.where.trim() || undefined;
       view.offset = 0;
+      view.total = undefined;
     } else if (request.type === 'sort') {
       const sort = request.sort;
       if (sort && (!view.columns.includes(sort.column) || (sort.direction !== 'asc' && sort.direction !== 'desc'))) return;
       view.sort = sort && { column: sort.column, direction: sort.direction };
       view.offset = 0;
+    } else {
+      return;
     }
     void this.showTablePage(view, false);
   }
@@ -431,7 +480,14 @@ function tableState(view: TableView, hasMore: boolean): TableViewState {
     where: view.where,
     hints: view.hints,
     edit: editability(view),
+    hidden: view.hidden,
+    types: Object.fromEntries(view.hints.columns.map((c) => [c.name, c.type])),
+    total: view.total,
   };
+}
+
+function hiddenKey(view: TableView): string {
+  return `${view.connectionId}\u0000${view.table.schema ?? ''}\u0000${view.table.name}`;
 }
 
 /** Only tables with a primary key are editable, so every change targets exactly one row. Binary columns stay read-only. */

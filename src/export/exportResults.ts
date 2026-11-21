@@ -6,11 +6,13 @@ import { errorMessage } from '../drivers/common';
 import type { QueryController, TableViewSource } from '../query/runQuery';
 import type { Cell, Driver, StatementResult } from '../types';
 import type { CopyFormat, ResultsPanel, ResultsRequest } from '../views/ResultsPanel';
-import { isBinaryType, streamFormat, toDelimited, toJson, type ExportFormat } from './formats';
+import { columnIndexes, isBinaryType, pickColumns, streamFormat, toDelimited, toJson, type ExportFormat } from './formats';
 import { FileOut } from './fileOut';
 import { readAllRows } from './readAll';
 
 const EXTENSIONS: Record<ExportFormat, string> = { csv: 'csv', json: 'json', sql: 'sql' };
+/** Longest value the detail pane may put on the clipboard (characters); a backstop for untrusted input. */
+const MAX_COPY_VALUE = 50_000_000;
 
 /**
  * Export (to a file) and copy (to the clipboard) for the Results panel. All formatting happens here
@@ -27,6 +29,7 @@ export class ResultsExporter implements vscode.Disposable {
     this.subscription = panel.onDidRequest((request) => {
       if (request.type === 'export') void this.exportResult(request);
       else if (request.type === 'copy') void this.copy(request);
+      else if (request.type === 'copyValue') void this.copyValue(request.text);
     });
   }
 
@@ -39,6 +42,12 @@ export class ResultsExporter implements vscode.Disposable {
     const result = Number.isSafeInteger(request.index) ? shown?.results[request.index] : undefined;
     if (!shown || !result || result.error || !result.columns.length) return;
     const view = shown.table ? this.queries.currentTableView() : undefined;
+    // Hidden columns are left out; without a list (older webview state), every column is exported.
+    const all = result.columns.map((_, i) => i);
+    const indexes = request.columns === undefined ? all : columnIndexes(request.columns, result.columns.length);
+    if (!indexes) return;
+    const columns = indexes.map((i) => result.columns[i]);
+    const left = result.columns.length - indexes.length;
 
     const format = await pickFormat(!!view);
     if (!format) return;
@@ -61,7 +70,15 @@ export class ResultsExporter implements vscode.Disposable {
       allRows = scope.all;
     }
 
-    if (format === 'sql' && view && view.columns.some((c) => isBinaryType(c.type))) {
+    if (format === 'sql' && left > 0) {
+      const go = await vscode.window.showWarningMessage(
+        `${left} hidden column${left === 1 ? ' is' : 's are'} left out of the INSERT statements, so running them would give ${left === 1 ? 'it its' : 'them their'} default value.`,
+        { modal: true },
+        'Export Anyway',
+      );
+      if (!go) return;
+    }
+    if (format === 'sql' && view && view.columns.some((c) => isBinaryType(c.type) && columns.includes(c.name))) {
       const go = await vscode.window.showWarningMessage(
         'This table has binary columns. The grid shows them as shortened hex, so the INSERT statements would insert that text, not the original bytes.',
         { modal: true },
@@ -87,14 +104,14 @@ export class ResultsExporter implements vscode.Disposable {
     try {
       const driver = view ? await this.manager.getDriver(view.connectionId) : undefined;
       const rows = allRows && view && driver
-        ? await this.writeAllRows(uri.fsPath, format, driver, view, result.columns)
-        : await writeFile(uri.fsPath, format, driver && view ? { driver, view } : undefined, result.columns, ordered(result, request.order));
+        ? await this.writeAllRows(uri.fsPath, format, driver, view, columns, indexes)
+        : await writeFile(uri.fsPath, format, driver && view ? { driver, view } : undefined, columns, pickColumns(ordered(result, request.order), indexes));
       if (rows === undefined) {
         void vscode.window.showInformationMessage('Export cancelled.');
         return;
       }
       const open = await vscode.window.showInformationMessage(
-        `Exported ${rows.toLocaleString()} row${rows === 1 ? '' : 's'} to ${path.basename(uri.fsPath)}.`,
+        `Exported ${rows.toLocaleString()} row${rows === 1 ? '' : 's'} to ${path.basename(uri.fsPath)}${left ? ` (${left} hidden column${left === 1 ? '' : 's'} left out)` : ''}.`,
         'Open File',
       );
       if (open) await vscode.commands.executeCommand('vscode.open', uri);
@@ -104,7 +121,7 @@ export class ResultsExporter implements vscode.Disposable {
   }
 
   /** Streams every matching row to the file. Returns the row count, or undefined if cancelled. */
-  private writeAllRows(file: string, format: ExportFormat, driver: Driver, view: TableViewSource, columns: string[]) {
+  private writeAllRows(file: string, format: ExportFormat, driver: Driver, view: TableViewSource, columns: string[], indexes: number[]) {
     return vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Exporting ${view.table.name}`, cancellable: true },
       async (progress, token) => {
@@ -114,7 +131,8 @@ export class ResultsExporter implements vscode.Disposable {
           await out.write(writer.start(columns));
           let count = 0;
           for await (const batch of readAllRows(driver, view.table, view.where, view.orderBy, () => token.isCancellationRequested)) {
-            await out.write(writer.rows(batch.rows));
+            // Pages are SELECT *, in the same column order as the result the indexes refer to.
+            await out.write(writer.rows(pickColumns(batch.rows, indexes)));
             count += batch.rows.length;
             progress.report({ message: `${count.toLocaleString()} rows` });
           }
@@ -133,15 +151,22 @@ export class ResultsExporter implements vscode.Disposable {
     );
   }
 
+  /** The detail pane's Copy: one value as stored (or as edited), never reformatted. */
+  private async copyValue(text: unknown): Promise<void> {
+    if (typeof text !== 'string' || text.length > MAX_COPY_VALUE) return;
+    await vscode.env.clipboard.writeText(text);
+    vscode.window.setStatusBarMessage('DB Deck: copied the value', 3000);
+  }
+
   private async copy(request: Extract<ResultsRequest, { type: 'copy' }>): Promise<void> {
     const result = Number.isSafeInteger(request.index) ? this.panel.lastResults()?.results[request.index] : undefined;
-    if (!result || !Array.isArray(request.rows) || !Array.isArray(request.columns)) return;
-    const [from, to] = request.columns;
+    if (!result || !Array.isArray(request.rows)) return;
+    const indexes = columnIndexes(request.columns, result.columns.length);
     const validRow = (r: unknown) => Number.isSafeInteger(r) && (r as number) >= 0 && (r as number) < result.rows.length;
-    if (!validColumn(from, result) || !validColumn(to, result) || from > to || !request.rows.every(validRow)) return;
+    if (!indexes || !request.rows.every(validRow)) return;
 
-    const columns = result.columns.slice(from, to + 1);
-    const rows = request.rows.map((r) => result.rows[r].slice(from, to + 1));
+    const columns = indexes.map((i) => result.columns[i]);
+    const rows = pickColumns(request.rows.map((r) => result.rows[r]), indexes);
     const text = formatCopy(request.format, columns, rows);
     if (text === undefined) return;
     await vscode.env.clipboard.writeText(text);
@@ -192,10 +217,6 @@ async function writeFile(
     await out.discard();
     throw err;
   }
-}
-
-function validColumn(i: unknown, result: StatementResult): i is number {
-  return Number.isSafeInteger(i) && (i as number) >= 0 && (i as number) < result.columns.length;
 }
 
 function formatCopy(format: CopyFormat, columns: string[], rows: Cell[][]): string | undefined {

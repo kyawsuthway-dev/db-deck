@@ -103,7 +103,8 @@
       { "command": "dbDeck.copySelectionAsJson", "title": "Copy as JSON", "category": "DB Deck" },
       { "command": "dbDeck.setNull", "title": "Set to NULL", "category": "DB Deck" },
       { "command": "dbDeck.deleteRows", "title": "Delete Rows", "category": "DB Deck" },
-      { "command": "dbDeck.addRow", "title": "Add Row", "category": "DB Deck" }
+      { "command": "dbDeck.addRow", "title": "Add Row", "category": "DB Deck" },
+      { "command": "dbDeck.hideColumn", "title": "Hide Column", "category": "DB Deck" }
     ],
     "submenus": [
       { "id": "dbDeck.generateSql", "label": "Generate SQL" }
@@ -164,7 +165,8 @@
         { "command": "dbDeck.copySelectionAsJson", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "2_copyAs@2" },
         { "command": "dbDeck.setNull", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid' && dbDeckEditable", "group": "3_edit@1" },
         { "command": "dbDeck.addRow", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid' && dbDeckEditable", "group": "3_edit@2" },
-        { "command": "dbDeck.deleteRows", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid' && dbDeckEditable", "group": "3_edit@3" }
+        { "command": "dbDeck.deleteRows", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid' && dbDeckEditable", "group": "3_edit@3" },
+        { "command": "dbDeck.hideColumn", "when": "webviewId == 'dbDeck.results' && webviewSection == 'header'", "group": "1_columns@1" }
       ],
       "commandPalette": [
         { "command": "dbDeck.previewTable", "when": "false" },
@@ -186,6 +188,7 @@
         { "command": "dbDeck.deleteHistoryEntry", "when": "false" },
         { "command": "dbDeck.disconnect", "when": "false" },
         { "command": "dbDeck.copySelection", "when": "false" },
+        { "command": "dbDeck.hideColumn", "when": "false" },
         { "command": "dbDeck.copySelectionWithHeaders", "when": "false" },
         { "command": "dbDeck.copySelectionAsCsv", "when": "false" },
         { "command": "dbDeck.copySelectionAsJson", "when": "false" },
