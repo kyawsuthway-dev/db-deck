@@ -46,14 +46,17 @@ const extension = await esbuild.context({
   target: 'node20',
   outfile: 'dist/extension.js',
   // pg-native is an optional native addon pg only loads if asked; cloudflare:sockets is for Workers only.
-  external: ['vscode', 'pg-native', 'cloudflare:sockets'],
+  // ssh2 tries its optional native crypto (sshcrypto.node) and cpu-features inside try/catch: left out of the
+  // bundle, those requires fail and ssh2 uses its pure-JavaScript crypto, on every platform (core.md rule 1).
+  external: ['vscode', 'pg-native', 'cloudflare:sockets', 'cpu-features', '*.node'],
   plugins: [copySqlWasmPlugin, problemMatcherPlugin],
 });
 
-// The results grid script, run inside the webview (a browser). Emits results.js and results.css.
+// The webview scripts, run inside webviews (a browser): the results grid and the connection form.
+// Each emits <name>.js and <name>.css.
 const webview = await esbuild.context({
   ...shared,
-  entryPoints: ['src/webview/results.ts'],
+  entryPoints: ['src/webview/results.ts', 'src/webview/connectionForm.ts'],
   format: 'iife',
   platform: 'browser',
   target: 'es2022',

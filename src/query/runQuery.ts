@@ -287,7 +287,7 @@ export class QueryController implements vscode.Disposable {
       void vscode.window.showErrorMessage(`Couldn’t count the rows: ${errorMessage(err)}`);
     }
     // Sent even after an error, so the webview leaves its "Counting…" state.
-    if (this.tableView === view) this.panel.updateTable(shown, tableState(view, shown.table.hasMore));
+    if (this.tableView === view) this.panel.updateTable(shown, tableState(view, shown.table.hasMore, this.readOnly(view.connectionId)));
   }
 
   /** Forgets the grid's pending edits (saved, or the user chose to discard them). */
@@ -371,7 +371,7 @@ export class QueryController implements vscode.Disposable {
       } else {
         // Show it in the grid so the webview leaves its busy state and the user can retry.
         const failed: StatementResult = { sql: '', columns: [], rows: [], durationMs: 0, error: errorMessage(err) };
-        this.panel.showResults(this.panel.startRun(), view.label, [failed], tableState(view, false));
+        this.panel.showResults(this.panel.startRun(), view.label, [failed], tableState(view, false, this.readOnly(view.connectionId)));
       }
       return;
     }
@@ -388,7 +388,7 @@ export class QueryController implements vscode.Disposable {
     }
     const hasMore = result.rows.length > PAGE_SIZE;
     if (hasMore) result.rows = result.rows.slice(0, PAGE_SIZE);
-    this.panel.showResults(token, view.label, [result], tableState(view, hasMore));
+    this.panel.showResults(token, view.label, [result], tableState(view, hasMore, this.readOnly(view.connectionId)));
   }
 
   private async execute(connectionId: string, sql: string, title: string, column: vscode.ViewColumn) {
@@ -445,6 +445,10 @@ export class QueryController implements vscode.Disposable {
     return picked?.id;
   }
 
+  private readOnly(connectionId: string): boolean {
+    return !!this.manager.get(connectionId)?.readOnly;
+  }
+
   /** The status bar item, and the `dbDeck.editorLinked` context key that DB Deck's keybindings depend on. */
   private updateStatus(): void {
     const doc = vscode.window.activeTextEditor?.document;
@@ -454,7 +458,11 @@ export class QueryController implements vscode.Disposable {
       return;
     }
     const id = this.connectionFor(doc);
-    this.statusItem.text = `$(database) ${id ? this.manager.get(id)!.name : 'No connection'}`;
+    const config = id ? this.manager.get(id) : undefined;
+    this.statusItem.text = `$(${config?.readOnly ? 'lock' : 'database'}) ${config ? config.name : 'No connection'}`;
+    this.statusItem.tooltip = config?.readOnly
+      ? 'Read-only connection used by Run Query (click to change)'
+      : 'Connection used by Run Query (click to change)';
     this.statusItem.show();
     this.setLinked(!!id);
   }
@@ -470,7 +478,7 @@ export class QueryController implements vscode.Disposable {
   }
 }
 
-function tableState(view: TableView, hasMore: boolean): TableViewState {
+function tableState(view: TableView, hasMore: boolean, readOnly: boolean): TableViewState {
   return {
     offset: view.offset,
     pageSize: PAGE_SIZE,
@@ -479,7 +487,7 @@ function tableState(view: TableView, hasMore: boolean): TableViewState {
     orderedByKey: view.keyOrder.length > 0,
     where: view.where,
     hints: view.hints,
-    edit: editability(view),
+    edit: editability(view, readOnly),
     hidden: view.hidden,
     types: Object.fromEntries(view.hints.columns.map((c) => [c.name, c.type])),
     total: view.total,
@@ -491,7 +499,8 @@ function hiddenKey(view: TableView): string {
 }
 
 /** Only tables with a primary key are editable, so every change targets exactly one row. Binary columns stay read-only. */
-function editability(view: TableView): TableViewState['edit'] {
+function editability(view: TableView, readOnly: boolean): TableViewState['edit'] {
+  if (readOnly) return { reason: 'Read-only connection.' };
   if (view.table.kind !== 'table') return { reason: 'Views are read-only.' };
   if (!view.keyOrder.length) return { reason: 'Read-only: this table has no primary key.' };
   return {

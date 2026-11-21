@@ -20,7 +20,7 @@ paths:
 
 ## Menus and `when` clauses
 
-- Tree item menus key off `contextValue`. Connection items are `connection[.connected][.server]` (match with regexes, e.g. `/^connection\.connected/`); objects use their kind: `schema`, `table`, `view`, `function`, `procedure`, `sequence`, `index`, `trigger`, `column`. If you add a `contextValue`, check every `when` clause that matches by regex.
+- Tree item menus key off `contextValue`. Connection items are `connection[.connected][.server]` (match with regexes, e.g. `/^connection\.connected/`); objects use their kind: `schema`, `table`, `view`, `function`, `procedure`, `sequence`, `index`, `trigger`, `column`. Connection folders are `folder`; never start a new context value with `connection`, since connection menus match `/^connection/`. If you add a `contextValue`, check every `when` clause that matches by regex.
 - Inline actions use `group: "inline@N"`; context-menu groups are `1_query`, `2_manage`, `3_remove`, `4_copy`. Generate SQL is the submenu `dbDeck.generateSql` (in `1_query`).
 - SQL editor actions use `editorLangId == sql`.
 - The results grid's right-click menu is `webview/context`, matched with `webviewId == 'dbDeck.results' && webviewSection == 'grid'`; the grid element sets `data-vscode-context`. Those commands are hidden from the Command Palette.
@@ -36,6 +36,8 @@ paths:
 
 ## UX conventions
 
+- Add Connection and Edit Connection… open the connection form (`views/ConnectionForm.ts`), one editor tab per connection. Its Save tests first and offers Save Anyway; file pickers and the SSH host-key prompt stay native dialogs.
+- Connection tree items show the database logo (`logos.ts`, `{ light, dark }` files); open connections use the `-connected` variant (green dot). Not a file decoration: that would color the name.
 - Multi-step input uses `showQuickPick`/`showInputBox` with a `title` and `ignoreFocusOut: true`; Escape at any step cancels without side effects.
 - Destructive actions (remove connection) use a modal confirmation that says what is and isn't affected.
 - Long operations use `withProgress`.

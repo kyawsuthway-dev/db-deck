@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
 import { errorMessage } from '../drivers/common';
 import { DATABASE_SCOPE, typeLabel } from '../drivers';
+import { logoForType, logoUris } from '../logos';
 import type { ColumnInfo, ConnectionConfig, DbObject, ObjectKind, TableInfo } from '../types';
 
 /** Every node knows its parent, so `TreeView.reveal` (Find Object…) can walk up from it. */
@@ -10,12 +11,25 @@ interface Base {
   readonly parent?: TreeNode;
 }
 
+/** A folder of connections (one level; `ConnectionConfig.folder`). Exists while a connection is in it. */
+export class ConnectionFolderNode implements Base {
+  readonly kind = 'connectionFolder';
+  readonly parent = undefined;
+  readonly treeId: string;
+  constructor(
+    readonly name: string,
+    readonly connections: ConnectionConfig[],
+  ) {
+    this.treeId = `folder:${name}`;
+  }
+}
+
 export class ConnectionNode implements Base {
   readonly kind = 'connection';
-  readonly parent = undefined;
   constructor(
     readonly config: ConnectionConfig,
     readonly treeId: string,
+    readonly parent?: ConnectionFolderNode,
   ) {}
 }
 
@@ -89,7 +103,7 @@ class MessageNode implements Base {
   ) {}
 }
 
-export type TreeNode = ConnectionNode | SchemaNode | FolderNode | TableNode | ObjectNode | ColumnNode | MessageNode;
+export type TreeNode = ConnectionFolderNode | ConnectionNode | SchemaNode | FolderNode | TableNode | ObjectNode | ColumnNode | MessageNode;
 
 export function tableLabel(table: { name: string; schema?: string }): string {
   return table.schema ? `${table.schema}.${table.name}` : table.name;
@@ -126,7 +140,10 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
    */
   private readonly generations = new Map<string, number>();
 
-  constructor(private readonly manager: ConnectionManager) {
+  constructor(
+    private readonly manager: ConnectionManager,
+    private readonly extensionUri: vscode.Uri,
+  ) {
     manager.onDidChange(() => this.refresh());
   }
 
@@ -145,13 +162,29 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
   getTreeItem(node: TreeNode): vscode.TreeItem {
     const C = vscode.TreeItemCollapsibleState;
     switch (node.kind) {
+      case 'connectionFolder': {
+        const item = new vscode.TreeItem(node.name, C.Expanded);
+        item.description = String(node.connections.length);
+        item.iconPath = new vscode.ThemeIcon('folder');
+        // Not `connection…`: connection menus match /^connection/ (vscode-api.md).
+        item.contextValue = 'folder';
+        return withId(item, node);
+      }
       case 'connection': {
         const c = node.config;
         const connected = this.manager.isConnected(c.id);
         const item = new vscode.TreeItem(c.name, C.Collapsed);
-        item.description = c.type === 'sqlite' ? typeLabel(c.type) : `${typeLabel(c.type)} · ${c.host}:${c.port}`;
-        item.tooltip = c.type === 'sqlite' ? c.filePath : `${c.user}@${c.host}:${c.port}${c.database ? `/${c.database}` : ''}`;
-        item.iconPath = new vscode.ThemeIcon('database', connected ? new vscode.ThemeColor('charts.green') : undefined);
+        const where = c.type === 'sqlite' ? typeLabel(c.type) : `${typeLabel(c.type)} · ${c.host}:${c.port}`;
+        item.description = `${c.readOnly ? 'read-only · ' : ''}${where}`;
+        const target = c.type === 'sqlite' ? c.filePath : `${c.user}@${c.host}:${c.port}${c.database ? `/${c.database}` : ''}`;
+        const via = c.ssh ? `\nvia SSH ${c.ssh.user}@${c.ssh.host}:${c.ssh.port}` : '';
+        item.tooltip = `${target}${via}${c.readOnly ? '\nRead-only' : ''}${connected ? '\nConnected' : ''}`;
+        // The database's logo; open connections use the version with a green dot. (A file decoration badge
+        // would also color the name, which the maintainer didn't want.)
+        const logo = logoForType(c.type);
+        item.iconPath =
+          (logo && logoUris(this.extensionUri, logo, connected)) ||
+          new vscode.ThemeIcon('database', connected ? new vscode.ThemeColor('charts.green') : undefined);
         // connection[.connected][.server]: menus match with regexes (vscode-api.md).
         item.contextValue = `connection${connected ? '.connected' : ''}${isServer(c) ? '.server' : ''}`;
         return withId(item, node);
@@ -208,8 +241,11 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
 
   async getChildren(node?: TreeNode): Promise<TreeNode[]> {
     if (!node) {
-      return this.manager.list().map((c) => new ConnectionNode(c, `${c.id}#${this.generations.get(c.id) ?? 0}`));
+      const list = this.manager.list();
+      const folders = this.manager.folders().map((name) => new ConnectionFolderNode(name, list.filter((c) => c.folder === name)));
+      return [...folders, ...list.filter((c) => !c.folder).map((c) => this.connectionNode(c))];
     }
+    if (node.kind === 'connectionFolder') return node.connections.map((c) => this.connectionNode(c, node));
     try {
       switch (node.kind) {
         case 'connection': {
@@ -264,12 +300,19 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
+  private connectionNode(config: ConnectionConfig, parent?: ConnectionFolderNode): ConnectionNode {
+    return new ConnectionNode(config, `${config.id}#${this.generations.get(config.id) ?? 0}`, parent);
+  }
+
   /**
    * The tree node for an object, found by walking the tree the way VS Code would (same ids), so it can be
    * revealed. Undefined when it isn't there (e.g. the schema changed since the list was made).
    */
   async findNode(connectionId: string, object: DbObject): Promise<TreeNode | undefined> {
-    let level = (await this.getChildren()).find((n) => n.kind === 'connection' && n.config.id === connectionId);
+    const config = this.manager.get(connectionId);
+    const root = await this.getChildren();
+    const folder = root.find((n) => n.kind === 'connectionFolder' && n.name === config?.folder);
+    let level = (folder ? await this.getChildren(folder) : root).find((n) => n.kind === 'connection' && n.config.id === connectionId);
     const wanted = (n: TreeNode) =>
       (n.kind === 'table' || n.kind === 'object') && n.object.kind === object.kind && n.object.name === object.name &&
       n.object.schema === object.schema && n.object.id === object.id;

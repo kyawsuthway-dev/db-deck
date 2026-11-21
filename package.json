@@ -85,6 +85,9 @@
       { "command": "dbDeck.copyQualifiedName", "title": "Copy Qualified Name", "category": "DB Deck" },
       { "command": "dbDeck.findObject", "title": "Find Object…", "category": "DB Deck", "icon": "$(search)" },
       { "command": "dbDeck.switchDatabase", "title": "Switch Database…", "category": "DB Deck" },
+      { "command": "dbDeck.editConnection", "title": "Edit Connection…", "category": "DB Deck", "icon": "$(edit)" },
+      { "command": "dbDeck.moveToFolder", "title": "Move to Folder…", "category": "DB Deck" },
+      { "command": "dbDeck.renameFolder", "title": "Rename Folder…", "category": "DB Deck" },
       { "command": "dbDeck.saveQuery", "title": "Save Query…", "category": "DB Deck", "icon": "$(bookmark)" },
       { "command": "dbDeck.runSavedQuery", "title": "Run", "category": "DB Deck", "icon": "$(play)" },
       { "command": "dbDeck.renameSavedQuery", "title": "Rename…", "category": "DB Deck" },
@@ -127,6 +130,9 @@
         { "command": "dbDeck.refresh", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "2_manage@1" },
         { "command": "dbDeck.disconnect", "when": "view == dbDeck.connections && viewItem =~ /^connection\\.connected/", "group": "2_manage@2" },
         { "command": "dbDeck.switchDatabase", "when": "view == dbDeck.connections && viewItem =~ /^connection.*\\.server$/", "group": "2_manage@3" },
+        { "command": "dbDeck.editConnection", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "2_manage@4" },
+        { "command": "dbDeck.moveToFolder", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "2_manage@5" },
+        { "command": "dbDeck.renameFolder", "when": "view == dbDeck.connections && viewItem == folder", "group": "2_manage@1" },
         { "command": "dbDeck.removeConnection", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "3_remove@1" },
         { "command": "dbDeck.previewTable", "when": "view == dbDeck.connections && viewItem =~ /^(table|view)$/", "group": "inline@1" },
         { "command": "dbDeck.previewTable", "when": "view == dbDeck.connections && viewItem =~ /^(table|view)$/", "group": "1_query@1" },
@@ -179,6 +185,7 @@
         { "command": "dbDeck.copyName", "when": "false" },
         { "command": "dbDeck.copyQualifiedName", "when": "false" },
         { "command": "dbDeck.switchDatabase", "when": "false" },
+        { "command": "dbDeck.renameFolder", "when": "false" },
         { "command": "dbDeck.runSavedQuery", "when": "false" },
         { "command": "dbDeck.renameSavedQuery", "when": "false" },
         { "command": "dbDeck.deleteSavedQuery", "when": "false" },
@@ -241,6 +248,7 @@
     "@types/node": "^20.14.0",
     "@types/pg": "^8.23.1",
     "@types/sql.js": "^1.16.0",
+    "@types/ssh2": "1.15.6",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.24.0",
@@ -250,6 +258,7 @@
     "mysql2": "^3.24.6",
     "pg": "^8.23.1",
     "sql-formatter": "15.10.0",
-    "sql.js": "^1.17.0"
+    "sql.js": "^1.17.0",
+    "ssh2": "1.17.0"
   }
 }

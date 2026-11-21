@@ -25,6 +25,11 @@
 - Show DDL for every object; Generate SQL (SELECT, INSERT, UPDATE, DELETE) for tables, safe if run unedited; Copy Name / Copy Qualified Name.
 - Find Object… searches objects in open connections and reveals the one you pick.
 - Switch Database… for PostgreSQL and MySQL connections.
+- Add Connection and Edit Connection… open a connection form in an editor tab (database type chips with logos; name and folder; Connection, SSH Tunnel and Options tabs), replacing the step-by-step quick picks. Paste a connection string to fill in the fields. Save tests the connection first and offers Save Anyway; Test Connection only tests. When editing, empty password fields keep the stored passwords.
+- SSH tunnel for PostgreSQL and MySQL connections: password or private key file (with an optional passphrase), secrets in SecretStorage, no local port opened. The SSH host's key is trusted on first use and checked on every later connection (`ssh2`).
+- Connection folders (one level): Move to Folder… and Rename Folder….
+- The Connections view shows each database's logo, with a green dot on open connections.
+- Read-only connections: the database session is read-only (PostgreSQL, MySQL; SQLite with `query_only` and no write-back), and table editing is off.
 - DB Deck's Ctrl/Cmd+Enter and Ctrl/Cmd+Shift+Enter now apply only in SQL editors linked to a DB Deck connection, so other SQL extensions keep theirs.
 - Fixed: MySQL `JSON` values are shown exactly as the server sends them. They used to be re-printed, which turned `1.0` into `1` and large integers into quoted strings or rounded numbers.
 - Fixed: saving an edited `json` cell (MySQL `JSON`, PostgreSQL `json`) no longer fails. The conflict check compares the cell's text with the loaded text; `jsonb` keeps comparing values.

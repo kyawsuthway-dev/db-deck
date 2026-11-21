@@ -2,9 +2,11 @@
 paths:
     - 'src/webview/**'
     - 'src/views/**'
+    - 'src/connectionForm/**'
+    - 'media/logos/**'
 ---
 
-# Webview — results grid
+# Webviews — results grid and connection form
 
 The results grid is plain TypeScript + CSS (no framework). Moving to React/Svelte needs a trade-off discussion with the maintainer first, not a drive-by change.
 
@@ -15,16 +17,24 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 - CSP stays strict: `default-src 'none'; style-src ${cspSource}; script-src ${cspSource}`. Never add `'unsafe-inline'`, `'unsafe-eval'`, or remote origins.
 - No inline `<script>`, `<style>`, `style="…"`, or `on…=` attributes. Styles go in `src/webview/*.css`; behavior in `src/webview/*.ts`.
 - Insert data with `textContent` or `document.createElement` only. Never `innerHTML`, `outerHTML`, `insertAdjacentHTML`, or `document.write` with anything derived from data.
-- `localResourceRoots` stays limited to `dist/webview`.
+- `localResourceRoots` stays limited to `dist/webview` (the connection form adds `media/logos`, nothing else).
 - The table-edit save confirmation is rendered in the webview, so the strict CSP and `textContent`-only rules are what keep that confirmation trustworthy. Never relax them.
 - The detail pane may indent JSON only by changing whitespace between tokens (`jsonText.ts`); never re-print values through `JSON.parse`. Copy always copies the value as stored (or as edited), never the indented form.
 - Values cross the boundary as `Cell` (`string | null`) — already converted in the driver layer. The webview never changes how a value is displayed; client-side sorting may compare them as numbers, but always shows the original text.
 
 ## Build
 
-- `src/webview/results.ts` is a separate esbuild entry (browser, IIFE) → `dist/webview/results.js` + `results.css` (imported from the TS file).
-- It runs in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`).
-- Other `src/webview/*.ts` modules (e.g. `autocomplete.ts`) are imported by `results.ts` and bundled into it. Keep their logic DOM-free where possible so it can be smoke-tested in plain Node.
+- `src/webview/results.ts` (Results grid) and `src/webview/connectionForm.ts` (connection form) are esbuild entries (browser, IIFE) → `dist/webview/<name>.js` + `<name>.css` (imported from the TS file).
+- They run in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`, `ConnectionForm.ts`, `connectionForm/fields.ts`).
+- Other `src/webview/*.ts` modules (e.g. `autocomplete.ts`, `connectionString.ts`, `icons.ts`) are imported by an entry and bundled into it. Keep their logic DOM-free where possible so it can be smoke-tested in plain Node.
+
+## Connection form
+
+- Same CSP and `textContent`-only rules as the grid, plus `img-src ${cspSource}` for the database logos; `localResourceRoots` is `dist/webview` and `media/logos`, nothing wider.
+- It never receives a stored password: password fields start empty ("Unchanged — type to replace"). Every field it sends is checked in the extension (`readValues`, `checkForm` in `src/connectionForm/fields.ts`), never only in the form.
+- It gets the database kinds (labels, defaults, `USES_NETWORK`, `DATABASE_SCOPE`, logo URIs) from the registry in its `init` message, so it never branches on database type.
+- Connection strings are parsed in the webview (`connectionString.ts`) only to fill fields; the box is cleared afterwards, since it may hold a password.
+- Icons are DB Deck's own SVG paths (`icons.ts`, constants built with `createElementNS`). Database logos are files in `media/logos` (Simple Icons, CC0): the only fixed colors in the UI, with `-light` / `-dark` variants.
 
 ## Messaging
 

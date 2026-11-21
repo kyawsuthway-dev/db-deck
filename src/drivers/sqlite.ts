@@ -50,7 +50,11 @@ export class SqliteDriver implements Driver {
   private db?: Database;
   private loadedMtimeMs = 0;
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    /** Read-only connection: `PRAGMA query_only` on every copy, and the file is never written. */
+    private readonly readOnly = false,
+  ) {}
 
   async connect(): Promise<void> {
     await this.load();
@@ -134,7 +138,12 @@ export class SqliteDriver implements Driver {
       const isDml = /^(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(stripLeadingComments(statement));
       return { columns, rows, affectedRows: columns.length === 0 && isDml ? db.getRowsModified() : undefined };
     });
-    if (results.some((r) => !r.error && mightWrite(r.sql))) this.save(db);
+    if (results.some((r) => !r.error && mightWrite(r.sql))) {
+      if (!this.readOnly) this.save(db);
+      // Read-only: something may have changed the in-memory copy (e.g. after PRAGMA query_only = OFF).
+      // Drop it, so the next run shows the file again.
+      else this.dropCopy();
+    }
     return results;
   }
 
@@ -180,6 +189,7 @@ export class SqliteDriver implements Driver {
    * the saved file. (A transaction left open in the editor isn't kept for SQLite anyway; see README.)
    */
   async applyChanges(statements: ChangeStatement[]): Promise<void> {
+    if (this.readOnly) throw new Error('This connection is read-only.');
     const SQL = await loadSqlJs();
     const db = new SQL.Database(fs.readFileSync(this.filePath));
     try {
@@ -194,8 +204,7 @@ export class SqliteDriver implements Driver {
     } finally {
       db.close();
     }
-    this.db?.close();
-    this.db = undefined;
+    this.dropCopy();
   }
 
   async close(): Promise<void> {
@@ -214,6 +223,7 @@ export class SqliteDriver implements Driver {
     const db = new SQL.Database(fs.readFileSync(this.filePath));
     try {
       db.exec('SELECT count(*) FROM sqlite_master'); // fails here if it isn't a SQLite file
+      if (this.readOnly) db.exec('PRAGMA query_only = ON');
     } catch (err) {
       db.close();
       throw err;
@@ -222,6 +232,11 @@ export class SqliteDriver implements Driver {
     this.db = db;
     this.loadedMtimeMs = mtimeMs;
     return db;
+  }
+
+  private dropCopy(): void {
+    this.db?.close();
+    this.db = undefined;
   }
 
   private save(db: Database): void {

@@ -9,7 +9,12 @@ A free, open-source database explorer for VS Code. Browse local and remote datab
 ## Features
 
 - **Connections sidebar** — a database icon in the activity bar lists your saved connections. Add, remove, refresh, and disconnect.
-- **Add Connection wizard** — pick a database type, then a file (SQLite) or host, port, user, password, and database. The connection is tested before it's saved.
+- **Connection form** — **Add Connection** opens a form in an editor tab: database type, name and folder, then the **Connection** tab (host, port, user, password, database, SSL; or the file for SQLite), **SSH Tunnel** and **Options** (read-only). Paste a connection string such as `postgres://user@host:5432/db` to fill in the fields. **Save** tests the connection first; if that fails, the form shows why and offers **Save Anyway**. **Test Connection** only tests.
+- **Edit Connection…** — right-click a connection to change it in the same form. Saved passwords are never shown: leave a password field empty to keep it.
+- **SSH tunnel** — reach a PostgreSQL or MySQL server through an SSH host, with a password or a private key file (and its passphrase). The database host and port are then as seen from the SSH host (often `localhost`). The first time, DB Deck shows the SSH host's key fingerprint and asks you to trust it; after that it warns you if the key changes.
+- **Folders** — right-click a connection → **Move to Folder…** to group connections; right-click a folder to rename it. A folder disappears when its last connection leaves.
+- **Database logos** — the Connections view shows each connection's database logo (PostgreSQL, MySQL, SQLite), with a small green dot on the logo while it's connected.
+- **Read-only connections** — turn on **Read-only** to make the database session read-only and switch off table editing. The connection shows a 🔒.
 - **Browse your schema** — Connection → Tables, Views, Functions, Procedures and Sequences, with schema (PostgreSQL) or database (MySQL) folders when there's more than one. Tables expand to their columns (type and primary key marked), **Indexes** and **Triggers**.
 - **Show DDL** — right-click any object, or click a function, procedure, sequence, index or trigger, to see its definition in a new SQL editor. PostgreSQL table and sequence DDL is rebuilt from the catalog (PostgreSQL has no `SHOW CREATE TABLE`) and says what it leaves out.
 - **Generate SQL** — right-click a table → **Generate SQL** → SELECT, INSERT, UPDATE or DELETE opens starting SQL in an editor. It's never run for you, and run unedited it can't change existing rows: UPDATE and DELETE start with `WHERE <key> = NULL`, which matches nothing.
@@ -53,7 +58,8 @@ The extension isn't published yet. To try it, build a `.vsix` (see [CONTRIBUTING
 | Select Connection for This Editor | Status bar, Command Palette |
 | Save Query… | Bookmark icon in a SQL editor's title bar, right-click in a SQL editor, Saved Queries view toolbar, `Ctrl+S` / `Cmd+S` in a New Query editor |
 | Search / Clear Query History | Query History view toolbar, Command Palette |
-| Refresh / Disconnect / Switch Database… / Remove Connection | Right-click a connection |
+| Refresh / Disconnect / Switch Database… / Edit Connection… / Move to Folder… / Remove Connection | Right-click a connection |
+| Rename Folder… | Right-click a folder |
 | Show DDL / Generate SQL / Copy Name | Right-click a table, view or other object |
 | Find Object… | Connections view toolbar, Command Palette |
 
@@ -61,7 +67,7 @@ All commands are in the Command Palette under **DB Deck**.
 
 ## Security and privacy
 
-- Passwords are stored only in VS Code's **SecretStorage** (your OS keychain), never in settings files.
+- Passwords, SSH passwords and key passphrases are stored only in VS Code's **SecretStorage** (your OS keychain), never in settings files. Private key files are read when connecting and never copied.
 - Browsing and table previews only read. The extension writes to a database only when you run SQL that does, or when you click **Apply** to save table edits.
 - No telemetry. The extension only talks to the databases you configure.
 - **Query history** stores the SQL you run exactly as typed, in VS Code's local workspace storage, so it can include values you typed into queries. It never leaves your machine. Turn it off with the `dbDeck.history.enabled` setting, and remove it with **Clear Query History**.
@@ -71,7 +77,9 @@ All commands are in the Command Palette under **DB Deck**.
 - Results keep up to 10,000 rows per statement.
 - **SQLite** runs in WebAssembly on an in-memory copy of the file. The file is reloaded when it changes on disk, and written back after each run that might change it. A transaction left open at the end of a run is not kept open.
 - **PostgreSQL and MySQL** keep one connection open per saved connection, so `BEGIN` … `COMMIT` across several runs works.
-- Encrypted connections: choose **SSL** (verifies the certificate) or **SSL, allow self-signed** in the wizard.
+- Encrypted connections: choose **SSL** (verifies the certificate) or **SSL, allow self-signed** in the connection form.
+- **SSH tunnels** open one SSH session per connection and a channel per database connection; no local port is opened. SSL still works through the tunnel and checks the certificate against the database host you entered. SSH agents, jump hosts and `~/.ssh/config` aren't supported yet.
+- **Read-only** is a guard against mistakes, not a security boundary. PostgreSQL and MySQL start each session read-only, which rejects writes and schema changes, but SQL can turn that off again (`SET`, `BEGIN READ WRITE`, `START TRANSACTION READ WRITE`), and the database decides what functions with side effects may do. SQLite runs with `PRAGMA query_only` and never writes the file back. For a real guarantee, connect as a database user that can't write.
 - MySQL `DELIMITER` scripts aren't supported yet, for running or formatting.
 - **Keyboard shortcuts** (**Ctrl+Enter**, **Ctrl+Shift+Enter**, and **Ctrl+S** in a New Query editor) apply only in SQL editors linked to a DB Deck connection, so other SQL extensions keep theirs in their own editors. If another extension also uses **Ctrl+Enter** in the same editor, VS Code picks one of them: change one in **Keyboard Shortcuts** (search for `dbDeck.runQuery`), or use DB Deck's ▶ buttons.
 - **PostgreSQL** objects need PostgreSQL 12 or newer. Functions that belong to an extension (such as `pgcrypto`) aren't listed.

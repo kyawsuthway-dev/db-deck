@@ -12,6 +12,7 @@ import type {
   RowChange,
   SslMode,
   StatementResult,
+  StreamOpener,
   TableInfo,
   TablePage,
 } from '../types';
@@ -59,6 +60,8 @@ export class PostgresDriver implements Driver {
   constructor(
     private readonly config: ConnectionConfig,
     private readonly password: string | undefined,
+    /** Set when the connection goes through an SSH tunnel. */
+    private readonly opener?: StreamOpener,
   ) {}
 
   async connect(): Promise<void> {
@@ -362,7 +365,7 @@ export class PostgresDriver implements Driver {
 
   /** On its own connection, so the editor's session (and any open transaction) is never touched. */
   async applyChanges(statements: ChangeStatement[]): Promise<void> {
-    const client = this.newClient('DB Deck (edit)');
+    const client = await this.newClient('DB Deck (edit)');
     client.on('error', () => {}); // a dropped connection fails the pending query instead of crashing
     await client.connect();
     try {
@@ -380,9 +383,12 @@ export class PostgresDriver implements Driver {
     }
   }
 
-  private newClient(applicationName: string): Client {
+  private async newClient(applicationName: string): Promise<Client> {
     const c = this.config;
+    const stream = this.opener ? await this.opener(c.host ?? 'localhost', c.port ?? 5432) : undefined;
     return new Client({
+      // Through a tunnel, pg still gets the real host: TLS checks the certificate against it.
+      stream: stream && (() => stream),
       host: c.host,
       port: c.port,
       user: c.user,
@@ -392,11 +398,14 @@ export class PostgresDriver implements Driver {
       connectionTimeoutMillis: 10_000,
       application_name: applicationName,
       types: textTypes,
+      // Read-only from the first statement, on every connection (also the edit one). Not a security boundary:
+      // the session can turn it off again (README).
+      options: c.readOnly ? '-c default_transaction_read_only=on' : undefined,
     });
   }
 
   private async open(): Promise<Client> {
-    const client = this.newClient('DB Deck');
+    const client = await this.newClient('DB Deck');
     const drop = () => {
       if (this.client === client) this.client = undefined;
     };

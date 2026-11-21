@@ -6,8 +6,8 @@ Shared rules for contributors and coding agents. Before planning or editing a fi
 | --- | --- |
 | `**/*` | `.ai/rules/core.md` |
 | `src/**` | `.ai/rules/architecture.md` |
-| `src/drivers/**`, `src/query/**`, `package.json`, `esbuild.mjs` | `.ai/rules/drivers.md` |
-| `src/webview/**`, `src/views/**` | `.ai/rules/webview.md` |
+| `src/drivers/**`, `src/query/**`, `src/ssh/**`, `package.json`, `esbuild.mjs` | `.ai/rules/drivers.md` |
+| `src/webview/**`, `src/views/**`, `src/connectionForm/**`, `media/logos/**` | `.ai/rules/webview.md` |
 | `src/**`, `package.json` | `.ai/rules/vscode-api.md` |
 | `**/*` | `.ai/rules/verification.md` |
 | `**/*` | `.ai/rules/debugging.md` |

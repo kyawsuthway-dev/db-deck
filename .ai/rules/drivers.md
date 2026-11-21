@@ -2,6 +2,7 @@
 paths:
     - 'src/drivers/**'
     - 'src/query/**'
+    - 'src/ssh/**'
     - 'package.json'
     - 'esbuild.mjs'
 ---
@@ -19,7 +20,7 @@ Before adding a runtime dependency, check and report to the user:
 - Files it loads at runtime (like `sql-wasm.wasm`) are copied into `dist/` by `esbuild.mjs`; `.vscodeignore` excludes `node_modules/`.
 - License is MIT-compatible.
 
-Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (MySQL/MariaDB).
+Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (MySQL/MariaDB). SSH tunnels: `ssh2`; its optional native parts (`sshcrypto.node`, `cpu-features`) are `external` in `esbuild.mjs`, so it uses its pure-JavaScript crypto.
 
 ## The `Driver` contract (`src/types.ts`)
 
@@ -38,6 +39,8 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 - Exception: `applyChanges()` (table-view edits) opens its own short-lived connection (SQLite: a separate in-memory copy) so its `BEGIN … COMMIT` never mixes with a transaction the user left open in the query editor. Close it in `finally`. MySQL edit connections set `FOUND_ROWS` so affected counts mean rows matched.
 - Reconnect lazily: on the client's `error`/`end` event, drop the reference so the next call opens a new one. Concurrent callers share one connect attempt (`connecting` promise).
 - Connect timeout 10 s. SSL from `config.ssl` (`off` / `require` / `no-verify`).
+- SSH tunnel: when `createDriver` gets a `StreamOpener`, every connection the driver opens (including the edit connection) uses it instead of TCP. Pass the real `host` anyway, so TLS checks the certificate against it.
+- `config.readOnly`: PostgreSQL startup option `-c default_transaction_read_only=on`; MySQL `SET SESSION TRANSACTION READ ONLY` right after connecting; SQLite `PRAGMA query_only = ON`, no write-back, and `applyChanges` refuses. Applies to every connection, including the edit one. A guard against mistakes, not a security boundary (README).
 
 ## SQL safety
 
