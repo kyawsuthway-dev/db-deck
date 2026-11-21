@@ -50,6 +50,7 @@ If code is about to `switch` on `config.type` outside `src/drivers/`, stop: that
 - Every command is registered in `extension.ts` and declared in `package.json` `contributes.commands`, with its menus and `when` clauses there (see `vscode-api.md`).
 - Global, cross-workspace data → `context.globalState` (saved connections). Per-workspace → `context.workspaceState` (SQL file ↔ connection). Secrets → `context.secrets` only.
 - Query history → `workspaceState` (`dbDeck.queryHistory`). Saved queries → files under `globalStorageUri/queries/`, with last-known connection names in `globalState` (`dbDeck.savedQueryConnections`). Settings → `dbDeck.*` in `contributes.configuration`, read with `workspace.getConfiguration()`. Other ways to find an editor's connection go through `QueryController.registerLinkResolver()`.
+- Hidden table-view columns → `workspaceState` (`dbDeck.hiddenColumns`, keyed by connection and table).
 - State keys are prefixed `dbDeck.` and defined as constants at the top of the file that owns them.
 - Everything with a `dispose()` goes into `context.subscriptions`.
 

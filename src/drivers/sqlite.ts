@@ -5,8 +5,10 @@ import { splitSql, stripLeadingComments } from '../query/splitSql';
 import type { Cell, ChangeStatement, ColumnInfo, DbObject, Driver, FilterOperator, IndexInfo, RowChange, StatementResult, TableInfo, TablePage } from '../types';
 import {
   buildChangeStatements,
+  buildCountQuery,
   buildPageQuery,
   ChangeConflict,
+  countFrom,
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
@@ -144,6 +146,13 @@ export class SqliteDriver implements Driver {
     const db = await this.database();
     const [result] = await runEach([sql], async (statement) => readStatement(db, statement));
     return result;
+  }
+
+  async countRows(table: TableInfo, where?: string): Promise<string> {
+    const sql = buildCountQuery(quoteIdent(table.name, '"'), filterCondition(where, 'sqlite'));
+    const db = await this.database();
+    const [result] = await runEach([sql], async (statement) => readStatement(db, statement));
+    return countFrom(result);
   }
 
   /** Column names aren't case-sensitive in SQLite, so only odd characters and reserved words need quotes. */

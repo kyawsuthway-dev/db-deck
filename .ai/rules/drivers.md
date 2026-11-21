@@ -28,6 +28,7 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 - `listTables()` returns `schema` only when the table is outside the connection's default schema/database; `previewSql()` and `listColumns()` must handle both cases.
 - `selectPage(table, page, where?)` runs one table-view page as a single statement through `runEach`. It's read-only; SQLite must not write the file back. `previewSql()` builds the same SQL as text, without a filter, for opening in an editor.
 - `filterIdentifier(name)` returns a column name as it should be typed in that database — bare when safe, quoted otherwise (use `identifierFor()` with the database's safe pattern; PostgreSQL's excludes uppercase). `filterOperators()` returns `FILTER_OPERATORS`, plus any operators only that database has.
+- `countRows(table, where)` is read-only, uses `buildCountQuery` and the same `filterCondition` guard as `selectPage`, and returns the count as text.
 - `listObjects` / `listIndexes` / `listTriggers` / `objectDdl` / `listDatabases` / `defaultSchemaLabel` are read-only catalog queries with parameters; identifiers in `SHOW CREATE` / `PRAGMA` text go through `quoteIdent()`. PostgreSQL table and sequence DDL is rebuilt from the catalog and says so; all other DDL comes from the database itself. Shown DDL is never run by DB Deck.
 - Errors: let them throw; callers format them with `errorMessage()`. Never put a password into an error.
 

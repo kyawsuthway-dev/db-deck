@@ -16,8 +16,10 @@ import type {
 } from '../types';
 import {
   buildChangeStatements,
+  buildCountQuery,
   buildPageQuery,
   ChangeConflict,
+  countFrom,
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
@@ -218,6 +220,17 @@ export class MysqlDriver implements Driver {
       return { columns: (fields ?? []).map((f) => f.name), rows: rows as unknown[][] };
     });
     return result;
+  }
+
+  async countRows(table: TableInfo, where?: string): Promise<string> {
+    const sql = buildCountQuery(qualifiedName(table), filterCondition(where, 'mysql'));
+    const conn = await this.getConnection();
+    const [result] = await runEach([sql], async (statement) => {
+      // A prepared statement refuses a second statement, a backstop to filterCondition's check.
+      const [rows, fields] = await conn.execute({ sql: statement, rowsAsArray: true });
+      return { columns: (fields ?? []).map((f) => f.name), rows: rows as unknown[][] };
+    });
+    return countFrom(result);
   }
 
   /** Column names aren't case-sensitive in MySQL, so only odd characters and reserved words need backticks. */

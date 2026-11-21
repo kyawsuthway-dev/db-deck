@@ -11,6 +11,9 @@
 - Filter table views with a SQL condition in the WHERE box above the rows (Enter applies, Escape or ✕ clears). It works with paging and sorting, and only a single condition is accepted. Column names (with types) and operators are suggested as you type.
 - Export a result as CSV, JSON or SQL INSERT statements; for table views, the current page or all matching rows (with progress and Cancel).
 - Edit table data (tables with a primary key): edit cells, add and delete rows, set NULL. Changes stay pending until Save…, which shows a summary and Review SQL, then applies everything in one transaction on a separate connection, with a conflict check against the loaded values.
+- Value detail pane (Details / F4): the selected cell's full value, JSON indented without changing any value, Copy, and editing long values as pending changes in editable tables.
+- Hide columns (header right-click or Columns…), remembered per table; copy and export leave them out.
+- Count rows in table views (SELECT COUNT(*) with the WHERE filter).
 - Select cells, ranges and rows in the grid; Ctrl/Cmd+C copies them as tab-separated text, and the right-click menu copies with headers, as CSV or as JSON.
 - New Query editor with Run Query (Ctrl/Cmd+Enter), multi-statement results grid.
 - SQL editor: Ctrl/Cmd+Enter now runs the statement at the cursor when nothing is selected (it used to run the whole editor); **Run All** (Ctrl/Cmd+Shift+Enter, ▶ in the editor title) runs everything; a **▶ Run** link above each statement runs just that one.

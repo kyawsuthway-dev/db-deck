@@ -17,6 +17,7 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 - Insert data with `textContent` or `document.createElement` only. Never `innerHTML`, `outerHTML`, `insertAdjacentHTML`, or `document.write` with anything derived from data.
 - `localResourceRoots` stays limited to `dist/webview`.
 - The table-edit save confirmation is rendered in the webview, so the strict CSP and `textContent`-only rules are what keep that confirmation trustworthy. Never relax them.
+- The detail pane may indent JSON only by changing whitespace between tokens (`jsonText.ts`); never re-print values through `JSON.parse`. Copy always copies the value as stored (or as edited), never the indented form.
 - Values cross the boundary as `Cell` (`string | null`) — already converted in the driver layer. The webview never changes how a value is displayed; client-side sorting may compare them as numbers, but always shows the original text.
 
 ## Build
@@ -33,7 +34,8 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 - Messages from the webview are the `ResultsRequest` union in the same file. They are untrusted: the service checks every field (offsets, column names) before using it. Paging uses `startRun()` instead of `showLoading()`, so the grid stays on screen while the webview shows its own busy state.
 - One-off commands to the webview (`copyRequest`) are the `ResultsCommand` union: posted directly, never stored as the panel's `last` message, so they're not replayed on reload.
 - A save is two steps: `save` (the extension validates and sends `confirmSave` with a one-time token) and `applySave` with that token. The extension runs only the change set it prepared under the token, once, and only if the same page is still shown.
-- Export and copy formatting happens in the extension (`src/export/formats.ts`). The webview only sends which result, which rows (original indexes, in display order) and which columns.
+- Export and copy formatting happens in the extension (`src/export/formats.ts`). The webview sends which result, which rows (original indexes, in display order) and which columns (original indexes, in display order, leaving hidden ones out); the grid maps screen positions through `columns.ts`.
+- `QueryController` acts only on the requests it owns and ignores the rest, so adding a request type can't reload the table page by accident.
 
 ## Look and feel
 

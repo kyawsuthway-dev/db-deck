@@ -132,6 +132,7 @@ export function activate(context: vscode.ExtensionContext) {
     command('setNull', () => panel.requestEdit('setNull')),
     command('deleteRows', () => panel.requestEdit('deleteRows')),
     command('addRow', () => panel.requestEdit('addRow')),
+    command('hideColumn', () => panel.requestHideColumn()),
   );
 }
 

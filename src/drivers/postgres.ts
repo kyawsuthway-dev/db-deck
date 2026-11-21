@@ -17,8 +17,10 @@ import type {
 } from '../types';
 import {
   buildChangeStatements,
+  buildCountQuery,
   buildPageQuery,
   ChangeConflict,
+  countFrom,
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
@@ -309,6 +311,16 @@ export class PostgresDriver implements Driver {
       return { columns: r.fields.map((f) => f.name), rows: r.rows };
     });
     return result;
+  }
+
+  async countRows(table: TableInfo, where?: string): Promise<string> {
+    const sql = buildCountQuery(qualifiedName(table), filterCondition(where, 'postgres'));
+    const client = await this.getClient();
+    const [result] = await runEach([sql], async (statement) => {
+      const r = await client.query<unknown[]>({ text: statement, rowMode: 'array' });
+      return { columns: r.fields.map((f) => f.name), rows: r.rows };
+    });
+    return countFrom(result);
   }
 
   /** Unquoted names fold to lowercase in PostgreSQL, so anything with uppercase must be quoted. */

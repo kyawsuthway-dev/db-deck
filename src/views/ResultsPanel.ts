@@ -16,6 +16,12 @@ export interface TableViewState {
   hints: FilterHints;
   /** Editable: the primary key and the columns that can't be edited. Otherwise why the table is read-only. */
   edit: { key: string[]; readOnly: string[] } | { reason: string };
+  /** Column names the user hid (remembered per table). */
+  hidden: string[];
+  /** Column types by name, for the detail pane. */
+  types: Record<string, string>;
+  /** Rows matching the filter, after the user clicked Count (as text, so huge counts stay exact). */
+  total?: string;
 }
 
 /** Grid actions from VS Code's context menu, carried out by the webview on its selection. */
@@ -41,7 +47,11 @@ export type ResultsCommand =
    */
   | { type: 'confirmSave'; token: string; title: string; detail: string; statements: string[] }
   /** The save finished or failed: close the confirmation. */
-  | { type: 'closeConfirm' };
+  | { type: 'closeConfirm' }
+  /** Hide the column whose header was right-clicked (VS Code's context menu). */
+  | { type: 'hideColumn' }
+  /** The table view's state changed without new rows (a count arrived); the grid keeps its selection. */
+  | { type: 'tableState'; table: TableViewState };
 
 /** Messages the webview sends back. Treat them as untrusted input. */
 export type ResultsRequest =
@@ -49,10 +59,16 @@ export type ResultsRequest =
   | { type: 'page'; offset: number }
   | { type: 'sort'; sort?: SortKey }
   | { type: 'filter'; where: string }
-  /** `order`: the row order shown, when query results were sorted in the webview. */
-  | { type: 'export'; index: number; order?: number[] }
-  /** `rows`: original row indexes in display order; `columns`: the first and last column. */
-  | { type: 'copy'; index: number; rows: number[]; columns: [number, number]; format: CopyFormat }
+  /** `order`: the row order shown, when query results were sorted in the webview. `columns`: visible columns. */
+  | { type: 'export'; index: number; order?: number[]; columns?: number[] }
+  /** `rows` and `columns`: original indexes, in display order. */
+  | { type: 'copy'; index: number; rows: number[]; columns: number[]; format: CopyFormat }
+  /** The table view's hidden columns changed, to remember for this table. */
+  | { type: 'hideColumns'; names: string[] }
+  /** Count the rows matching the table view's filter. */
+  | { type: 'count' }
+  /** Put one value on the clipboard exactly as shown in the detail pane (it may be a pending edit). */
+  | { type: 'copyValue'; text: string }
   /** How many pending edits the grid holds, so opening something else can ask first. */
   | { type: 'pending'; count: number }
   | { type: 'save'; changes: PendingChanges }
@@ -60,7 +76,7 @@ export type ResultsRequest =
   | { type: 'applySave'; token: string }
   | { type: 'cancelSave'; token: string };
 
-const REQUEST_TYPES = new Set(['page', 'sort', 'filter', 'export', 'copy', 'pending', 'save', 'applySave', 'cancelSave']);
+const REQUEST_TYPES = new Set(['page', 'sort', 'filter', 'export', 'copy', 'pending', 'save', 'applySave', 'cancelSave', 'hideColumns', 'count', 'copyValue']);
 
 /** One reusable "Results" editor tab showing the latest run. */
 export class ResultsPanel implements vscode.Disposable {
@@ -114,6 +130,22 @@ export class ResultsPanel implements vscode.Disposable {
 
   closeConfirm(): void {
     this.command({ type: 'closeConfirm' });
+  }
+
+  /** Hide Column from the header's context menu: the webview knows which header was right-clicked. */
+  requestHideColumn(): void {
+    this.command({ type: 'hideColumn' });
+  }
+
+  /**
+   * Updates the shown table view's state (a count arrived) without re-sending rows, so the grid keeps its
+   * selection. The stored message is updated too, so a reload shows the same.
+   */
+  updateTable(shown: object, table: TableViewState): void {
+    // Only if the same results are still on screen (a page that arrived meanwhile has its own state).
+    if (this.last !== shown || this.last.type !== 'results' || !this.last.table) return;
+    this.last = { ...this.last, table };
+    this.command({ type: 'tableState', table });
   }
 
   private command(command: ResultsCommand): void {
