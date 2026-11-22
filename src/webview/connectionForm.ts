@@ -2,7 +2,7 @@
 // It never sees a stored password. Everything it sends is checked again by the extension (ConnectionForm.ts).
 import type { FieldErrors, FormValues, KindInfo } from '../connectionForm/fields';
 import type { FormMessage, FormRequest, PathTarget } from '../views/ConnectionForm';
-import { parseConnectionString } from './connectionString';
+import { parseConnectionString } from '../shared/connectionString';
 import { icon, type IconName } from './icons';
 import './connectionForm.css';
 
@@ -60,6 +60,10 @@ window.addEventListener('message', (event: MessageEvent<FormMessage>) => {
       break;
     case 'path':
       setPath(msg.target, msg.path);
+      break;
+    case 'workspace':
+      if (init) init.hasWorkspace = msg.hasWorkspace;
+      update();
       break;
   }
 });
@@ -142,7 +146,18 @@ function build(msg: Init) {
     list.append(option);
   }
   folder.input.setAttribute('list', list.id);
-  generalFields.append(name.field, folder.field, list);
+  const scope = segmentedField(
+    'scope',
+    'Available in',
+    [
+      { value: 'global', label: 'All workspaces', icon: 'globe' },
+      { value: 'workspace', label: 'This workspace', icon: 'folder' },
+    ],
+    6,
+  );
+  const scopeHint = el('span', 'hint');
+  scope.field.append(scopeHint);
+  generalFields.append(name.field, folder.field, scope.field, list);
   general.append(generalFields);
   page.append(general);
 
@@ -204,7 +219,15 @@ function build(msg: Init) {
   const sshHost = textField('sshHost', 'SSH host', { icon: 'globe', required: true, span: 4 });
   const sshPort = textField('sshPort', 'Port', { icon: 'hash', required: true, inputMode: 'numeric', span: 2 });
   const sshUser = textField('sshUser', 'SSH user', { icon: 'user', required: true, span: 3 });
-  const auth = authField();
+  const auth = segmentedField(
+    'sshAuth',
+    'Log in with',
+    [
+      { value: 'password', label: 'Password', icon: 'lock' },
+      { value: 'key', label: 'Key file', icon: 'key' },
+    ],
+    3,
+  );
   const keyPath = textField('sshKeyPath', 'Private key file', { icon: 'key', required: true, placeholder: '~/.ssh/id_ed25519', span: 6 });
   keyPath.control.append(iconButton('Browse…', 'folderOpen', () => browse('sshKey')));
   const secret = textField('sshSecret', 'SSH password', { icon: 'lock', type: 'password', span: 6 });
@@ -248,6 +271,8 @@ function build(msg: Init) {
     password,
     database,
     auth,
+    scope,
+    scopeHint,
     save,
     saveLabel,
     test,
@@ -366,43 +391,54 @@ function selectField(key: keyof FormValues, label: string, options: { value: str
   return fieldShell(key, label, opts, control, select.id);
 }
 
-/** Password or key file, as a two-way segmented control. */
-function authField() {
-  const field = el('div', 'field span-3');
-  const label = el('span', 'field-label');
-  label.id = 'auth-label';
-  label.append(el('span', 'label-text', 'Log in with'));
+/** A segmented control (a radio group): SSH login (password / key file) and scope (all / this workspace). */
+function segmentedField(
+  key: 'sshAuth' | 'scope',
+  label: string,
+  options: readonly { value: string; label: string; icon: IconName }[],
+  span: FieldOptions['span'],
+) {
+  const field = el('div', `field span-${span}`);
+  const title = el('span', 'field-label');
+  title.id = `l-${key}`;
+  title.append(el('span', 'label-text', label));
   const group = el('div', 'segmented');
   group.setAttribute('role', 'radiogroup');
-  group.setAttribute('aria-labelledby', label.id);
-  const choices = (
-    [
-      { value: 'password', label: 'Password', icon: 'lock' },
-      { value: 'key', label: 'Key file', icon: 'key' },
-    ] as const
-  ).map((c) => {
+  group.setAttribute('aria-labelledby', title.id);
+  const choose = (value: string) => {
+    values[key] = value;
+    clearError(key);
+    update();
+  };
+  const choices = options.map((c, i) => {
     const b = el('button', 'segment');
     b.type = 'button';
     b.setAttribute('role', 'radio');
     b.append(icon(c.icon), el('span', undefined, c.label));
-    const choose = () => {
-      values.sshAuth = c.value;
-      clearError('sshAuth');
-      update();
-    };
-    b.addEventListener('click', choose);
+    b.addEventListener('click', () => choose(c.value));
     b.addEventListener('keydown', (e) => {
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!step) return;
       e.preventDefault();
-      values.sshAuth = values.sshAuth === 'key' ? 'password' : 'key';
-      update();
-      choices.find((x) => x.value === values.sshAuth)?.button.focus();
+      const next = choices[(i + step + choices.length) % choices.length];
+      if (next.button.disabled) return;
+      choose(next.value);
+      next.button.focus();
     });
     return { value: c.value, button: b };
   });
   group.append(...choices.map((c) => c.button));
-  field.append(label, group, errorSpan('sshAuth'));
+  field.append(title, group, errorSpan(key));
   return { field, choices };
+}
+
+/** Selects the chosen segment; only it is in the Tab order. */
+function paintSegments(choices: { value: string; button: HTMLButtonElement }[], value: string): void {
+  for (const c of choices) {
+    const on = c.value === value;
+    c.button.setAttribute('aria-checked', String(on));
+    c.button.tabIndex = on ? 0 : -1;
+  }
 }
 
 /** A switch row: title and description on the left, the switch on the right. */
@@ -503,18 +539,30 @@ function update(): void {
   ui.url.placeholder = k.type === 'mysql' ? `${k.label.toLowerCase()}://user@host:3306/database` : 'postgres://user@host:5432/database';
 
   const editing = init.mode === 'edit';
-  ui.password.input.placeholder = editing ? (init.hasPassword ? 'Unchanged — type to replace' : 'None — type to set one') : 'Leave empty for none';
+  ui.password.input.placeholder = init.fromEnv
+    ? init.hasPassword
+      ? 'From .env — type to replace'
+      : 'Leave empty for none'
+    : editing
+      ? init.hasPassword
+        ? 'Unchanged — type to replace'
+        : 'None — type to set one'
+      : 'Leave empty for none';
   ui.database.required.hidden = k.database !== 'required';
   ui.database.input.placeholder = k.database === 'optional' ? 'Optional — empty shows all' : '';
 
   ui.sshFields.disabled = !values.sshEnabled;
   ui.sshFields.classList.toggle('off', !values.sshEnabled);
   const keyAuth = values.sshAuth === 'key';
-  for (const c of ui.auth.choices) {
-    const on = c.value === values.sshAuth;
-    c.button.setAttribute('aria-checked', String(on));
-    c.button.tabIndex = on ? 0 : -1;
-  }
+  paintSegments(ui.auth.choices, values.sshAuth);
+  paintSegments(ui.scope.choices, values.scope);
+  // "This workspace" needs an open folder; say why it's off instead of only greying it out.
+  const workspaceChoice = ui.scope.choices.find((c) => c.value === 'workspace')!.button;
+  workspaceChoice.disabled = !init.hasWorkspace;
+  workspaceChoice.title = init.hasWorkspace ? '' : 'No folder is open in this window.';
+  ui.scopeHint.textContent = init.hasWorkspace
+    ? 'This-workspace connections are stored privately in VS Code, not in your project files.'
+    : 'No folder is open in this window, so connections are saved for all workspaces. Open a folder (File → Open Folder…) to save one for it only.';
   ui.keyPath.field.hidden = !keyAuth;
   ui.secret.text.textContent = keyAuth ? 'Key passphrase' : 'SSH password';
   const keep = editing && init.hasSshSecret && init.values.sshEnabled && init.values.sshAuth === values.sshAuth;
@@ -568,6 +616,14 @@ function applyConnectionString(input: HTMLInputElement, hint: HTMLElement, expli
   const target = init!.kinds.find((k) => k.label === parsed.kind);
   if (!target) return;
   changeKind(target);
+  if (parsed.filePath !== undefined) {
+    setValue('filePath', parsed.filePath);
+    input.value = '';
+    hint.textContent = 'Filled in. Use a full path, or Browse….';
+    hint.className = 'hint ok-text';
+    update();
+    return;
+  }
   if (parsed.host) setValue('host', parsed.host);
   setValue('port', parsed.port ?? String(target.defaultPort ?? ''));
   if (parsed.user) setValue('user', parsed.user);

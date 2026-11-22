@@ -17,22 +17,86 @@ export function createDriver(config: ConnectionConfig, password: string | undefi
   }
 }
 
-/** Choices shown in the add-connection wizard. Several kinds can share one driver. */
+/** Database kinds the connection form offers. Several kinds can share one driver. */
 export interface DbKind {
   label: string;
   type: DbType;
   defaultPort?: number;
   defaultUser?: string;
   defaultDatabase?: string;
-  /** The logo in the connection form (`logo()` in src/webview/icons.ts); unknown names get a generic icon. */
+  /** Logo files `media/logos/<logo>-*.svg` (see src/logos.ts); a missing logo gets a generic icon. */
   logo: string;
+  /** Laravel's `DB_CONNECTION` values for this kind, for .env connections (src/env/detect.ts). */
+  laravel?: string[];
+  /** Docker images of this kind and where they take credentials, for compose connections (src/env/compose.ts). */
+  docker?: DockerImage;
 }
 
+/** How an official database image is configured through `environment` in a compose file. */
+export interface DockerImage {
+  /** Image names without registry or tag, e.g. `postgres`, `pgvector/pgvector`. */
+  images: string[];
+  /**
+   * Ways to log in, in order. One applies when its `userVar` is set or, for a fixed `user`, when its
+   * `passwordVar` is set; if none applies, the last one is used with its fixed user.
+   */
+  logins: { userVar?: string; user?: string; passwordVar: string }[];
+  /** Variables naming the database, first set wins. */
+  databaseVars: string[];
+  /** The database when none is set: the login user (PostgreSQL), or none (MySQL shows all databases). */
+  defaultDatabase?: 'user';
+}
+
+const MYSQL_LOGINS = [
+  { userVar: 'MYSQL_USER', passwordVar: 'MYSQL_PASSWORD' },
+  { user: 'root', passwordVar: 'MYSQL_ROOT_PASSWORD' },
+];
+
 export const DB_KINDS: DbKind[] = [
-  { label: 'SQLite', type: 'sqlite', logo: 'sqlite' },
-  { label: 'PostgreSQL', type: 'postgres', defaultPort: 5432, defaultUser: 'postgres', defaultDatabase: 'postgres', logo: 'postgresql' },
-  { label: 'MySQL', type: 'mysql', defaultPort: 3306, defaultUser: 'root', logo: 'mysql' },
-  { label: 'MariaDB', type: 'mysql', defaultPort: 3306, defaultUser: 'root', logo: 'mariadb' },
+  { label: 'SQLite', type: 'sqlite', logo: 'sqlite', laravel: ['sqlite'] },
+  {
+    label: 'PostgreSQL',
+    type: 'postgres',
+    defaultPort: 5432,
+    defaultUser: 'postgres',
+    defaultDatabase: 'postgres',
+    logo: 'postgresql',
+    laravel: ['pgsql'],
+    docker: {
+      images: ['postgres', 'postgis/postgis', 'pgvector/pgvector', 'timescale/timescaledb', 'timescale/timescaledb-ha'],
+      logins: [{ userVar: 'POSTGRES_USER', user: 'postgres', passwordVar: 'POSTGRES_PASSWORD' }],
+      databaseVars: ['POSTGRES_DB'],
+      defaultDatabase: 'user',
+    },
+  },
+  {
+    label: 'MySQL',
+    type: 'mysql',
+    defaultPort: 3306,
+    defaultUser: 'root',
+    logo: 'mysql',
+    laravel: ['mysql'],
+    docker: { images: ['mysql', 'mysql/mysql-server', 'percona', 'percona/percona-server'], logins: MYSQL_LOGINS, databaseVars: ['MYSQL_DATABASE'] },
+  },
+  {
+    label: 'MariaDB',
+    type: 'mysql',
+    defaultPort: 3306,
+    defaultUser: 'root',
+    logo: 'mariadb',
+    laravel: ['mariadb'],
+    docker: {
+      images: ['mariadb'],
+      // The MariaDB image accepts both its own MARIADB_* names and the MYSQL_* ones.
+      logins: [
+        { userVar: 'MARIADB_USER', passwordVar: 'MARIADB_PASSWORD' },
+        { userVar: 'MYSQL_USER', passwordVar: 'MYSQL_PASSWORD' },
+        { user: 'root', passwordVar: 'MARIADB_ROOT_PASSWORD' },
+        { user: 'root', passwordVar: 'MYSQL_ROOT_PASSWORD' },
+      ],
+      databaseVars: ['MARIADB_DATABASE', 'MYSQL_DATABASE'],
+    },
+  },
 ];
 
 export function typeLabel(type: DbType): string {

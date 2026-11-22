@@ -20,7 +20,7 @@ Before adding a runtime dependency, check and report to the user:
 - Files it loads at runtime (like `sql-wasm.wasm`) are copied into `dist/` by `esbuild.mjs`; `.vscodeignore` excludes `node_modules/`.
 - License is MIT-compatible.
 
-Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (MySQL/MariaDB). SSH tunnels: `ssh2`; its optional native parts (`sshcrypto.node`, `cpu-features`) are `external` in `esbuild.mjs`, so it uses its pure-JavaScript crypto.
+Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (MySQL/MariaDB). SSH tunnels: `ssh2`; its optional native parts (`sshcrypto.node`, `cpu-features`) are `external` in `esbuild.mjs`, so it uses its pure-JavaScript crypto. Compose files: `yaml` (pure JavaScript).
 
 ## The `Driver` contract (`src/types.ts`)
 

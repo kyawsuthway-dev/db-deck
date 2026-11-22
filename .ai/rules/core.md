@@ -8,7 +8,7 @@ paths:
 These are the project's hard constraints. A change that breaks one is not merged, however useful it is.
 
 1. **No native modules.** `node_modules` is installed in Linux Docker, but the extension runs in VS Code's own Node on Windows, macOS, and Linux. Every runtime dependency must be pure JavaScript or WebAssembly (e.g. `sql.js`, not `better-sqlite3`). See `drivers.md` for the checklist.
-2. **Passwords live only in VS Code's SecretStorage.** Saved connections (`globalState`) never contain a password. Never log, display, or put a password in an error message or result.
+2. **Passwords live only in VS Code's SecretStorage.** Saved connections (`globalState`, `workspaceState`) never contain a password. Passwords from a project's `.env` or compose file are read when connecting and kept only in memory. Never log, display, or put a password in an error message or result.
 3. **The webview never renders data as HTML.** Strict CSP, no inline script or style, values inserted with `textContent` only. See `webview.md`.
 4. **The extension never changes a user's database on its own.** Only SQL the user typed and ran, or an action they explicitly confirmed, may write. Browsing, previews, and metadata queries are read-only. Table edits count as confirmed only when the user clicks **Apply** in the save confirmation; pending edits never write. A read-only connection never offers or applies table edits, and the extension checks that itself, not only the grid.
 5. **Show values faithfully.** Don't convert database values in ways that lose precision or change them (big integers, decimals, timestamps). Drivers return text as the database sends it.

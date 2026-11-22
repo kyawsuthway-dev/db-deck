@@ -24,12 +24,26 @@ export class ConnectionFolderNode implements Base {
   }
 }
 
+/** The connections found in one .env file ("<workspace folder> · .env"), shown above the others. */
+export class EnvGroupNode implements Base {
+  readonly kind = 'envGroup';
+  readonly parent = undefined;
+  readonly treeId: string;
+  constructor(
+    readonly label: string,
+    readonly file: vscode.Uri,
+    readonly connections: ConnectionConfig[],
+  ) {
+    this.treeId = `env:${file.toString()}`;
+  }
+}
+
 export class ConnectionNode implements Base {
   readonly kind = 'connection';
   constructor(
     readonly config: ConnectionConfig,
     readonly treeId: string,
-    readonly parent?: ConnectionFolderNode,
+    readonly parent?: ConnectionFolderNode | EnvGroupNode,
   ) {}
 }
 
@@ -103,7 +117,7 @@ class MessageNode implements Base {
   ) {}
 }
 
-export type TreeNode = ConnectionFolderNode | ConnectionNode | SchemaNode | FolderNode | TableNode | ObjectNode | ColumnNode | MessageNode;
+export type TreeNode = ConnectionFolderNode | EnvGroupNode | ConnectionNode | SchemaNode | FolderNode | TableNode | ObjectNode | ColumnNode | MessageNode;
 
 export function tableLabel(table: { name: string; schema?: string }): string {
   return table.schema ? `${table.schema}.${table.name}` : table.name;
@@ -170,15 +184,32 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
         item.contextValue = 'folder';
         return withId(item, node);
       }
+      case 'envGroup': {
+        const item = new vscode.TreeItem(node.label, C.Expanded);
+        item.description = String(node.connections.length);
+        item.iconPath = new vscode.ThemeIcon('gear');
+        item.tooltip = `Connections read from ${node.file.fsPath}. Edit the file to change them.`;
+        // Compose files get a package (container) icon; .env files a gear.
+        if (/compose\.ya?ml$/.test(node.file.path)) item.iconPath = new vscode.ThemeIcon('package');
+        item.contextValue = 'envGroup';
+        return withId(item, node);
+      }
       case 'connection': {
         const c = node.config;
         const connected = this.manager.isConnected(c.id);
         const item = new vscode.TreeItem(c.name, C.Collapsed);
-        const where = c.type === 'sqlite' ? typeLabel(c.type) : `${typeLabel(c.type)} · ${c.host}:${c.port}`;
-        item.description = `${c.readOnly ? 'read-only · ' : ''}${where}`;
-        const target = c.type === 'sqlite' ? c.filePath : `${c.user}@${c.host}:${c.port}${c.database ? `/${c.database}` : ''}`;
+        const where = DATABASE_SCOPE[c.type] === 'none' ? typeLabel(c.type) : `${typeLabel(c.type)} · ${c.host}:${c.port}`;
+        const scope = c.source === 'workspace' ? 'this workspace · ' : '';
+        item.description = `${c.readOnly ? 'read-only · ' : ''}${scope}${where}`;
+        const target = DATABASE_SCOPE[c.type] === 'none' ? c.filePath : `${c.user}@${c.host}:${c.port}${c.database ? `/${c.database}` : ''}`;
         const via = c.ssh ? `\nvia SSH ${c.ssh.user}@${c.ssh.host}:${c.ssh.port}` : '';
-        item.tooltip = `${target}${via}${c.readOnly ? '\nRead-only' : ''}${connected ? '\nConnected' : ''}`;
+        const env = c.source === 'env' ? this.manager.envInfo(c.id) : undefined;
+        const from = env
+          ? `\nFrom ${env.file.fsPath} (${env.keys.join(', ')})${env.via ? `\nDocker: ${env.via}` : ''}`
+          : c.source === 'workspace'
+            ? '\nSaved for this workspace only'
+            : '';
+        item.tooltip = `${target}${via}${from}${c.readOnly ? '\nRead-only' : ''}${connected ? '\nConnected' : ''}`;
         // The database's logo; open connections use the version with a green dot. (A file decoration badge
         // would also color the name, which the maintainer didn't want.)
         const logo = logoForType(c.type);
@@ -186,7 +217,8 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
           (logo && logoUris(this.extensionUri, logo, connected)) ||
           new vscode.ThemeIcon('database', connected ? new vscode.ThemeColor('charts.green') : undefined);
         // connection[.connected][.server]: menus match with regexes (vscode-api.md).
-        item.contextValue = `connection${connected ? '.connected' : ''}${isServer(c) ? '.server' : ''}`;
+        // `.env` last, so saved-connection menus can require /^connection(\.connected)?(\.server)?$/.
+        item.contextValue = `connection${connected ? '.connected' : ''}${isServer(c) ? '.server' : ''}${c.source === 'env' ? '.env' : ''}`;
         return withId(item, node);
       }
       case 'schema': {
@@ -242,10 +274,20 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
   async getChildren(node?: TreeNode): Promise<TreeNode[]> {
     if (!node) {
       const list = this.manager.list();
-      const folders = this.manager.folders().map((name) => new ConnectionFolderNode(name, list.filter((c) => c.folder === name)));
-      return [...folders, ...list.filter((c) => !c.folder).map((c) => this.connectionNode(c))];
+      const saved = list.filter((c) => c.source !== 'env');
+      const envGroups = new Map<string, { file: vscode.Uri; connections: ConnectionConfig[] }>();
+      for (const c of list.filter((x) => x.source === 'env')) {
+        const info = this.manager.envInfo(c.id);
+        if (!info) continue;
+        const group = envGroups.get(info.group) ?? { file: info.file, connections: [] };
+        group.connections.push(c);
+        envGroups.set(info.group, group);
+      }
+      const env = [...envGroups].map(([label, g]) => new EnvGroupNode(label, g.file, g.connections));
+      const folders = this.manager.folders().map((name) => new ConnectionFolderNode(name, saved.filter((c) => c.folder === name)));
+      return [...env, ...folders, ...saved.filter((c) => !c.folder).map((c) => this.connectionNode(c))];
     }
-    if (node.kind === 'connectionFolder') return node.connections.map((c) => this.connectionNode(c, node));
+    if (node.kind === 'connectionFolder' || node.kind === 'envGroup') return node.connections.map((c) => this.connectionNode(c, node));
     try {
       switch (node.kind) {
         case 'connection': {
@@ -300,7 +342,7 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
-  private connectionNode(config: ConnectionConfig, parent?: ConnectionFolderNode): ConnectionNode {
+  private connectionNode(config: ConnectionConfig, parent?: ConnectionFolderNode | EnvGroupNode): ConnectionNode {
     return new ConnectionNode(config, `${config.id}#${this.generations.get(config.id) ?? 0}`, parent);
   }
 
@@ -311,7 +353,11 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
   async findNode(connectionId: string, object: DbObject): Promise<TreeNode | undefined> {
     const config = this.manager.get(connectionId);
     const root = await this.getChildren();
-    const folder = root.find((n) => n.kind === 'connectionFolder' && n.name === config?.folder);
+    const folder = root.find(
+      (n) =>
+        (n.kind === 'connectionFolder' && config?.source !== 'env' && n.name === config?.folder) ||
+        (n.kind === 'envGroup' && n.connections.some((c) => c.id === connectionId)),
+    );
     let level = (folder ? await this.getChildren(folder) : root).find((n) => n.kind === 'connection' && n.config.id === connectionId);
     const wanted = (n: TreeNode) =>
       (n.kind === 'table' || n.kind === 'object') && n.object.kind === object.kind && n.object.name === object.name &&

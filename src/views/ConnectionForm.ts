@@ -24,6 +24,10 @@ export type FormMessage =
       folders: string[];
       /** Editing: secrets are stored, so empty fields say "Unchanged". */
       hasPassword: boolean;
+      /** Copied from a .env connection: an empty password field uses the .env password. */
+      fromEnv: boolean;
+      /** A folder or workspace is open, so "This Workspace" can be chosen. */
+      hasWorkspace: boolean;
       hasSshSecret: boolean;
       /** Webview URIs of each kind's logo (by DbKind.logo), light and dark. */
       logos: Record<string, { light: string; dark: string }>;
@@ -31,7 +35,9 @@ export type FormMessage =
   | { type: 'fieldErrors'; errors: FieldErrors }
   /** `saveAnyway`: the test failed, offer to save without it. */
   | { type: 'status'; state: 'busy' | 'ok' | 'error' | 'info'; text: string; saveAnyway?: boolean }
-  | { type: 'path'; target: PathTarget; path: string };
+  | { type: 'path'; target: PathTarget; path: string }
+  /** Workspace folders were added or removed while the form is open. */
+  | { type: 'workspace'; hasWorkspace: boolean };
 
 /** Messages from the form. Untrusted: every field is checked here (readValues, checkForm). */
 export type FormRequest =
@@ -76,8 +82,11 @@ export class ConnectionForms implements vscode.Disposable {
     });
   }
 
-  openAdd(): void {
-    this.open('new', () => new ConnectionFormPanel(this.extensionUri, this.manager, this.tree, randomUUID(), undefined));
+  /** A new connection; `copyOf` (a .env connection) prefills it, and its password is used unless one is typed. */
+  openAdd(copyOf?: ConnectionConfig): void {
+    this.open(copyOf ? `copy:${copyOf.id}` : 'new', () =>
+      new ConnectionFormPanel(this.extensionUri, this.manager, this.tree, randomUUID(), undefined, copyOf),
+    );
   }
 
   openEdit(config: ConnectionConfig): void {
@@ -117,6 +126,7 @@ class ConnectionFormPanel {
     private readonly tree: ConnectionsTree,
     private readonly id: string,
     editing: ConnectionConfig | undefined,
+    private readonly copyOf?: ConnectionConfig,
   ) {
     this.editingId = editing?.id;
     this.extensionUri = extensionUri;
@@ -124,7 +134,7 @@ class ConnectionFormPanel {
     const logosUri = vscode.Uri.joinPath(extensionUri, 'media', 'logos');
     this.panel = vscode.window.createWebviewPanel(
       'dbDeck.connectionForm',
-      editing ? `Edit ${editing.name}` : 'Add Connection',
+      editing ? `Edit ${editing.name}` : copyOf ? `Save ${copyOf.name}` : 'Add Connection',
       vscode.ViewColumn.Active,
       // Kept alive while hidden, so switching tabs doesn't lose what was typed.
       { enableScripts: true, localResourceRoots: [distUri, logosUri], retainContextWhenHidden: true },
@@ -145,6 +155,10 @@ class ConnectionFormPanel {
 <body><main id="root"></main></body>
 </html>`;
     webview.onDidReceiveMessage((msg: unknown) => void this.onMessage(msg));
+    const folders = vscode.workspace.onDidChangeWorkspaceFolders(() =>
+      this.post({ type: 'workspace', hasWorkspace: this.manager.hasWorkspace() }),
+    );
+    this.panel.onDidDispose(() => folders.dispose());
   }
 
   readonly onDidDispose = (listener: () => void) => this.panel.onDidDispose(listener);
@@ -184,16 +198,21 @@ class ConnectionFormPanel {
   private async init(): Promise<void> {
     const editing = this.editingId ? this.manager.get(this.editingId) : undefined;
     if (this.editingId && !editing) return this.dispose();
-    this.stored = editing ? await this.manager.storedSecrets(editing.id) : {};
+    const source = editing ?? this.copyOf;
+    this.stored = source ? await this.manager.storedSecrets(source.id) : {};
     const all = kinds();
-    const kind = (editing && all.find((k) => k.type === editing.type)) || all.find((k) => k.network) || all[0];
+    const kind = (source && all.find((k) => k.type === source.type)) || all.find((k) => k.network) || all[0];
+    // A copy of a .env connection starts as a new connection for all workspaces (its read-only setting is kept).
+    const start = this.copyOf ? { ...this.copyOf, source: undefined } : editing;
     this.post({
       type: 'init',
       mode: editing ? 'edit' : 'add',
-      values: initialValues(kind, editing),
+      values: initialValues(kind, start),
       kinds: all,
       folders: this.manager.folders(),
       hasPassword: !!this.stored.password,
+      fromEnv: !!this.copyOf,
+      hasWorkspace: this.manager.hasWorkspace(),
       hasSshSecret: !!this.stored.sshSecret,
       logos: this.logos(all),
     });
@@ -217,6 +236,7 @@ class ConnectionFormPanel {
       kinds: kinds(),
       existing,
       hasSshSecret: !!this.stored.sshSecret,
+      hasWorkspace: this.manager.hasWorkspace(),
       fileExists: (file) => fs.existsSync(file),
     };
   }
@@ -269,7 +289,8 @@ class ConnectionFormPanel {
           return;
         }
       }
-      const secrets = { password: checked.password, sshSecret: checked.sshSecret };
+      // A copy of a .env connection keeps the .env password unless another one was typed.
+      const secrets = { password: checked.password ?? (this.copyOf ? this.stored.password : undefined), sshSecret: checked.sshSecret };
       if (this.editingId) {
         if (this.manager.isConnected(this.editingId)) {
           const ok = await vscode.window.showWarningMessage(
@@ -287,9 +308,9 @@ class ConnectionFormPanel {
           return;
         }
         this.tree.collapseOnNextRefresh(config.id);
-        await this.manager.update(config, secrets);
+        await this.manager.update(config, secrets, checked.scope);
       } else {
-        await this.manager.add(config, secrets);
+        await this.manager.add(config, secrets, checked.scope);
       }
       void vscode.window.showInformationMessage(`Saved connection "${config.name}".`);
       this.dispose();
@@ -302,6 +323,7 @@ class ConnectionFormPanel {
 
   /** Secrets not retyped while editing are the stored ones; '' means none. */
   private secretsForTest(checked: { config: ConnectionConfig; password?: string; sshSecret?: string }): ConnectionSecrets {
+    // Adding without a copy: nothing is stored, so `stored` is empty.
     return {
       password: checked.password ?? this.stored.password,
       sshSecret: checked.sshSecret ?? (checked.config.ssh ? this.stored.sshSecret : undefined),
