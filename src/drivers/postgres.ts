@@ -11,6 +11,9 @@ import type {
   DumpPlan,
   DumpTable,
   FilterOperator,
+  ImportOptions,
+  ImportResult,
+  ImportRow,
   IndexInfo,
   RowChange,
   ScriptOptions,
@@ -25,6 +28,7 @@ import {
   buildChangeStatements,
   buildCountQuery,
   buildDumpQuery,
+  buildInsertBatch,
   buildPageQuery,
   ChangeConflict,
   countFrom,
@@ -32,6 +36,8 @@ import {
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
+  importBatchRows,
+  importRowsWith,
   insertStatements,
   quoteIdent,
   runEach,
@@ -105,18 +111,27 @@ export class PostgresDriver implements Driver {
 
   async listColumns(table: TableInfo): Promise<ColumnInfo[]> {
     const client = await this.getClient();
-    const { rows } = await client.query<{ name: string; type: string; nullable: string; pk: string }>(
+    const { rows } = await client.query<{ name: string; type: string; nullable: string; pk: string; def: string; gen: string }>(
       `SELECT a.attname AS name,
               format_type(a.atttypid, a.atttypmod) AS type,
               NOT a.attnotnull AS nullable,
-              COALESCE(a.attnum = ANY (i.indkey), false) AS pk
+              COALESCE(a.attnum = ANY (i.indkey), false) AS pk,
+              (a.atthasdef OR a.attidentity <> '') AS def,
+              (a.attgenerated <> '') AS gen
          FROM pg_attribute a
          LEFT JOIN pg_index i ON i.indrelid = a.attrelid AND i.indisprimary
         WHERE a.attrelid = $1::regclass AND a.attnum > 0 AND NOT a.attisdropped
         ORDER BY a.attnum`,
       [qualifiedName(table)],
     );
-    return rows.map((r) => ({ name: r.name, type: r.type, nullable: r.nullable === 'true', primaryKey: r.pk === 'true' }));
+    return rows.map((r) => ({
+      name: r.name,
+      type: r.type,
+      nullable: r.nullable === 'true',
+      primaryKey: r.pk === 'true',
+      hasDefault: r.def === 'true',
+      generated: r.gen === 'true',
+    }));
   }
 
   async listObjects(): Promise<DbObject[]> {
@@ -388,6 +403,29 @@ export class PostgresDriver implements Driver {
       viewSql += await this.objectDdl(object ?? { kind: 'view', name: view.name, schema: view.schema });
     }
     return { start: "SET client_encoding = 'UTF8';\n", structure, tables: planned, afterData, sequenceValues, views: viewSql, end: '' };
+  }
+
+  async importRows(table: TableInfo, columns: string[], rows: AsyncIterable<ImportRow>, options: ImportOptions): Promise<ImportResult> {
+    const name = qualifiedName(table);
+    const client = await this.newClient('DB Deck (import)');
+    client.on('error', () => {}); // a dropped connection fails the running statement instead of crashing
+    await client.connect();
+    const run = async (sql: string, values?: Cell[]) => client.query({ text: sql, values });
+    try {
+      return await importRowsWith(rows, options, {
+        begin: async () => void (await run('BEGIN')),
+        commit: async () => void (await run('COMMIT')),
+        rollback: async () => void (await run('ROLLBACK')),
+        savepoint: async () => void (await run('SAVEPOINT dbdeck_batch')),
+        rollbackToSavepoint: async () => void (await run('ROLLBACK TO SAVEPOINT dbdeck_batch')),
+        releaseSavepoint: async () => void (await run('RELEASE SAVEPOINT dbdeck_batch')),
+        deleteAll: async () => (await run(`DELETE FROM ${name}`)).rowCount ?? 0,
+        insert: async (batch) => void (await run(buildInsertBatch(name, '"', columns, batch.length, (n) => `$${n}`), batch.flatMap((r) => r.values))),
+        batchRows: importBatchRows(65_535, columns.length),
+      });
+    } finally {
+      await client.end().catch(() => {});
+    }
   }
 
   async dumpRows(table: TableInfo, columns: string[], page: TablePage): Promise<DumpCell[][]> {

@@ -15,6 +15,7 @@ import { HistoryNode, HistoryTree } from './tree/HistoryTree';
 import { SavedQueriesTree, SavedQueryNode } from './tree/SavedQueriesTree';
 import { ConnectionForms } from './views/ConnectionForm';
 import { DumpForms } from './views/DumpForm';
+import { ImportForms } from './views/ImportForm';
 import { RunScriptForms } from './views/RunScriptForm';
 import { ResultsPanel } from './views/ResultsPanel';
 
@@ -35,6 +36,7 @@ export function activate(context: vscode.ExtensionContext) {
   const objects = new ObjectCommands(manager, queries, tree, connectionsView);
   const forms = new ConnectionForms(context.extensionUri, manager, tree);
   const dumps = new DumpForms(context.extensionUri, manager);
+  const imports = new ImportForms(context.extensionUri, manager);
   const scripts = new RunScriptForms(context.extensionUri, manager, queries, (id) => {
     // A script may have created or dropped tables: reload the tree and the editor's suggestions.
     sqlEditor.clearSchema(id);
@@ -50,6 +52,7 @@ export function activate(context: vscode.ExtensionContext) {
     panel,
     forms,
     dumps,
+    imports,
     scripts,
     queries,
     exporter,
@@ -85,6 +88,8 @@ export function activate(context: vscode.ExtensionContext) {
     // Data transfer.
     command('dumpDatabase', (node?: ConnectionNode) => node && dumps.open(node.config.id)),
     command('dumpTable', (node?: TableNode) => node && dumps.open(node.connectionId, node.table)),
+    command('importCsv', (node?: TableNode) => node && imports.openForTable(node.connectionId, node.table)),
+    command('importCsvFile', (uri?: unknown) => imports.openForFile(uri instanceof vscode.Uri ? uri : undefined)),
     command('runSqlFile', (uri?: unknown) => scripts.open(uri instanceof vscode.Uri ? uri : undefined)),
 
     // .env connections.

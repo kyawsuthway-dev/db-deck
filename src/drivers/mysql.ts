@@ -11,6 +11,9 @@ import type {
   DumpPlan,
   DumpTable,
   FilterOperator,
+  ImportOptions,
+  ImportResult,
+  ImportRow,
   IndexInfo,
   RowChange,
   ScriptOptions,
@@ -24,6 +27,7 @@ import {
   buildChangeStatements,
   buildCountQuery,
   buildDumpQuery,
+  buildInsertBatch,
   buildPageQuery,
   ChangeConflict,
   countFrom,
@@ -31,6 +35,8 @@ import {
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
+  importBatchRows,
+  importRowsWith,
   insertStatements,
   quoteIdent,
   runEach,
@@ -77,18 +83,25 @@ export class MysqlDriver implements Driver {
   async listColumns(table: TableInfo): Promise<ColumnInfo[]> {
     const conn = await this.getConnection();
     const [rows] = await conn.query<mysql.RowDataPacket[]>(
-      `SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type, IS_NULLABLE AS nullable, COLUMN_KEY AS k
+      `SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type, IS_NULLABLE AS nullable, COLUMN_KEY AS k,
+              COLUMN_DEFAULT IS NOT NULL AS def, EXTRA AS extra
          FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ?
         ORDER BY ORDINAL_POSITION`,
       [table.schema ?? null, table.name],
     );
-    return rows.map((r) => ({
-      name: String(r.name),
-      type: String(r.type),
-      nullable: String(r.nullable) === 'YES',
-      primaryKey: String(r.k) === 'PRI',
-    }));
+    return rows.map((r) => {
+      const extra = String(r.extra ?? '');
+      return {
+        name: String(r.name),
+        type: String(r.type),
+        nullable: String(r.nullable) === 'YES',
+        primaryKey: String(r.k) === 'PRI',
+        hasDefault: String(r.def) === '1' || /auto_increment/i.test(extra),
+        // Not DEFAULT_GENERATED (a CURRENT_TIMESTAMP default): that column takes values.
+        generated: /\b(VIRTUAL|STORED) GENERATED\b/i.test(extra),
+      };
+    });
   }
 
   async listObjects(): Promise<DbObject[]> {
@@ -335,6 +348,37 @@ export class MysqlDriver implements Driver {
       views: viewSql,
       end: 'SET FOREIGN_KEY_CHECKS = @DBDECK_OLD_FK, SQL_MODE = @DBDECK_OLD_SQL_MODE;\n',
     };
+  }
+
+  async importRows(table: TableInfo, columns: string[], rows: AsyncIterable<ImportRow>, options: ImportOptions): Promise<ImportResult> {
+    const name = qualifiedName(table);
+    const conn = await this.createConnection();
+    conn.on('error', () => {}); // a dropped connection fails the running statement instead of crashing
+    const run = (sql: string) => conn.query(sql);
+    try {
+      return await importRowsWith(rows, options, {
+        begin: async () => void (await run('START TRANSACTION')),
+        commit: async () => void (await run('COMMIT')),
+        rollback: async () => void (await run('ROLLBACK')),
+        savepoint: async () => void (await run('SAVEPOINT dbdeck_batch')),
+        rollbackToSavepoint: async () => void (await run('ROLLBACK TO SAVEPOINT dbdeck_batch')),
+        releaseSavepoint: async () => void (await run('RELEASE SAVEPOINT dbdeck_batch')),
+        deleteAll: async () => ((await conn.query(`DELETE FROM ${name}`))[0] as mysql.ResultSetHeader).affectedRows,
+        // conn.execute, not conn.query: real server-side parameters (drivers.md).
+        insert: async (batch) => {
+          try {
+            await conn.execute(buildInsertBatch(name, '`', columns, batch.length, () => '?'), batch.flatMap((r) => r.values));
+          } catch (err) {
+            // MySQL counts rows within the statement ("at row 1"); the import reports the file's line instead.
+            if (err instanceof Error) err.message = err.message.replace(/ at row \d+$/, '');
+            throw err;
+          }
+        },
+        batchRows: importBatchRows(65_535, columns.length),
+      });
+    } finally {
+      await conn.end().catch(() => {});
+    }
   }
 
   async dumpRows(table: TableInfo, columns: string[], page: TablePage): Promise<DumpCell[][]> {

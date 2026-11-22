@@ -90,6 +90,8 @@
       { "command": "dbDeck.renameFolder", "title": "Rename Folder…", "category": "DB Deck" },
       { "command": "dbDeck.dumpDatabase", "title": "Dump to SQL File…", "category": "DB Deck" },
       { "command": "dbDeck.dumpTable", "title": "Dump Table to SQL File…", "category": "DB Deck" },
+      { "command": "dbDeck.importCsv", "title": "Import CSV…", "category": "DB Deck" },
+      { "command": "dbDeck.importCsvFile", "title": "Import CSV into Table…", "category": "DB Deck" },
       { "command": "dbDeck.runSqlFile", "title": "Run SQL File…", "category": "DB Deck", "icon": "$(run-all)" },
       { "command": "dbDeck.openEnvFile", "title": "Open Source File", "category": "DB Deck", "icon": "$(go-to-file)" },
       { "command": "dbDeck.saveAsConnection", "title": "Save as Connection…", "category": "DB Deck" },
@@ -146,6 +148,7 @@
         { "command": "dbDeck.removeConnection", "when": "view == dbDeck.connections && viewItem =~ /^connection(\\.connected)?(\\.server)?$/", "group": "3_remove@1" },
         { "command": "dbDeck.dumpDatabase", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "2_transfer@1" },
         { "command": "dbDeck.dumpTable", "when": "view == dbDeck.connections && viewItem == table", "group": "2_transfer@1" },
+        { "command": "dbDeck.importCsv", "when": "view == dbDeck.connections && viewItem == table", "group": "2_transfer@2" },
         { "command": "dbDeck.previewTable", "when": "view == dbDeck.connections && viewItem =~ /^(table|view)$/", "group": "inline@1" },
         { "command": "dbDeck.previewTable", "when": "view == dbDeck.connections && viewItem =~ /^(table|view)$/", "group": "1_query@1" },
         { "command": "dbDeck.newQuery", "when": "view == dbDeck.connections && viewItem =~ /^(table|view)$/", "group": "1_query@2" },
@@ -178,7 +181,8 @@
         { "command": "dbDeck.runSqlFile", "when": "editorLangId == sql && resourceScheme == file", "group": "1_dbDeck@2" }
       ],
       "explorer/context": [
-        { "command": "dbDeck.runSqlFile", "when": "resourceExtname == .sql", "group": "1_dbDeck@1" }
+        { "command": "dbDeck.runSqlFile", "when": "resourceExtname == .sql", "group": "1_dbDeck@1" },
+        { "command": "dbDeck.importCsvFile", "when": "resourceExtname =~ /^\\.(csv|tsv)$/i", "group": "1_dbDeck@2" }
       ],
       "webview/context": [
         { "command": "dbDeck.copySelection", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "1_copy@1" },
@@ -205,6 +209,7 @@
         { "command": "dbDeck.openEnvFile", "when": "false" },
         { "command": "dbDeck.dumpDatabase", "when": "false" },
         { "command": "dbDeck.dumpTable", "when": "false" },
+        { "command": "dbDeck.importCsv", "when": "false" },
         { "command": "dbDeck.saveAsConnection", "when": "false" },
         { "command": "dbDeck.toggleEnvReadOnly", "when": "false" },
         { "command": "dbDeck.runSavedQuery", "when": "false" },
