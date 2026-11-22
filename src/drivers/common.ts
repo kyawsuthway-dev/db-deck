@@ -1,5 +1,5 @@
 import { splitSql } from '../query/splitSql';
-import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, DumpCell, FilterOperator, RowChange, ScriptOptions, ScriptResult, StatementResult, TablePage } from '../types';
+import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, DumpCell, FilterOperator, ImportOptions, ImportResult, ImportRow, RowChange, ScriptOptions, ScriptResult, StatementResult, TablePage } from '../types';
 
 /** Rows kept per statement; the grid shows a "truncated" note beyond this. */
 export const MAX_ROWS = 10_000;
@@ -384,4 +384,103 @@ export async function runScriptStatements(
     throw err;
   }
   return { statements: statements.length, affectedRows };
+}
+
+/** A row of an import failed; `line` is its line in the file. Everything was rolled back. */
+export class ImportError extends Error {
+  constructor(
+    readonly line: number,
+    readonly failure: unknown,
+  ) {
+    const column = (failure as { column?: string })?.column;
+    super(`${errorMessage(failure)}${column ? ` (column ${column})` : ''}`);
+  }
+}
+
+/** The user cancelled an import. Everything was rolled back. */
+export class ImportCancelled extends Error {
+  constructor(readonly inserted: number) {
+    super('Cancelled.');
+  }
+}
+
+/** `INSERT INTO t (a, b) VALUES (?, ?), (?, ?)` for `rows` rows, with the database's placeholders. */
+export function buildInsertBatch(from: string, quote: '"' | '`', columns: string[], rows: number, placeholder: (n: number) => string): string {
+  let n = 0;
+  const one = () => `(${columns.map(() => placeholder(++n)).join(', ')})`;
+  const values = Array.from({ length: rows }, one).join(', ');
+  return `INSERT INTO ${from} (${columns.map((c) => quoteIdent(c, quote)).join(', ')}) VALUES ${values}`;
+}
+
+/** What a driver gives `importRowsWith`: its own connection's statements. */
+export interface ImportOps {
+  begin(): Promise<void>;
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+  /** SAVEPOINT / ROLLBACK TO / RELEASE with this fixed name. */
+  savepoint(): Promise<void>;
+  rollbackToSavepoint(): Promise<void>;
+  releaseSavepoint(): Promise<void>;
+  /** DELETE FROM the table; returns the rows removed. */
+  deleteAll(): Promise<number>;
+  /** One multi-row INSERT of these rows' values. */
+  insert(rows: ImportRow[]): Promise<void>;
+  /** Rows per INSERT, from the database's limit on parameters per statement. */
+  batchRows: number;
+}
+
+/**
+ * The shared loop of `Driver.importRows`: one transaction, batches under a savepoint. When a batch fails,
+ * its rows are tried one by one to name the failing line; then everything is rolled back.
+ */
+export async function importRowsWith(rows: AsyncIterable<ImportRow>, options: ImportOptions, ops: ImportOps): Promise<ImportResult> {
+  let inserted = 0;
+  let deleted = 0;
+  await ops.begin();
+  const flush = async (batch: ImportRow[]) => {
+    if (!batch.length) return;
+    if (options.cancelled?.()) throw new ImportCancelled(inserted);
+    await ops.savepoint();
+    try {
+      await ops.insert(batch);
+      await ops.releaseSavepoint();
+    } catch (err) {
+      await ops.rollbackToSavepoint();
+      for (const row of batch) {
+        try {
+          await ops.savepoint();
+          await ops.insert([row]);
+          await ops.releaseSavepoint();
+        } catch (rowErr) {
+          throw new ImportError(row.line, rowErr);
+        }
+      }
+      // Every row worked on its own (a batch-only limit?): report the batch's first line.
+      throw new ImportError(batch[0].line, err);
+    }
+    inserted += batch.length;
+    options.onProgress?.(inserted);
+  };
+  try {
+    if (options.deleteFirst) deleted = await ops.deleteAll();
+    let batch: ImportRow[] = [];
+    for await (const row of rows) {
+      batch.push(row);
+      if (batch.length >= ops.batchRows) {
+        await flush(batch);
+        batch = [];
+      }
+    }
+    await flush(batch);
+    await ops.commit();
+  } catch (err) {
+    await ops.rollback().catch(() => {});
+    throw err;
+  }
+  return { inserted, deleted };
+}
+
+/** Rows per INSERT: the database's parameter limit divided by the columns, at most 1,000. */
+export function importBatchRows(maxParameters: number, columns: number): number {
+  return Math.max(1, Math.min(1_000, Math.floor(maxParameters / Math.max(1, columns))));
 }

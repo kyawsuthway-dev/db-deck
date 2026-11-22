@@ -25,8 +25,8 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 
 ## Build
 
-- `src/webview/results.ts` (Results grid) and the forms `connectionForm.ts`, `dumpForm.ts`, `runScriptForm.ts` are esbuild entries (browser, IIFE) → `dist/webview/<name>.js` + `<name>.css` (imported from the TS file).
-- They run in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`, the form panels in `src/views/`, `connectionForm/fields.ts`, `transfer/dumpWriter.ts`). Runtime imports come only from `src/webview/` and `src/shared/`.
+- `src/webview/results.ts` (Results grid) and the forms `connectionForm.ts`, `dumpForm.ts`, `runScriptForm.ts`, `importForm.ts` are esbuild entries (browser, IIFE) → `dist/webview/<name>.js` + `<name>.css` (imported from the TS file).
+- They run in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`, the form panels in `src/views/`, `connectionForm/fields.ts`, `transfer/dumpWriter.ts`). Forms don't import extension helpers at runtime, so a form may repeat a small check the extension also does (Import CSV's mapping warnings); the extension's check is the one that counts. Runtime imports come only from `src/webview/` and `src/shared/`.
 - Other `src/webview/*.ts` modules (e.g. `autocomplete.ts`, `icons.ts`) and `src/shared/*.ts` are imported by an entry and bundled into it. Keep their logic DOM-free where possible so it can be smoke-tested in plain Node.
 
 ## Forms (connection, dump, run file, CSV import)

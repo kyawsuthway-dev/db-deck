@@ -84,6 +84,10 @@ export interface ColumnInfo {
   type: string;
   nullable: boolean;
   primaryKey: boolean;
+  /** Has a default, identity or auto-increment, so an INSERT may leave it out. */
+  hasDefault?: boolean;
+  /** A generated (computed) column: it can't be given a value. */
+  generated?: boolean;
 }
 
 /** Every value is turned into display text (or null) before it reaches the webview. */
@@ -222,6 +226,27 @@ export interface ScriptResult {
   affectedRows: number;
 }
 
+/** A CSV row for `Driver.importRows`: values in the import's column order (text or NULL), and its file line. */
+export interface ImportRow {
+  line: number;
+  values: Cell[];
+}
+
+export interface ImportOptions {
+  /** DELETE every row of the table first, in the same transaction (never TRUNCATE: MySQL would commit it). */
+  deleteFirst: boolean;
+  /** Called after each batch with the rows inserted so far. */
+  onProgress?: (rows: number) => void;
+  /** Checked between batches; true stops and rolls back. */
+  cancelled?: () => boolean;
+}
+
+export interface ImportResult {
+  inserted: number;
+  /** Rows removed by `deleteFirst`. */
+  deleted: number;
+}
+
 export interface Driver {
   /** Opens the connection. Throws with a readable message when it can't. */
   connect(): Promise<void>;
@@ -274,5 +299,11 @@ export interface Driver {
    * commits on its own, like MySQL DDL). Cancelling throws `ScriptCancelled`.
    */
   runScript(statements: string[], options: ScriptOptions): Promise<ScriptResult>;
+  /**
+   * Inserts rows into `columns` of a table in one transaction on a separate, short-lived connection (SQLite:
+   * a separate copy, written once). Values are parameters, never SQL text. Any failing row rolls everything
+   * back with `ImportError` (its file line); cancelling throws `ImportCancelled`.
+   */
+  importRows(table: TableInfo, columns: string[], rows: AsyncIterable<ImportRow>, options: ImportOptions): Promise<ImportResult>;
   close(): Promise<void>;
 }

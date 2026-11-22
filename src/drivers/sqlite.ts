@@ -12,6 +12,9 @@ import type {
   DumpPlan,
   DumpTable,
   FilterOperator,
+  ImportOptions,
+  ImportResult,
+  ImportRow,
   IndexInfo,
   RowChange,
   ScriptOptions,
@@ -24,6 +27,7 @@ import {
   buildChangeStatements,
   buildCountQuery,
   buildDumpQuery,
+  buildInsertBatch,
   buildPageQuery,
   ChangeConflict,
   countFrom,
@@ -31,6 +35,8 @@ import {
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
+  importBatchRows,
+  importRowsWith,
   insertStatements,
   MAX_ROWS,
   quoteIdent,
@@ -97,13 +103,17 @@ export class SqliteDriver implements Driver {
 
   async listColumns(table: TableInfo): Promise<ColumnInfo[]> {
     const db = await this.database();
-    // Columns: cid, name, type, notnull, dflt_value, pk
+    // Columns: cid, name, type, notnull, dflt_value, pk (table_info leaves generated columns out).
     const [result] = db.exec(`PRAGMA table_info(${quoteIdent(table.name, '"')})`);
-    return (result?.values ?? []).map(([, name, type, notnull, , pk]) => ({
+    const rows = result?.values ?? [];
+    const keys = rows.filter((r) => Number(r[5]) > 0);
+    return rows.map(([, name, type, notnull, dflt, pk]) => ({
       name: String(name),
       type: String(type ?? ''),
       nullable: notnull === 0,
       primaryKey: Number(pk) > 0,
+      // A lone INTEGER PRIMARY KEY is the rowid: SQLite fills it in.
+      hasDefault: dflt !== null || (Number(pk) > 0 && keys.length === 1 && /^integer$/i.test(String(type ?? '').trim())),
     }));
   }
 
@@ -270,6 +280,36 @@ export class SqliteDriver implements Driver {
       .join('');
     // Foreign keys are checked at COMMIT, not per statement, so tables can load in any order.
     return { start: 'PRAGMA defer_foreign_keys = ON;\n', structure: '', tables: planned, afterData, sequenceValues: '', views: viewSql, end: '' };
+  }
+
+  /** On a separate in-memory copy, written to the file once after COMMIT. */
+  async importRows(table: TableInfo, columns: string[], rows: AsyncIterable<ImportRow>, options: ImportOptions): Promise<ImportResult> {
+    if (this.readOnly) throw new Error('This connection is read-only.');
+    const name = quoteIdent(table.name, '"');
+    const SQL = await loadSqlJs();
+    const db = new SQL.Database(fs.readFileSync(this.filePath));
+    try {
+      const result = await importRowsWith(rows, options, {
+        begin: async () => void db.exec('BEGIN'),
+        commit: async () => void db.exec('COMMIT'),
+        rollback: async () => void db.exec('ROLLBACK'),
+        savepoint: async () => void db.exec('SAVEPOINT dbdeck_batch'),
+        rollbackToSavepoint: async () => void db.exec('ROLLBACK TO SAVEPOINT dbdeck_batch'),
+        releaseSavepoint: async () => void db.exec('RELEASE SAVEPOINT dbdeck_batch'),
+        deleteAll: async () => {
+          db.run(`DELETE FROM ${name}`);
+          return db.getRowsModified();
+        },
+        insert: async (batch) => void db.run(buildInsertBatch(name, '"', columns, batch.length, () => '?'), batch.flatMap((r) => r.values)),
+        // SQLite's default limit on parameters per statement.
+        batchRows: importBatchRows(32_766, columns.length),
+      });
+      fs.writeFileSync(this.filePath, db.export());
+      return result;
+    } finally {
+      db.close();
+      this.dropCopy();
+    }
   }
 
   async dumpRows(table: TableInfo, columns: string[], page: TablePage): Promise<DumpCell[][]> {

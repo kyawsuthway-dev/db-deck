@@ -717,3 +717,46 @@ fieldset.off {
   width: 26px;
   height: 26px;
 }
+
+/* Import CSV: each CSV column with its target dropdown, then the first rows. Scrolls sideways when wide. */
+.preview-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.preview-wrap > .hint {
+  margin: 0;
+  padding: 10px 12px;
+}
+table.preview {
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+table.preview th,
+table.preview td {
+  max-width: 220px;
+  padding: 5px 10px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+table.preview thead th {
+  background: var(--surface);
+  font-weight: 600;
+}
+table.preview tr.targets th {
+  padding: 4px 6px;
+  font-weight: 400;
+}
+table.preview .mapping {
+  min-width: 150px;
+  height: 26px;
+  padding-left: 8px;
+}
+table.preview td.null {
+  color: var(--muted);
+  font-style: italic;
+}
