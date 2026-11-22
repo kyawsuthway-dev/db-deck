@@ -23,7 +23,15 @@ export interface ConnectionConfig {
   folder?: string;
   /** The database session is read-only, and DB Deck doesn't offer edits (a guard against mistakes, not a security boundary). */
   readOnly?: boolean;
+  /**
+   * Where the connection lives, set by ConnectionManager when listing (never stored): undefined = all
+   * workspaces (globalState), `workspace` = this workspace only (workspaceState), `env` = read from a .env file.
+   */
+  source?: 'workspace' | 'env';
 }
+
+/** Where a saved connection is stored; .env connections aren't saved. */
+export type ConnectionScope = 'global' | 'workspace';
 
 /** The SSH host in front of a database. `host`/`port` on the connection are then as seen from this host. */
 export interface SshConfig {

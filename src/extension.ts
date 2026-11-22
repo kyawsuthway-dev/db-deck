@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
+import { EnvConnections } from './env/envConnections';
 import { askFolderName, pickFolder } from './connectionFolders';
 import { errorMessage } from './drivers/common';
 import { TableEditor } from './edit/applyEdits';
@@ -8,7 +9,7 @@ import { QueryHistory } from './history/queryHistory';
 import { PAGE_SIZE, QueryController } from './query/runQuery';
 import { SqlEditor } from './query/sqlEditor';
 import { SavedQueries } from './saved/savedQueries';
-import { ConnectionFolderNode, ConnectionNode, ConnectionsTree, ObjectNode, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
+import { ConnectionFolderNode, ConnectionNode, ConnectionsTree, EnvGroupNode, ObjectNode, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
 import { ObjectCommands } from './tree/objectCommands';
 import { HistoryNode, HistoryTree } from './tree/HistoryTree';
 import { SavedQueriesTree, SavedQueryNode } from './tree/SavedQueriesTree';
@@ -16,7 +17,8 @@ import { ConnectionForms } from './views/ConnectionForm';
 import { ResultsPanel } from './views/ResultsPanel';
 
 export function activate(context: vscode.ExtensionContext) {
-  const manager = new ConnectionManager(context);
+  const envConnections = new EnvConnections(context);
+  const manager = new ConnectionManager(context, envConnections);
   const tree = new ConnectionsTree(manager, context.extensionUri);
   const panel = new ResultsPanel(context.extensionUri);
   const queries = new QueryController(context, manager, panel);
@@ -35,6 +37,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(`dbDeck.${id}`, handler);
 
   context.subscriptions.push(
+    envConnections,
     manager,
     panel,
     forms,
@@ -59,14 +62,36 @@ export function activate(context: vscode.ExtensionContext) {
 
     command('editConnection', async (node?: ConnectionNode) => {
       const config = node?.config ?? (await pickConnection(manager, 'Connection to edit'));
-      if (config) forms.openEdit(config);
+      if (config && config.source !== 'env') forms.openEdit(config);
     }),
 
     command('moveToFolder', async (node?: ConnectionNode) => {
       const config = node?.config ?? (await pickConnection(manager, 'Connection to move'));
-      if (!config) return;
+      if (!config || config.source === 'env') return;
       const picked = await pickFolder(`Move "${config.name}" to Folder`, manager.folders(), config.folder);
       if (picked && picked.value !== config.folder) await manager.moveToFolder(config.id, picked.value);
+    }),
+
+    // .env connections.
+    command('openEnvFile', async (node?: ConnectionNode | EnvGroupNode) => {
+      const file = node instanceof EnvGroupNode ? node.file : node && manager.envInfo(node.config.id)?.file;
+      if (file) await vscode.window.showTextDocument(file);
+    }),
+    command('saveAsConnection', (node?: ConnectionNode) => {
+      if (node?.config.source === 'env') forms.openAdd(node.config);
+    }),
+    command('toggleEnvReadOnly', async (node?: ConnectionNode) => {
+      if (node?.config.source !== 'env') return;
+      const config = node.config;
+      if (manager.isConnected(config.id)) {
+        const ok = await vscode.window.showWarningMessage(
+          `${config.readOnly ? 'Turn off' : 'Turn on'} read-only for "${config.name}" and reconnect?`,
+          { modal: true, detail: 'Reconnecting ends this session, including any open transaction.' },
+          'Reconnect',
+        );
+        if (!ok) return;
+      }
+      await manager.setEnvReadOnly(config.id, !config.readOnly);
     }),
 
     command('renameFolder', async (node?: ConnectionFolderNode) => {
@@ -77,7 +102,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     command('removeConnection', async (node?: ConnectionNode) => {
       const config = node?.config ?? (await pickConnection(manager, 'Connection to remove'));
-      if (!config) return;
+      if (!config || config.source === 'env') return;
       const confirm = await vscode.window.showWarningMessage(
         `Remove connection "${config.name}"? Its saved passwords are deleted too. The database itself is not touched.`,
         { modal: true },
@@ -159,9 +184,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {}
 
+/** Saved connections only: Edit, Move and Remove don't apply to .env connections (the file is their source). */
 async function pickConnection(manager: ConnectionManager, placeHolder: string) {
   const picked = await vscode.window.showQuickPick(
-    manager.list().map((c) => ({ label: c.name, config: c })),
+    manager.list().filter((c) => c.source !== 'env').map((c) => ({ label: c.name, description: c.source === 'workspace' ? 'This workspace' : undefined, config: c })),
     { placeHolder },
   );
   return picked?.config;

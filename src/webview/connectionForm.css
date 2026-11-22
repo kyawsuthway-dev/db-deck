@@ -445,6 +445,7 @@ fieldset.off {
 }
 .segment:disabled {
   cursor: default;
+  opacity: 0.45;
 }
 .segment:focus-visible {
   outline: 1px solid var(--accent);

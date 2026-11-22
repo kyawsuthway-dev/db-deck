@@ -21,10 +21,12 @@ Put new code where the layer dictates, not where it's convenient.
 | History              | `src/history/`                           | `entries.ts` is a pure helper (building, capping and grouping entries). `queryHistory.ts` is a service: records `QueryController.onDidRun` in `workspaceState`, and opens, re-runs, searches and clears entries. |
 | Saved queries        | `src/saved/`                             | `names.ts` is a pure helper (name rules, path ↔ connection). `savedQueries.ts` is a service: `.sql` files under `globalStorageUri/queries/<connectionId>/`, through `vscode.workspace.fs`. |
 | SSH                  | `src/ssh/`                               | `sshTunnel.ts` wraps `ssh2`: one SSH session per open connection, a forwarded channel per database connection (no local port), host-key check through a callback. No `vscode` import; `ConnectionManager` supplies secrets and the trust prompt. |
-| Webview (browser)    | `src/webview/`                           | Runs in the webview's browser context. Never imports Node or `vscode` modules; only `import type` from extension code.                |
+| Project connections  | `src/env/`                               | `dotenv.ts` (`.env` parsing), `detect.ts` (Laravel `DB_*`, `DB_URL`, `DATABASE_URL`) and `compose.ts` (compose published ports and database services, `yaml`) are pure helpers. `envConnections.ts` is a service: reads the root `.env` and compose files of each workspace folder live (watchers), keeps passwords in memory only, and never runs project code or `docker`. |
+| Shared               | `src/shared/`                            | Code used by both the extension and the webviews (`connectionString.ts`). No `vscode`, no Node built-ins, no DOM. |
+| Webview (browser)    | `src/webview/`                           | Runs in the webview's browser context. Never imports Node or `vscode` modules; only `import type` from extension code, plus runtime imports from `src/shared/`. |
 | Shared types         | `src/types.ts`                           | Types used across layers. Types used by one file stay in that file.                                                                     |
 
-Dependency direction: `extension.ts → UI / services → drivers → common helpers`. A driver never calls a service; the webview never imports runtime code from the extension.
+Dependency direction: `extension.ts → UI / services → drivers → common helpers`. A driver never calls a service; the webview never imports runtime code from the extension (except `src/shared/`).
 
 ## Why drivers don't import `vscode`
 
@@ -40,7 +42,7 @@ If code is about to `switch` on `config.type` outside `src/drivers/`, stop: that
 
 1. Add the type to `DbType` in `src/types.ts`.
 2. Write `src/drivers/<name>.ts` implementing `Driver`, following `postgres.ts` / `mysql.ts`.
-3. Register it in `createDriver`, `DB_KINDS` (with its `logo`), `SQL_DIALECTS` (formatter language, extra keywords), `DATABASE_SCOPE` (none / required / optional database setting) and `USES_NETWORK` (can go through an SSH tunnel) in `src/drivers/index.ts`. Add `media/logos/<logo>-light.svg`, `-dark.svg` and the `-connected` variants, or it gets a generic icon. The connection form reads all of this from the registry, so it needs no change. TypeScript's exhaustive `switch` and the `Record<DbType, …>` flag anything missed.
+3. Register it in `createDriver`, `DB_KINDS` (with its `logo`, and `laravel` names / `docker` images if .env and compose detection should find it), `SQL_DIALECTS` (formatter language, extra keywords), `DATABASE_SCOPE` (none / required / optional database setting) and `USES_NETWORK` (can go through an SSH tunnel) in `src/drivers/index.ts`. Add `media/logos/<logo>-light.svg`, `-dark.svg` and the `-connected` variants, or it gets a generic icon. The connection form reads all of this from the registry, so it needs no change. TypeScript's exhaustive `switch` and the `Record<DbType, …>` flag anything missed.
 4. Add a dialect to `splitSql` if its quoting or comments differ.
 5. Add a test database to `docker-compose.yml` with a seed in `docker/seed/`, mirroring the existing `customers` / `orders` / `paid_orders` shape.
 6. Update the README features and `CHANGELOG.md`.
@@ -51,6 +53,8 @@ If code is about to `switch` on `config.type` outside `src/drivers/`, stop: that
 - Global, cross-workspace data → `context.globalState` (saved connections). Per-workspace → `context.workspaceState` (SQL file ↔ connection). Secrets → `context.secrets` only.
 - Query history → `workspaceState` (`dbDeck.queryHistory`). Saved queries → files under `globalStorageUri/queries/`, with last-known connection names in `globalState` (`dbDeck.savedQueryConnections`). Settings → `dbDeck.*` in `contributes.configuration`, read with `workspace.getConfiguration()`. Other ways to find an editor's connection go through `QueryController.registerLinkResolver()`.
 - Hidden table-view columns → `workspaceState` (`dbDeck.hiddenColumns`, keyed by connection and table).
+- Connections for this workspace only → `workspaceState` (`dbDeck.workspaceConnections`), never a file in the project. `ConnectionConfig.source` (`workspace` / `env`) is derived by `ConnectionManager.list()` and never stored.
+- `.env` and compose connections are never written anywhere: settings and passwords are re-read from the files. Only their read-only marks are stored (`workspaceState`, `dbDeck.envReadOnly`). Their ids are `env:` + a hash of folder, file and source, so links, history and saved queries survive reloads.
 - SSH passwords and key passphrases → `context.secrets` (`dbDeck.sshSecret.<id>`). Trusted SSH host keys → `globalState` (`dbDeck.sshHostKeys`, `host:port` → fingerprint), per host, so they outlive a removed connection.
 - State keys are prefixed `dbDeck.` and defined as constants at the top of the file that owns them.
 - Everything with a `dispose()` goes into `context.subscriptions`.

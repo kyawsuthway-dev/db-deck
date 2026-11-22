@@ -3,6 +3,7 @@ paths:
     - 'src/webview/**'
     - 'src/views/**'
     - 'src/connectionForm/**'
+    - 'src/shared/**'
     - 'media/logos/**'
 ---
 
@@ -25,15 +26,15 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 ## Build
 
 - `src/webview/results.ts` (Results grid) and `src/webview/connectionForm.ts` (connection form) are esbuild entries (browser, IIFE) → `dist/webview/<name>.js` + `<name>.css` (imported from the TS file).
-- They run in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`, `ConnectionForm.ts`, `connectionForm/fields.ts`).
-- Other `src/webview/*.ts` modules (e.g. `autocomplete.ts`, `connectionString.ts`, `icons.ts`) are imported by an entry and bundled into it. Keep their logic DOM-free where possible so it can be smoke-tested in plain Node.
+- They run in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`, `ConnectionForm.ts`, `connectionForm/fields.ts`). Runtime imports come only from `src/webview/` and `src/shared/`.
+- Other `src/webview/*.ts` modules (e.g. `autocomplete.ts`, `icons.ts`) and `src/shared/*.ts` are imported by an entry and bundled into it. Keep their logic DOM-free where possible so it can be smoke-tested in plain Node.
 
 ## Connection form
 
 - Same CSP and `textContent`-only rules as the grid, plus `img-src ${cspSource}` for the database logos; `localResourceRoots` is `dist/webview` and `media/logos`, nothing wider.
 - It never receives a stored password: password fields start empty ("Unchanged — type to replace"). Every field it sends is checked in the extension (`readValues`, `checkForm` in `src/connectionForm/fields.ts`), never only in the form.
 - It gets the database kinds (labels, defaults, `USES_NETWORK`, `DATABASE_SCOPE`, logo URIs) from the registry in its `init` message, so it never branches on database type.
-- Connection strings are parsed in the webview (`connectionString.ts`) only to fill fields; the box is cleared afterwards, since it may hold a password.
+- Connection strings are parsed in the webview (`src/shared/connectionString.ts`, also used for `.env` URLs) only to fill fields; the box is cleared afterwards, since it may hold a password.
 - Icons are DB Deck's own SVG paths (`icons.ts`, constants built with `createElementNS`). Database logos are files in `media/logos` (Simple Icons, CC0): the only fixed colors in the UI, with `-light` / `-dark` variants.
 
 ## Messaging

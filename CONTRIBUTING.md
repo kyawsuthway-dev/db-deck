@@ -78,6 +78,8 @@ src/
   connectionFolders.ts   Move to Folder… / Rename Folder… quick picks
   connectionForm/        the connection form's field checks (no vscode)
   ssh/                   the SSH tunnel (ssh2)
+  env/                   connections from the project's .env and compose files
+  shared/                code used by both the extension and the webviews
   drivers/               one file per database + index.ts registry
   query/                 statement splitting, running queries from SQL editors
   tree/                  the Connections sidebar

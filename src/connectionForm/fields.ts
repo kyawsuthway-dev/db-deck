@@ -2,7 +2,7 @@
 // so it can be smoke-tested in plain Node. The form is a webview, so its messages are untrusted
 // (webview.md): every field is checked here, never only in the form.
 import * as path from 'path';
-import type { ConnectionConfig, DbType, SshConfig, SslMode } from '../types';
+import type { ConnectionConfig, ConnectionScope, DbType, SshConfig, SslMode } from '../types';
 
 /** Everything the form edits, as the form holds it (text inputs are strings). */
 export interface FormValues {
@@ -10,6 +10,8 @@ export interface FormValues {
   kind: string;
   name: string;
   folder: string;
+  /** ConnectionScope: 'global' (all workspaces) or 'workspace'. */
+  scope: string;
   host: string;
   port: string;
   user: string;
@@ -54,12 +56,14 @@ export interface FormContext {
   existing?: ConnectionConfig;
   /** Editing: an SSH secret is stored, so an empty one can mean "keep". */
   hasSshSecret: boolean;
+  /** A folder or workspace is open, so "This Workspace" is possible. */
+  hasWorkspace: boolean;
   /** For SQLite paths; injected so this file stays free of I/O. */
   fileExists: (file: string) => boolean;
 }
 
 export type CheckedForm =
-  | { ok: true; config: ConnectionConfig; password?: string; sshSecret?: string }
+  | { ok: true; config: ConnectionConfig; scope: ConnectionScope; password?: string; sshSecret?: string }
   | { ok: false; errors: FieldErrors };
 
 const SSL_MODES: Record<SslMode, true> = { off: true, require: true, 'no-verify': true };
@@ -67,7 +71,7 @@ const MAX_TEXT = 4096;
 export const MAX_FOLDER = 100;
 
 const STRING_FIELDS = [
-  'kind', 'name', 'folder', 'host', 'port', 'user', 'password', 'database', 'ssl', 'filePath',
+  'kind', 'name', 'folder', 'scope', 'host', 'port', 'user', 'password', 'database', 'ssl', 'filePath',
   'sshHost', 'sshPort', 'sshUser', 'sshAuth', 'sshKeyPath', 'sshSecret',
 ] as const;
 const BOOLEAN_FIELDS = ['sshEnabled', 'readOnly'] as const;
@@ -83,13 +87,17 @@ export function readValues(raw: unknown): FormValues | undefined {
   return values as unknown as FormValues;
 }
 
-/** The form's starting values: the connection being edited, or the kind's defaults. Never a password. */
-export function initialValues(kind: KindInfo, existing?: ConnectionConfig): FormValues {
+/**
+ * The form's starting values: the connection being edited (or copied from .env), or the kind's defaults.
+ * Never a password.
+ */
+export function initialValues(kind: KindInfo, existing?: Omit<ConnectionConfig, 'id'>): FormValues {
   const c = existing;
   return {
     kind: kind.label,
     name: c?.name ?? '',
     folder: c?.folder ?? '',
+    scope: c?.source === 'workspace' ? 'workspace' : 'global',
     host: c?.host ?? (kind.network ? 'localhost' : ''),
     port: String(c?.port ?? kind.defaultPort ?? ''),
     user: c?.user ?? kind.defaultUser ?? '',
@@ -117,6 +125,9 @@ export function checkForm(v: FormValues, ctx: FormContext): CheckedForm {
 
   const folder = v.folder.trim();
   if (folder.length > MAX_FOLDER) errors.folder = `Use at most ${MAX_FOLDER} characters.`;
+  if (v.scope !== 'global' && v.scope !== 'workspace') errors.scope = 'Choose where to save the connection.';
+  else if (v.scope === 'workspace' && !ctx.hasWorkspace) errors.scope = 'Open a folder to save a connection for it.';
+  const scope = v.scope as ConnectionScope;
 
   const base = {
     id: ctx.id,
@@ -132,7 +143,7 @@ export function checkForm(v: FormValues, ctx: FormContext): CheckedForm {
     else if (!ctx.fileExists(filePath)) errors.filePath = 'This file doesn’t exist. Use Create New… to make one.';
     if (Object.keys(errors).length) return { ok: false, errors };
     // A file has no password: '' deletes one stored before the type changed (the SSH secret goes with `ssh`).
-    return { ok: true, config: { ...base, name: v.name.trim() || path.basename(filePath), filePath }, password: '' };
+    return { ok: true, config: { ...base, name: v.name.trim() || path.basename(filePath), filePath }, scope, password: '' };
   }
 
   const host = v.host.trim();
@@ -178,6 +189,7 @@ export function checkForm(v: FormValues, ctx: FormContext): CheckedForm {
       ssl: v.ssl as SslMode,
       ...(ssh ? { ssh } : {}),
     },
+    scope,
     password: v.password || undefined,
     sshSecret,
   };
