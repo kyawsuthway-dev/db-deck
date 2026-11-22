@@ -4,15 +4,36 @@ import type { FieldErrors, FormValues, KindInfo } from '../connectionForm/fields
 import type { FormMessage, FormRequest, PathTarget } from '../views/ConnectionForm';
 import { parseConnectionString } from '../shared/connectionString';
 import { icon, type IconName } from './icons';
-import './connectionForm.css';
+import {
+  actionBar,
+  button,
+  chips,
+  el,
+  fieldShell,
+  formElement,
+  header,
+  iconButton,
+  inputControl,
+  logo,
+  note,
+  paintChoices,
+  section,
+  segmented,
+  selectControl,
+  showStatus as renderStatus,
+  submitButton,
+  switchRow,
+  vscodeApi,
+  type Span,
+  type StatusState,
+} from './forms/kit';
+import './forms/form.css';
 
-declare function acquireVsCodeApi(): { postMessage(message: FormRequest): void };
-const vscode = acquireVsCodeApi();
+const vscode = vscodeApi<FormRequest>();
 const root = document.getElementById('root')!;
 
 type Tab = 'main' | 'ssh' | 'options';
 type Init = Extract<FormMessage, { type: 'init' }>;
-type StatusState = 'busy' | 'ok' | 'error' | 'info';
 
 const SSL_OPTIONS = [
   { value: 'off', label: 'No SSL' },
@@ -30,7 +51,6 @@ const FIELD_TAB: Partial<Record<keyof FormValues, Tab>> = {
   sshSecret: 'ssh',
   readOnly: 'options',
 };
-const STATUS_ICONS: Record<StatusState, IconName> = { busy: 'spinner', ok: 'checkCircle', error: 'alert', info: 'info' };
 
 let init: Init | undefined;
 let values: FormValues;
@@ -69,13 +89,6 @@ window.addEventListener('message', (event: MessageEvent<FormMessage>) => {
 });
 vscode.postMessage({ type: 'ready' });
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
 function kind(): KindInfo {
   return init!.kinds.find((k) => k.label === values.kind) ?? init!.kinds[0];
 }
@@ -83,55 +96,33 @@ function kind(): KindInfo {
 function build(msg: Init) {
   inputs.clear();
   errorSpans.clear();
-  const form = el('form', 'form');
-  form.noValidate = true;
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    send('save');
-  });
+  const form = formElement(() => send('save'));
   const page = el('div', 'page');
-
-  // Header.
-  const header = el('header', 'header');
-  const badge = el('div', 'badge');
-  badge.append(icon('database'));
-  const heading = el('div');
-  heading.append(
-    el('h1', undefined, msg.mode === 'edit' ? 'Edit Connection' : 'Add Connection'),
-    el('p', 'subtitle', msg.mode === 'edit' ? msg.values.name : 'Connect to a SQLite file or a database server.'),
+  page.append(
+    header(
+      icon('database'),
+      msg.mode === 'edit' ? 'Edit Connection' : 'Add Connection',
+      msg.mode === 'edit' ? msg.values.name : 'Connect to a SQLite file or a database server.',
+    ),
   );
-  header.append(badge, heading);
-  page.append(header);
 
   // Database type: compact chips (logo + name) that wrap as more databases are added.
-  const typeSection = el('section', 'section');
-  const typeTitle = el('h2', 'section-title', 'Database');
-  typeTitle.id = 'type-title';
-  const tiles = el('div', 'chips');
-  tiles.setAttribute('role', 'radiogroup');
-  tiles.setAttribute('aria-labelledby', typeTitle.id);
-  const typeButtons = msg.kinds.map((k) => {
-    const b = el('button', 'chip');
-    b.type = 'button';
-    b.setAttribute('role', 'radio');
-    b.title = k.database === 'none' ? `${k.label} · local file` : `${k.label} · server${k.defaultPort ? `, port ${k.defaultPort}` : ''}`;
-    b.append(logo(msg, k.logo), el('span', 'chip-label', k.label));
-    b.addEventListener('click', () => changeKind(k));
-    // A radio group: arrow keys move the choice, Tab leaves the group.
-    b.addEventListener('keydown', (e) => {
-      const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
-      if (!step) return;
-      e.preventDefault();
-      const i = msg.kinds.indexOf(k);
-      const next = msg.kinds[(i + step + msg.kinds.length) % msg.kinds.length];
-      changeKind(next);
-      ui?.typeButtons.find((t) => t.kind === next)?.button.focus();
-    });
-    return { kind: k, button: b };
-  });
-  tiles.append(...typeButtons.map((t) => t.button));
-  typeSection.append(typeTitle, tiles, errorSpan('kind'));
-  page.append(typeSection);
+  const typeSection = section('type', 'Database');
+  const types = chips(
+    typeSection.titleId,
+    msg.kinds.map((k) => ({
+      value: k.label,
+      label: k.label,
+      title: k.database === 'none' ? `${k.label} · local file` : `${k.label} · server${k.defaultPort ? `, port ${k.defaultPort}` : ''}`,
+      picture: logo(msg.logos[k.logo]),
+    })),
+    (label) => {
+      const k = msg.kinds.find((x) => x.label === label);
+      if (k) changeKind(k);
+    },
+  );
+  typeSection.section.append(types.group, errorSpan('kind'));
+  page.append(typeSection.section);
 
   // Name and folder.
   const general = el('section', 'section');
@@ -243,24 +234,15 @@ function build(msg: Init) {
   tabs.options.panel.append(readOnly.row);
 
   // Action bar.
-  const footer = el('footer', 'action-bar');
-  const status = el('div', 'status');
-  status.setAttribute('role', 'status');
-  status.setAttribute('aria-live', 'polite');
-  const actions = el('div', 'actions');
   const test = button('Test Connection', 'plug', () => send('test'));
   const close = button('Cancel', 'close', () => vscode.postMessage({ type: 'close' }));
-  const save = el('button', 'button primary');
-  save.type = 'submit';
-  const saveLabel = el('span', undefined, 'Save');
-  save.append(icon('check'), saveLabel);
-  actions.append(test, close, save);
-  footer.append(status, actions);
+  const { button: save, label: saveLabel } = submitButton('Save', 'check');
+  const { footer, status } = actionBar(test, close, save);
 
   form.append(page, footer);
   root.replaceChildren(form);
   return {
-    typeButtons,
+    types,
     tabs,
     sqlite,
     server,
@@ -278,22 +260,8 @@ function build(msg: Init) {
     test,
     status,
     url,
-    focusFirst: () => (msg.mode === 'edit' ? name.input : typeButtons.find((t) => t.kind.label === values.kind)?.button ?? name.input).focus(),
+    focusFirst: () => (msg.mode === 'edit' ? name.input : types.choices.find((c) => c.value === values.kind)?.button ?? name.input).focus(),
   };
-}
-
-/** A database logo: light and dark images (CSS shows the one for the theme), or a generic icon. */
-function logo(msg: Init, name: string): Element {
-  const uris = Object.prototype.hasOwnProperty.call(msg.logos, name) ? msg.logos[name] : undefined;
-  if (!uris) return icon('database', 'logo');
-  const span = el('span', 'logo');
-  for (const variant of ['light', 'dark'] as const) {
-    const img = el('img', `logo-${variant}`);
-    img.src = uris[variant];
-    img.alt = '';
-    span.append(img);
-  }
-  return span;
 }
 
 function makeTab(id: Tab, label: string, iconName: IconName) {
@@ -329,180 +297,66 @@ function makeTab(id: Tab, label: string, iconName: IconName) {
 
 interface FieldOptions {
   icon: IconName;
-  span: 2 | 3 | 4 | 6;
+  span: Span;
   type?: 'text' | 'password';
   required?: boolean;
   placeholder?: string;
   inputMode?: 'numeric';
 }
 
-/** A labelled field: label above, input with a leading icon, error below. */
-function fieldShell(key: keyof FormValues, label: string, opts: Pick<FieldOptions, 'span' | 'required'>, control: HTMLElement, controlId: string) {
-  const field = el('div', `field span-${opts.span}`);
-  const l = el('label', 'field-label');
-  l.htmlFor = controlId;
-  const text = el('span', 'label-text', label);
-  const required = el('span', 'required', '*');
-  required.setAttribute('aria-hidden', 'true');
-  required.hidden = !opts.required;
-  l.append(text, required);
-  field.append(l, control, errorSpan(key));
-  return { field, text, required };
-}
-
+/** A text field bound to `values[key]`, with its error span. */
 function textField(key: keyof FormValues, label: string, opts: FieldOptions) {
-  const input = el('input', 'input');
-  input.type = opts.type ?? 'text';
-  input.id = `f-${key}`;
-  input.spellcheck = false;
-  input.autocomplete = 'off';
-  if (opts.placeholder) input.placeholder = opts.placeholder;
-  if (opts.inputMode) input.inputMode = opts.inputMode;
-  input.value = String(values[key] ?? '');
+  const { control, input } = inputControl(`f-${key}`, { ...opts, value: String(values[key] ?? '') });
   input.addEventListener('input', () => {
     (values as unknown as Record<string, unknown>)[key] = input.value;
     clearError(key);
   });
   inputs.set(key, input);
-  const control = el('div', 'control has-icon');
-  control.append(icon(opts.icon, 'leading'), input);
-  if (opts.type === 'password') control.append(revealButton(input));
-  const shell = fieldShell(key, label, opts, control, input.id);
-  return { ...shell, input, control };
+  return { ...fieldShell(input.id, label, opts, control, errorSpan(key)), input, control };
 }
 
 function selectField(key: keyof FormValues, label: string, options: { value: string; label: string }[], opts: Pick<FieldOptions, 'icon' | 'span'>) {
-  const select = el('select', 'input select');
-  select.id = `f-${key}`;
-  for (const o of options) {
-    const option = el('option', undefined, o.label);
-    option.value = o.value;
-    select.append(option);
-  }
-  select.value = String(values[key]);
+  const { control, select } = selectControl(`f-${key}`, options, opts.icon, String(values[key]));
   select.addEventListener('change', () => {
     (values as unknown as Record<string, unknown>)[key] = select.value;
     clearError(key);
     update();
   });
   inputs.set(key, select);
-  const control = el('div', 'control has-icon');
-  control.append(icon(opts.icon, 'leading'), select);
-  return fieldShell(key, label, opts, control, select.id);
+  return fieldShell(select.id, label, opts, control, errorSpan(key));
 }
 
-/** A segmented control (a radio group): SSH login (password / key file) and scope (all / this workspace). */
-function segmentedField(
-  key: 'sshAuth' | 'scope',
-  label: string,
-  options: readonly { value: string; label: string; icon: IconName }[],
-  span: FieldOptions['span'],
-) {
-  const field = el('div', `field span-${span}`);
-  const title = el('span', 'field-label');
-  title.id = `l-${key}`;
-  title.append(el('span', 'label-text', label));
-  const group = el('div', 'segmented');
-  group.setAttribute('role', 'radiogroup');
-  group.setAttribute('aria-labelledby', title.id);
-  const choose = (value: string) => {
-    values[key] = value;
-    clearError(key);
-    update();
-  };
-  const choices = options.map((c, i) => {
-    const b = el('button', 'segment');
-    b.type = 'button';
-    b.setAttribute('role', 'radio');
-    b.append(icon(c.icon), el('span', undefined, c.label));
-    b.addEventListener('click', () => choose(c.value));
-    b.addEventListener('keydown', (e) => {
-      const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-      if (!step) return;
-      e.preventDefault();
-      const next = choices[(i + step + choices.length) % choices.length];
-      if (next.button.disabled) return;
-      choose(next.value);
-      next.button.focus();
-    });
-    return { value: c.value, button: b };
-  });
-  group.append(...choices.map((c) => c.button));
-  field.append(title, group, errorSpan(key));
-  return { field, choices };
+/** A segmented control bound to `values[key]`: SSH login (password / key file) and scope (all / this workspace). */
+function segmentedField(key: 'sshAuth' | 'scope', label: string, options: readonly { value: string; label: string; icon: IconName }[], span: Span) {
+  return segmented(
+    key,
+    label,
+    options,
+    span,
+    (value) => {
+      values[key] = value;
+      clearError(key);
+      update();
+    },
+    errorSpan(key),
+  );
 }
 
-/** Selects the chosen segment; only it is in the Tab order. */
-function paintSegments(choices: { value: string; button: HTMLButtonElement }[], value: string): void {
-  for (const c of choices) {
-    const on = c.value === value;
-    c.button.setAttribute('aria-checked', String(on));
-    c.button.tabIndex = on ? 0 : -1;
-  }
-}
-
-/** A switch row: title and description on the left, the switch on the right. */
+/** A switch row bound to `values[key]`. */
 function switchField(key: 'sshEnabled' | 'readOnly', title: string, description: string) {
-  const input = el('input', 'switch');
-  input.type = 'checkbox';
-  input.id = `f-${key}`;
-  input.setAttribute('role', 'switch');
-  input.checked = values[key];
-  input.addEventListener('change', () => {
-    values[key] = input.checked;
-    update();
-  });
-  inputs.set(key, input);
-  const row = el('label', 'switch-row');
-  row.htmlFor = input.id;
-  const text = el('span', 'switch-text');
-  const desc = el('span', 'switch-description', description);
-  desc.id = `d-${key}`;
-  input.setAttribute('aria-describedby', desc.id);
-  text.append(el('span', 'switch-title', title), desc);
-  row.append(text, input);
-  const wrap = el('div', 'switch-wrap');
-  wrap.append(row, errorSpan(key));
-  return { row: wrap };
-}
-
-function button(label: string, iconName: IconName, onClick: () => void): HTMLButtonElement {
-  const b = el('button', 'button');
-  b.type = 'button';
-  b.append(icon(iconName), el('span', undefined, label));
-  b.addEventListener('click', onClick);
-  return b;
-}
-
-/** A small icon-only button inside an input (trailing). */
-function iconButton(label: string, iconName: IconName, onClick: () => void): HTMLButtonElement {
-  const b = el('button', 'icon-button');
-  b.type = 'button';
-  b.title = label;
-  b.setAttribute('aria-label', label);
-  b.append(icon(iconName));
-  b.addEventListener('click', onClick);
-  return b;
-}
-
-/** Shows or hides what's typed in a password field. Stored passwords never reach the form, so only typed text shows. */
-function revealButton(input: HTMLInputElement): HTMLButtonElement {
-  const b = iconButton('Show password', 'eye', () => {
-    const show = input.type === 'password';
-    input.type = show ? 'text' : 'password';
-    b.replaceChildren(icon(show ? 'eyeOff' : 'eye'));
-    b.title = show ? 'Hide password' : 'Show password';
-    b.setAttribute('aria-label', b.title);
-    b.setAttribute('aria-pressed', String(show));
-  });
-  b.setAttribute('aria-pressed', 'false');
-  return b;
-}
-
-function note(iconName: IconName, text: string): HTMLElement {
-  const p = el('p', 'note');
-  p.append(icon(iconName), el('span', undefined, text));
-  return p;
+  const sw = switchRow(
+    `f-${key}`,
+    title,
+    description,
+    values[key],
+    (checked) => {
+      values[key] = checked;
+      update();
+    },
+    errorSpan(key),
+  );
+  inputs.set(key, sw.input);
+  return sw;
 }
 
 function errorSpan(key: keyof FormValues): HTMLElement {
@@ -517,11 +371,7 @@ function update(): void {
   if (!ui || !init) return;
   const k = kind();
   const isFile = k.database === 'none';
-  for (const t of ui.typeButtons) {
-    const on = t.kind.label === values.kind;
-    t.button.setAttribute('aria-checked', String(on));
-    t.button.tabIndex = on ? 0 : -1;
-  }
+  paintChoices(ui.types.choices, values.kind);
   if (!k.network && tab === 'ssh') tab = 'main';
   for (const [id, t] of Object.entries(ui.tabs) as [Tab, ReturnType<typeof makeTab>][]) {
     const on = id === tab;
@@ -554,8 +404,8 @@ function update(): void {
   ui.sshFields.disabled = !values.sshEnabled;
   ui.sshFields.classList.toggle('off', !values.sshEnabled);
   const keyAuth = values.sshAuth === 'key';
-  paintSegments(ui.auth.choices, values.sshAuth);
-  paintSegments(ui.scope.choices, values.scope);
+  paintChoices(ui.auth.choices, values.sshAuth);
+  paintChoices(ui.scope.choices, values.scope);
   // "This workspace" needs an open folder; say why it's off instead of only greying it out.
   const workspaceChoice = ui.scope.choices.find((c) => c.value === 'workspace')!.button;
   workspaceChoice.disabled = !init.hasWorkspace;
@@ -688,8 +538,5 @@ function clearError(key: keyof FormValues): void {
 
 function showStatus(state: StatusState, text: string, saveAnyway?: boolean): void {
   if (!ui) return;
-  ui.status.className = `status ${state}`;
-  ui.status.setAttribute('role', state === 'error' ? 'alert' : 'status');
-  ui.status.replaceChildren(icon(STATUS_ICONS[state]), el('span', 'status-text', text));
-  if (saveAnyway) ui.status.append(button('Save Anyway', 'check', () => send('save', true)));
+  renderStatus(ui.status, state, text, ...(saveAnyway ? [button('Save Anyway', 'check', () => send('save', true))] : []));
 }

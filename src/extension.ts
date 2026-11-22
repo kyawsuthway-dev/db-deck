@@ -14,6 +14,8 @@ import { ObjectCommands } from './tree/objectCommands';
 import { HistoryNode, HistoryTree } from './tree/HistoryTree';
 import { SavedQueriesTree, SavedQueryNode } from './tree/SavedQueriesTree';
 import { ConnectionForms } from './views/ConnectionForm';
+import { DumpForms } from './views/DumpForm';
+import { RunScriptForms } from './views/RunScriptForm';
 import { ResultsPanel } from './views/ResultsPanel';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -32,6 +34,12 @@ export function activate(context: vscode.ExtensionContext) {
   const connectionsView = vscode.window.createTreeView('dbDeck.connections', { treeDataProvider: tree, showCollapseAll: true });
   const objects = new ObjectCommands(manager, queries, tree, connectionsView);
   const forms = new ConnectionForms(context.extensionUri, manager, tree);
+  const dumps = new DumpForms(context.extensionUri, manager);
+  const scripts = new RunScriptForms(context.extensionUri, manager, queries, (id) => {
+    // A script may have created or dropped tables: reload the tree and the editor's suggestions.
+    sqlEditor.clearSchema(id);
+    tree.refresh();
+  });
 
   const command = (id: string, handler: (...args: any[]) => unknown) =>
     vscode.commands.registerCommand(`dbDeck.${id}`, handler);
@@ -41,6 +49,8 @@ export function activate(context: vscode.ExtensionContext) {
     manager,
     panel,
     forms,
+    dumps,
+    scripts,
     queries,
     exporter,
     editor,
@@ -71,6 +81,11 @@ export function activate(context: vscode.ExtensionContext) {
       const picked = await pickFolder(`Move "${config.name}" to Folder`, manager.folders(), config.folder);
       if (picked && picked.value !== config.folder) await manager.moveToFolder(config.id, picked.value);
     }),
+
+    // Data transfer.
+    command('dumpDatabase', (node?: ConnectionNode) => node && dumps.open(node.config.id)),
+    command('dumpTable', (node?: TableNode) => node && dumps.open(node.connectionId, node.table)),
+    command('runSqlFile', (uri?: unknown) => scripts.open(uri instanceof vscode.Uri ? uri : undefined)),
 
     // .env connections.
     command('openEnvFile', async (node?: ConnectionNode | EnvGroupNode) => {

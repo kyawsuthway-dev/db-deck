@@ -170,6 +170,58 @@ export interface ChangeStatement {
   display: string;
 }
 
+/** A value in a dump: text as the database sends it, or binary as complete hex (never shortened). */
+export type DumpCell = Cell | { hex: string };
+
+/** One table in a dump. Built by the driver, which knows which columns can be inserted and how. */
+export interface DumpTable {
+  table: TableInfo;
+  /** CREATE statements for the table, ending in a newline (no foreign keys when `afterData` adds them). */
+  create: string;
+  /** The columns the dump reads and inserts, in order (generated columns are left out). */
+  columns: string[];
+  /** The primary key, to read pages in a stable order; empty when there is none. */
+  orderBy: SortKey[];
+  /** INSERT statements for these rows (values in `columns` order), ending in a newline. */
+  insert(rows: DumpCell[][]): string;
+}
+
+/**
+ * A dump in a restorable order, for one database. DB Deck writes: `start`; with structure `structure` and
+ * each table's `create`; with data each table's rows; with structure `afterData`; with data `sequenceValues`;
+ * with structure `views`; then `end`. Each part is SQL text ending in a newline, or ''.
+ */
+export interface DumpPlan {
+  /** Session settings for the whole script (written for every dump). */
+  start: string;
+  /** Schemas and sequences the tables need. */
+  structure: string;
+  tables: DumpTable[];
+  /** Foreign keys and indexes added once the data is in. */
+  afterData: string;
+  /** Sequences set past the restored rows. */
+  sequenceValues: string;
+  views: string;
+  /** Restores what `start` changed. */
+  end: string;
+}
+
+/** Options for running a script file (`Driver.runScript`). */
+export interface ScriptOptions {
+  /** Wrap everything in one transaction, rolled back on any error or on cancel. */
+  transaction: boolean;
+  /** Called after each statement with how many have run. */
+  onProgress?: (done: number) => void;
+  /** Checked between statements; true stops (and rolls back). */
+  cancelled?: () => boolean;
+}
+
+export interface ScriptResult {
+  statements: number;
+  /** Rows reported by INSERT/UPDATE/DELETE statements. */
+  affectedRows: number;
+}
+
 export interface Driver {
   /** Opens the connection. Throws with a readable message when it can't. */
   connect(): Promise<void>;
@@ -211,5 +263,16 @@ export interface Driver {
    * affect exactly one row, or everything rolls back and `ChangeConflict` is thrown.
    */
   applyChanges(statements: ChangeStatement[]): Promise<void>;
+  /** How to dump these tables and views, in an order that restores cleanly. Read-only. */
+  dumpPlan(tables: TableInfo[], views: TableInfo[]): Promise<DumpPlan>;
+  /** One page of a table for a dump: only `columns`, with full values (binary as complete hex). Read-only. */
+  dumpRows(table: TableInfo, columns: string[], page: TablePage): Promise<DumpCell[][]>;
+  /**
+   * Runs a script's statements in order on a separate, short-lived connection (SQLite: a separate copy,
+   * written to the file once at the end), so the editor's session is never touched. Stops at the first
+   * error with `ScriptError`; with `transaction`, everything is rolled back (except what the database
+   * commits on its own, like MySQL DDL). Cancelling throws `ScriptCancelled`.
+   */
+  runScript(statements: string[], options: ScriptOptions): Promise<ScriptResult>;
   close(): Promise<void>;
 }
