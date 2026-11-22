@@ -1,5 +1,7 @@
 import mysql from 'mysql2/promise';
+import type { TableDesign } from '../design/model';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
+import { createTableStatements } from './ddl';
 import type {
   Cell,
   ChangeStatement,
@@ -409,6 +411,41 @@ export class MysqlDriver implements Driver {
     } finally {
       await conn.end().catch(() => {});
     }
+  }
+
+  createTableSql(design: TableDesign): string[] {
+    return createTableStatements(design, {
+      quote: '`',
+      table: (schema, name) => qualifiedName({ schema, name }),
+      literal: mysqlLiteral,
+      autoIncrement: { clause: 'AUTO_INCREMENT', position: 'afterNotNull' },
+      comments: 'inline',
+    });
+  }
+
+  renameTableSql(table: TableInfo, newName: string): string {
+    return `RENAME TABLE ${qualifiedName(table)} TO ${qualifiedName({ schema: table.schema, name: newName })};`;
+  }
+
+  truncateTableSql(table: TableInfo): string {
+    return `TRUNCATE TABLE ${qualifiedName(table)};`;
+  }
+
+  dropSql(object: TableInfo): string {
+    return `DROP ${object.kind === 'view' ? 'VIEW' : 'TABLE'} ${qualifiedName(object)};`;
+  }
+
+  async referencingTables(table: TableInfo): Promise<string[]> {
+    const conn = await this.getConnection();
+    const [rows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT DISTINCT TABLE_SCHEMA AS s, TABLE_NAME AS n FROM information_schema.KEY_COLUMN_USAGE
+        WHERE REFERENCED_TABLE_SCHEMA = COALESCE(?, DATABASE()) AND REFERENCED_TABLE_NAME = ?
+          AND NOT (TABLE_SCHEMA = REFERENCED_TABLE_SCHEMA AND TABLE_NAME = REFERENCED_TABLE_NAME)
+        ORDER BY 1, 2`,
+      [table.schema ?? null, table.name],
+    );
+    const here = table.schema ?? this.config.database;
+    return rows.map((r) => (String(r.s) === here ? String(r.n) : `${String(r.s)}.${String(r.n)}`));
   }
 
   async applyChanges(statements: ChangeStatement[]): Promise<void> {

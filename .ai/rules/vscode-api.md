@@ -20,8 +20,8 @@ paths:
 
 ## Menus and `when` clauses
 
-- Tree item menus key off `contextValue`. Connection items are `connection[.connected][.server]` (match with regexes, e.g. `/^connection\.connected/`); objects use their kind: `schema`, `table`, `view`, `function`, `procedure`, `sequence`, `index`, `trigger`, `column`. Connection folders are `folder`. `.env` / compose connections are `connection[.connected][.server].env` inside an `envGroup`; menus for saved connections only (Edit, Move to Folder, Remove) match `/^connection(\.connected)?(\.server)?$/`. Never start a new context value with `connection`, since connection menus match `/^connection/`. If you add a `contextValue`, check every `when` clause that matches by regex.
-- Inline actions use `group: "inline@N"`; context-menu groups are `1_query`, `2_manage`, `2_transfer` (Dump, Import CSV), `3_remove`, `4_copy`; `explorer/context` and `editor/context` use `1_dbDeck`. Generate SQL is the submenu `dbDeck.generateSql` (in `1_query`).
+- Tree item menus key off `contextValue`. Connection items are `connection[.connected][.server]` (match with regexes, e.g. `/^connection\.connected/`); objects use their kind: `schema`, `table`, `view`, `function`, `procedure`, `sequence`, `index`, `trigger`, `column`. Connection folders are `folder`. Object folders in a connection are `objects.<kind>` (the Tables folder is `objects.table`; Indexes / Triggers under a table have none). `.env` / compose connections are `connection[.connected][.server].env` inside an `envGroup`; menus for saved connections only (Edit, Move to Folder, Remove) match `/^connection(\.connected)?(\.server)?$/`. Never start a new context value with `connection`, since connection menus match `/^connection/`. If you add a `contextValue`, check every `when` clause that matches by regex.
+- Inline actions use `group: "inline@N"`; context-menu groups are `1_query`, `2_design` (New Table, Rename, Truncate), `2_manage`, `2_transfer` (Dump, Import CSV), `3_remove` (Remove Connection, Drop…), `4_copy`; `explorer/context` and `editor/context` use `1_dbDeck`. Generate SQL is the submenu `dbDeck.generateSql` (in `1_query`).
 - SQL editor actions use `editorLangId == sql`.
 - The results grid's right-click menu is `webview/context`, matched with `webviewId == 'dbDeck.results' && webviewSection == 'grid'`; the grid element sets `data-vscode-context`. Those commands are hidden from the Command Palette.
 - The results header's right-click menu is `webviewSection == 'header'` (Hide Column); the header sets its own `data-vscode-context`, which takes precedence over the grid's.
@@ -36,7 +36,7 @@ paths:
 
 ## UX conventions
 
-- Add Connection, Edit Connection…, Dump to SQL File…, Run SQL File… and Import CSV… open forms (`webview.md`); Add / Edit Connection opens the connection form (`views/ConnectionForm.ts`), one editor tab per connection. Its Save tests first and offers Save Anyway; file pickers and the SSH host-key prompt stay native dialogs.
+- Add Connection, Edit Connection…, New Table…, Truncate Table…, Drop…, Dump to SQL File…, Run SQL File… and Import CSV… open forms; Rename Table… is an input box (`webview.md`); Add / Edit Connection opens the connection form (`views/ConnectionForm.ts`), one editor tab per connection. Its Save tests first and offers Save Anyway; file pickers and the SSH host-key prompt stay native dialogs.
 - Connection tree items show the database logo (`logos.ts`, `{ light, dark }` files); open connections use the `-connected` variant (green dot). Not a file decoration: that would color the name.
 - Multi-step input uses `showQuickPick`/`showInputBox` with a `title` and `ignoreFocusOut: true`; Escape at any step cancels without side effects.
 - Destructive actions (remove connection) use a modal confirmation that says what is and isn't affected.

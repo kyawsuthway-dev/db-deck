@@ -29,7 +29,7 @@ Pick the type by intent: `feature` adds capability, `bugfix` corrects broken beh
 <type>[optional scope]: <description>
 ```
 
-Types: `feat`, `fix`, `change`, `refactor`, `chore`, `docs`, `test`, `perf`, `style`, `build`, `ci`. Scopes: `drivers`, `sqlite`, `postgres`, `mysql`, `tree`, `query`, `results`, `connections`, `docker`, `build`.
+Types: `feat`, `fix`, `change`, `refactor`, `chore`, `docs`, `test`, `perf`, `style`, `build`, `ci`. Scopes: `drivers`, `sqlite`, `postgres`, `mysql`, `tree`, `query`, `results`, `connections`, `transfer`, `design`, `docker`, `build`.
 
 ```
 feat(tree): show primary key icon on columns

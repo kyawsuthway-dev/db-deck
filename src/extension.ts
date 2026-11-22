@@ -9,14 +9,16 @@ import { QueryHistory } from './history/queryHistory';
 import { PAGE_SIZE, QueryController } from './query/runQuery';
 import { SqlEditor } from './query/sqlEditor';
 import { SavedQueries } from './saved/savedQueries';
-import { ConnectionFolderNode, ConnectionNode, ConnectionsTree, EnvGroupNode, ObjectNode, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
+import { ConnectionFolderNode, ConnectionNode, ConnectionsTree, EnvGroupNode, FolderNode, SchemaNode, ObjectNode, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
 import { ObjectCommands } from './tree/objectCommands';
 import { HistoryNode, HistoryTree } from './tree/HistoryTree';
 import { SavedQueriesTree, SavedQueryNode } from './tree/SavedQueriesTree';
 import { ConnectionForms } from './views/ConnectionForm';
+import { DangerForms } from './views/DangerForm';
 import { DumpForms } from './views/DumpForm';
 import { ImportForms } from './views/ImportForm';
 import { RunScriptForms } from './views/RunScriptForm';
+import { TableDesignForms } from './views/TableDesignForm';
 import { ResultsPanel } from './views/ResultsPanel';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -37,11 +39,17 @@ export function activate(context: vscode.ExtensionContext) {
   const forms = new ConnectionForms(context.extensionUri, manager, tree);
   const dumps = new DumpForms(context.extensionUri, manager);
   const imports = new ImportForms(context.extensionUri, manager);
-  const scripts = new RunScriptForms(context.extensionUri, manager, queries, (id) => {
-    // A script may have created or dropped tables: reload the tree and the editor's suggestions.
+  // After DDL (a script, a new / renamed / dropped table): reload the tree and the editor's suggestions.
+  const schemaChanged = (id: string) => {
     sqlEditor.clearSchema(id);
     tree.refresh();
+  };
+  const scripts = new RunScriptForms(context.extensionUri, manager, queries, schemaChanged);
+  const designs = new TableDesignForms(context.extensionUri, manager, async (id, table) => {
+    schemaChanged(id);
+    await objects.reveal(id, { kind: 'table', name: table.name, schema: table.schema });
   });
+  const dangers = new DangerForms(context.extensionUri, manager, schemaChanged);
 
   const command = (id: string, handler: (...args: any[]) => unknown) =>
     vscode.commands.registerCommand(`dbDeck.${id}`, handler);
@@ -53,6 +61,8 @@ export function activate(context: vscode.ExtensionContext) {
     forms,
     dumps,
     imports,
+    designs,
+    dangers,
     scripts,
     queries,
     exporter,
@@ -84,6 +94,16 @@ export function activate(context: vscode.ExtensionContext) {
       const picked = await pickFolder(`Move "${config.name}" to Folder`, manager.folders(), config.folder);
       if (picked && picked.value !== config.folder) await manager.moveToFolder(config.id, picked.value);
     }),
+
+    // Table design.
+    command('newTable', (node?: ConnectionNode | SchemaNode | FolderNode) => {
+      if (node instanceof ConnectionNode) designs.openNew(node.config.id);
+      else if (node instanceof SchemaNode) designs.openNew(node.connectionId, node.label);
+      else if (node instanceof FolderNode) designs.openNew(node.connectionId, node.parent instanceof SchemaNode ? node.parent.label : undefined);
+    }),
+    command('renameTable', (node?: TableNode) => objects.renameTable(node, schemaChanged)),
+    command('truncateTable', (node?: TableNode) => node && dangers.open('truncate', node.connectionId, node.table)),
+    command('dropTable', (node?: TableNode) => node && dangers.open('drop', node.connectionId, node.table)),
 
     // Data transfer.
     command('dumpDatabase', (node?: ConnectionNode) => node && dumps.open(node.config.id)),

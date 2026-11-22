@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
+import type { TableDesign } from '../design/model';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
+import { createTableStatements } from './ddl';
 import type {
   Cell,
   ChangeStatement,
@@ -220,6 +222,45 @@ export class SqliteDriver implements Driver {
    * the file, which is written back only after COMMIT. The main copy is dropped so the next call reloads
    * the saved file. (A transaction left open in the editor isn't kept for SQLite anyway; see README.)
    */
+  createTableSql(design: TableDesign): string[] {
+    return createTableStatements(design, {
+      quote: '"',
+      table: (_schema, name) => quoteIdent(name, '"'),
+      literal: standardLiteral,
+      autoIncrement: { clause: 'AUTOINCREMENT', position: 'afterType', primaryKeyInline: true },
+      comments: 'none',
+    });
+  }
+
+  renameTableSql(table: TableInfo, newName: string): string {
+    return `ALTER TABLE ${quoteIdent(table.name, '"')} RENAME TO ${quoteIdent(newName, '"')};`;
+  }
+
+  /** SQLite has no TRUNCATE; an unqualified DELETE is optimized the same way. */
+  truncateTableSql(table: TableInfo): string {
+    return `DELETE FROM ${quoteIdent(table.name, '"')};`;
+  }
+
+  dropSql(object: TableInfo): string {
+    return `DROP ${object.kind === 'view' ? 'VIEW' : 'TABLE'} ${quoteIdent(object.name, '"')};`;
+  }
+
+  async referencingTables(table: TableInfo): Promise<string[]> {
+    const db = await this.database();
+    const stmt = db.prepare(
+      `SELECT DISTINCT m.name FROM sqlite_master m, pragma_foreign_key_list(m.name) f
+        WHERE m.type = 'table' AND f."table" = ? COLLATE NOCASE AND m.name <> ? COLLATE NOCASE ORDER BY 1`,
+    );
+    try {
+      stmt.bind([table.name, table.name]);
+      const names: string[] = [];
+      while (stmt.step()) names.push(String(stmt.get()[0]));
+      return names;
+    } finally {
+      stmt.free();
+    }
+  }
+
   async applyChanges(statements: ChangeStatement[]): Promise<void> {
     if (this.readOnly) throw new Error('This connection is read-only.');
     const SQL = await loadSqlJs();

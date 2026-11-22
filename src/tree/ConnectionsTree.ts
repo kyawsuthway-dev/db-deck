@@ -68,6 +68,8 @@ export class FolderNode implements Base {
     readonly objects: DbObject[],
     readonly treeId: string,
     readonly parent: TreeNode,
+    /** The kind of objects it lists (Tables, Views…); undefined for Indexes / Triggers under a table. */
+    readonly holds?: ObjectKind,
   ) {}
 }
 
@@ -231,6 +233,8 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
         const item = new vscode.TreeItem(node.label, node.objects.length ? C.Collapsed : C.None);
         item.description = String(node.objects.length);
         item.iconPath = new vscode.ThemeIcon('folder');
+        // `objects.table` offers New Table…; not `folder…`, which connection folders use (vscode-api.md).
+        if (node.holds) item.contextValue = `objects.${node.holds}`;
         return withId(item, node);
       }
       case 'table': {
@@ -375,9 +379,9 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
 }
 
 function folders(connectionId: string, objects: DbObject[], parent: TreeNode): FolderNode[] {
-  return FOLDERS.map(({ kind, label }) => ({ label, objects: objects.filter((o) => o.kind === kind) }))
-    .filter((f) => f.objects.length > 0 || f.label === 'Tables')
-    .map((f) => new FolderNode(connectionId, f.label, f.objects, `${parent.treeId}/${f.label.toLowerCase()}`, parent));
+  return FOLDERS.map(({ kind, label }) => ({ kind, label, objects: objects.filter((o) => o.kind === kind) }))
+    .filter((f) => f.objects.length > 0 || f.kind === 'table')
+    .map((f) => new FolderNode(connectionId, f.label, f.objects, `${parent.treeId}/${f.label.toLowerCase()}`, parent, f.kind));
 }
 
 const same = (a: DbObject, b: DbObject) => a.kind === b.kind && a.name === b.name && a.schema === b.schema && a.id === b.id;
