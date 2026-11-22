@@ -760,3 +760,173 @@ table.preview td.null {
   color: var(--muted);
   font-style: italic;
 }
+
+/* Table Designer: the column grid, lists of indexes / foreign keys / checks, and the SQL preview. */
+.design-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.design-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1.2fr) minmax(110px, 1.1fr) 40px 40px 44px minmax(90px, 1fr) 84px;
+  gap: 6px;
+  align-items: center;
+}
+.design-row.with-comment {
+  grid-template-columns: minmax(110px, 1.2fr) minmax(110px, 1.1fr) 40px 40px 44px minmax(90px, 1fr) minmax(90px, 1fr) 84px;
+}
+.design-head {
+  color: var(--muted);
+  font-size: 0.85em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.design-row .input {
+  height: 28px;
+  padding: 0 8px;
+}
+.design-check {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.design-check.inline {
+  justify-content: flex-start;
+  align-self: flex-end;
+  height: var(--control-height);
+}
+.design-check input {
+  margin: 0;
+  accent-color: var(--vscode-button-background);
+}
+.design-check input[aria-invalid],
+.pills[aria-invalid] {
+  outline: 1px solid var(--vscode-errorForeground);
+  outline-offset: 2px;
+}
+.design-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+.design-actions .icon-button,
+.design-item-row .icon-button {
+  position: static;
+}
+.icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.icon-button.remove:hover:not(:disabled) {
+  color: var(--vscode-errorForeground);
+}
+.design-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.design-item-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.design-item-row .icon-button {
+  margin-left: auto;
+  align-self: center;
+}
+.design-field {
+  display: flex;
+  flex: 1 1 180px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.design-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.design-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.design-ref .select {
+  width: auto;
+  min-width: 140px;
+}
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pill {
+  height: 26px;
+  padding: 0 10px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: 13px;
+  font: inherit;
+  cursor: pointer;
+}
+.pill.on {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border-color: var(--vscode-button-background);
+}
+.pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sql-preview {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px 14px;
+  color: var(--vscode-editor-foreground, var(--vscode-foreground));
+  background: var(--vscode-textCodeBlock-background, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 12px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.input[aria-invalid] {
+  border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+}
+
+/* A destructive action's button (Drop, Truncate). */
+.button.danger {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-statusBarItem-errorBackground, var(--vscode-errorForeground));
+  border-color: transparent;
+}
+.button.danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.badge.danger {
+  color: var(--vscode-errorForeground);
+  background: var(--surface);
+  border: 1px solid var(--vscode-errorForeground);
+}
+
+@media (max-width: 760px) {
+  .design-row,
+  .design-row.with-comment {
+    grid-template-columns: 1fr 1fr 36px 36px 40px;
+  }
+  .design-head span:nth-child(n + 6) {
+    display: none;
+  }
+}

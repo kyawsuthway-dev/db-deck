@@ -1,4 +1,5 @@
 import type { Duplex } from 'stream';
+import type { TableDesign } from './design/model';
 
 export type DbType = 'sqlite' | 'postgres' | 'mysql';
 
@@ -305,5 +306,15 @@ export interface Driver {
    * back with `ImportError` (its file line); cancelling throws `ImportCancelled`.
    */
   importRows(table: TableInfo, columns: string[], rows: AsyncIterable<ImportRow>, options: ImportOptions): Promise<ImportResult>;
+  /** CREATE TABLE, then its indexes and comments, for a design (checked with checkDesign). Builds SQL only. */
+  createTableSql(design: TableDesign): string[];
+  /** Builds SQL only. `newName` is a plain name (same schema). */
+  renameTableSql(table: TableInfo, newName: string): string;
+  /** Empties a table: TRUNCATE, or DELETE FROM where there is no TRUNCATE (SQLite). Builds SQL only. */
+  truncateTableSql(table: TableInfo): string;
+  /** DROP TABLE or DROP VIEW, never with CASCADE. Builds SQL only. */
+  dropSql(object: TableInfo): string;
+  /** Tables whose foreign keys reference this one (labels like `schema.name`), for the Truncate / Drop forms. Read-only. */
+  referencingTables(table: TableInfo): Promise<string[]>;
   close(): Promise<void>;
 }

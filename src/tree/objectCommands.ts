@@ -78,6 +78,44 @@ export class ObjectCommands {
    * A searchable list of tables, views, functions, procedures and sequences in the open connections.
    * It never connects. Picking one reveals it in the tree, then shows its rows (tables, views) or its DDL.
    */
+  /**
+   * Rename Table…: an input box (not destructive, like Rename Folder). Runs one ALTER / RENAME on the driver's
+   * script connection; `changed` refreshes the tree and suggestions, then the renamed table is shown.
+   */
+  async renameTable(node: TableNode | undefined, changed: (connectionId: string) => void): Promise<void> {
+    if (!node || node.table.kind !== 'table') return;
+    const config = this.manager.get(node.connectionId);
+    if (!config) return;
+    if (config.readOnly) {
+      void vscode.window.showErrorMessage(`"${config.name}" is read-only, so DB Deck won’t rename tables on it.`);
+      return;
+    }
+    const old = node.table.name;
+    const name = await vscode.window.showInputBox({
+      title: `Rename Table ${tableLabel(node.table)}`,
+      prompt: 'New name (in the same schema)',
+      value: old,
+      ignoreFocusOut: true,
+      validateInput: (v) => (!v.trim() ? 'Required' : v.trim().length > 63 ? 'Use at most 63 characters' : undefined),
+    });
+    if (!name || name.trim() === old) return;
+    try {
+      const driver = await this.manager.getDriver(node.connectionId);
+      await driver.runScript([driver.renameTableSql(node.table, name.trim())], { transaction: true });
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Couldn’t rename ${old}: ${errorMessage(err)}`);
+      return;
+    }
+    changed(node.connectionId);
+    await this.reveal(node.connectionId, { kind: 'table', name: name.trim(), schema: node.table.schema });
+  }
+
+  /** Shows an object in the tree (after creating or renaming it). Quietly does nothing if it isn't there. */
+  async reveal(connectionId: string, object: DbObject): Promise<void> {
+    const node = await this.tree.findNode(connectionId, object);
+    if (node) await this.view.reveal(node, { select: true, focus: false });
+  }
+
   async findObject(): Promise<void> {
     const connections = this.manager.list().filter((c) => this.manager.isConnected(c.id));
     if (!connections.length) {

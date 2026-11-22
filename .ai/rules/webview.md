@@ -25,7 +25,7 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 
 ## Build
 
-- `src/webview/results.ts` (Results grid) and the forms `connectionForm.ts`, `dumpForm.ts`, `runScriptForm.ts`, `importForm.ts` are esbuild entries (browser, IIFE) → `dist/webview/<name>.js` + `<name>.css` (imported from the TS file).
+- `src/webview/results.ts` (Results grid) and the forms `connectionForm.ts`, `dumpForm.ts`, `runScriptForm.ts`, `importForm.ts`, `tableDesignForm.ts`, `dangerForm.ts` are esbuild entries (browser, IIFE) → `dist/webview/<name>.js` + `<name>.css` (imported from the TS file).
 - They run in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`, the form panels in `src/views/`, `connectionForm/fields.ts`, `transfer/dumpWriter.ts`). Forms don't import extension helpers at runtime, so a form may repeat a small check the extension also does (Import CSV's mapping warnings); the extension's check is the one that counts. Runtime imports come only from `src/webview/` and `src/shared/`.
 - Other `src/webview/*.ts` modules (e.g. `autocomplete.ts`, `icons.ts`) and `src/shared/*.ts` are imported by an entry and bundled into it. Keep their logic DOM-free where possible so it can be smoke-tested in plain Node.
 
@@ -33,6 +33,7 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 
 - Every form is built from `src/webview/forms/kit.ts` (header, sections, fields, segmented controls, chips, switches, checklists, notes, action bar, status) and `src/webview/forms/form.css`, with `src/views/FormPanel.ts` on the extension side (`FormPanel`: the CSP below, roots, `retainContextWhenHidden`, `post`, `logo()`; `FormTabs`: one tab per key). New forms reuse them instead of adding their own styles or panel code, so all forms look and behave the same.
 - The page posts `{ type: 'ready' }`; the panel replies with `init`. Everything a form sends is untrusted: the panel checks each field (enums, keys into its own lists, absolute paths) before acting.
+- Forms for destructive actions (Truncate, Drop) use the danger badge and the red `.button.danger`, and enable it only when the object's name is typed exactly; the extension compares the name again.
 - Long work (dump, run file, import) reports progress through the form's status, with Close turning into Cancel while it runs.
 - A form's main button may be the confirmation for a write (Run N Statements) when the form first shows what will happen; the extension re-reads and re-checks its input when the button is clicked.
 
