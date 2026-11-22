@@ -52,11 +52,11 @@ const extension = await esbuild.context({
   plugins: [copySqlWasmPlugin, problemMatcherPlugin],
 });
 
-// The webview scripts, run inside webviews (a browser): the results grid and the connection form.
+// The webview scripts, run inside webviews (a browser): the results grid and the forms (connection, dump, run file).
 // Each emits <name>.js and <name>.css.
 const webview = await esbuild.context({
   ...shared,
-  entryPoints: ['src/webview/results.ts', 'src/webview/connectionForm.ts'],
+  entryPoints: ['src/webview/results.ts', 'src/webview/connectionForm.ts', 'src/webview/dumpForm.ts', 'src/webview/runScriptForm.ts'],
   format: 'iife',
   platform: 'browser',
   target: 'es2022',

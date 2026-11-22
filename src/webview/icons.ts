@@ -25,6 +25,13 @@ const PATHS = {
   checkCircle: 'M8 1.5a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13zM5 8.2l2 2 4-4',
   info: 'M8 1.5a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13zM8 7.25v4M8 4.75h.01',
   spinner: 'M8 1.5a6.5 6.5 0 1 1-6.5 6.5',
+  table: 'M2 2.5h12v11H2zM2 6h12M2 9.75h12M6.5 6v7.5',
+  rows: 'M2.5 3.5h11M2.5 6.5h11M2.5 9.5h11M2.5 12.5h7',
+  structure: 'M2.5 2.5h4v4h-4zM9.5 9.5h4v4h-4zM4.5 6.5v5h5M9.5 4.5h4M11.5 2.5v4',
+  search: 'M7 2a5 5 0 1 0 0 10a5 5 0 0 0 0-10zM10.6 10.6L14 14',
+  file: 'M4 1.5h5l3 3v10H4zM9 1.5v3h3',
+  save: 'M8 2v8M4.75 6.75L8 10l3.25-3.25M2.5 11v2.5h11V11',
+  play: 'M4.5 2.5v11l9-5.5z',
 } as const;
 
 export type IconName = keyof typeof PATHS;

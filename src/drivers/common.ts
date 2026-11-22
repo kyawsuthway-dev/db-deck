@@ -1,5 +1,5 @@
 import { splitSql } from '../query/splitSql';
-import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, FilterOperator, RowChange, StatementResult, TablePage } from '../types';
+import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, DumpCell, FilterOperator, RowChange, ScriptOptions, ScriptResult, StatementResult, TablePage } from '../types';
 
 /** Rows kept per statement; the grid shows a "truncated" note beyond this. */
 export const MAX_ROWS = 10_000;
@@ -297,4 +297,91 @@ export function buildTemplate(kind: TemplateKind, name: string, columns: ColumnI
     case 'delete':
       return `DELETE FROM ${name}\n${where}\n`;
   }
+}
+
+/** Rows per INSERT statement in dumps; small enough for every database's statement limits. */
+export const DUMP_INSERT_ROWS = 250;
+
+/** Like toCell, but binary values stay complete (as hex): a dump must restore every byte. */
+export function toDumpCell(value: unknown): DumpCell {
+  if (value instanceof Uint8Array) return { hex: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('hex') };
+  return toCell(value);
+}
+
+/** SELECT of some columns, one page, for dumps. Identifiers are quoted; nothing comes from the user. */
+export function buildDumpQuery(from: string, quote: '"' | '`', columns: string[], page: TablePage): string {
+  const cols = columns.map((c) => quoteIdent(c, quote)).join(', ');
+  return buildPageQuery(from, quote, page).replace(/^SELECT \* FROM /, `SELECT ${cols} FROM `);
+}
+
+/**
+ * Multi-row INSERTs (DUMP_INSERT_ROWS rows each) for dumps. `literal` writes a text value; `hex` a binary one.
+ * `between` goes between the column list and VALUES (PostgreSQL's OVERRIDING SYSTEM VALUE).
+ */
+export function dumpInserts(
+  from: string,
+  quote: '"' | '`',
+  columns: string[],
+  rows: DumpCell[][],
+  literal: (value: string) => string,
+  hex: (hex: string) => string,
+  between = '',
+): string {
+  if (!rows.length) return '';
+  const head = `INSERT INTO ${from} (${columns.map((c) => quoteIdent(c, quote)).join(', ')})${between ? ` ${between}` : ''} VALUES\n`;
+  const value = (v: DumpCell) => (v === null ? 'NULL' : typeof v === 'object' ? hex(v.hex) : literal(v));
+  let out = '';
+  for (let i = 0; i < rows.length; i += DUMP_INSERT_ROWS) {
+    const chunk = rows.slice(i, i + DUMP_INSERT_ROWS);
+    out += head + chunk.map((row) => `(${row.map(value).join(', ')})`).join(',\n') + ';\n';
+  }
+  return out;
+}
+
+/** A script statement failed. `index` is the statement's position (0-based) in the script. */
+export class ScriptError extends Error {
+  constructor(
+    readonly index: number,
+    readonly failure: unknown,
+  ) {
+    super(errorMessage(failure));
+  }
+}
+
+/** The user cancelled a running script. */
+export class ScriptCancelled extends Error {
+  constructor(readonly done: number) {
+    super('Cancelled.');
+  }
+}
+
+/**
+ * The shared loop of `Driver.runScript`: runs statements one by one through `exec` (returning rows affected
+ * by DML, or undefined), inside `tx` when asked, and rolls back on error or cancel. The driver opens and
+ * closes its own connection around this.
+ */
+export async function runScriptStatements(
+  statements: string[],
+  options: ScriptOptions,
+  exec: (sql: string) => Promise<number | undefined>,
+  tx: { begin(): Promise<void>; commit(): Promise<void>; rollback(): Promise<void> },
+): Promise<ScriptResult> {
+  let affectedRows = 0;
+  if (options.transaction) await tx.begin();
+  try {
+    for (const [i, sql] of statements.entries()) {
+      if (options.cancelled?.()) throw new ScriptCancelled(i);
+      try {
+        affectedRows += (await exec(sql)) ?? 0;
+      } catch (err) {
+        throw new ScriptError(i, err);
+      }
+      options.onProgress?.(i + 1);
+    }
+    if (options.transaction) await tx.commit();
+  } catch (err) {
+    if (options.transaction) await tx.rollback().catch(() => {});
+    throw err;
+  }
+  return { statements: statements.length, affectedRows };
 }

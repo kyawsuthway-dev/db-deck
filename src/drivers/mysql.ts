@@ -1,5 +1,5 @@
 import mysql from 'mysql2/promise';
-import { splitSql } from '../query/splitSql';
+import { splitSql, stripLeadingComments } from '../query/splitSql';
 import type {
   Cell,
   ChangeStatement,
@@ -7,9 +7,14 @@ import type {
   ConnectionConfig,
   DbObject,
   Driver,
+  DumpCell,
+  DumpPlan,
+  DumpTable,
   FilterOperator,
   IndexInfo,
   RowChange,
+  ScriptOptions,
+  ScriptResult,
   StatementResult,
   StreamOpener,
   TableInfo,
@@ -18,15 +23,19 @@ import type {
 import {
   buildChangeStatements,
   buildCountQuery,
+  buildDumpQuery,
   buildPageQuery,
   ChangeConflict,
   countFrom,
+  dumpInserts,
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
   insertStatements,
   quoteIdent,
   runEach,
+  runScriptStatements,
+  toDumpCell,
   type WriteDialect,
 } from './common';
 
@@ -271,6 +280,93 @@ export class MysqlDriver implements Driver {
    * FOUND_ROWS makes affectedRows count rows matched, not rows changed: setting a cell to the value it
    * already has must not look like a conflict. MyISAM tables ignore the transaction (README).
    */
+  async dumpPlan(tables: TableInfo[], views: TableInfo[]): Promise<DumpPlan> {
+    const conn = await this.getConnection();
+    const planned: DumpTable[] = [];
+    let schema: string | undefined;
+    // Tables outside the connection's database (an "all databases" connection) are created after a USE.
+    const use = (t: TableInfo) => {
+      if (!t.schema || t.schema === schema) return '';
+      schema = t.schema;
+      return `USE ${quoteIdent(t.schema, '`')};\n`;
+    };
+    for (const table of tables) {
+      const name = qualifiedName(table);
+      const [created] = await conn.query<mysql.RowDataPacket[]>(`SHOW CREATE TABLE ${name}`);
+      const sql = created[0]?.['Create Table'];
+      if (typeof sql !== 'string') continue;
+      // Generated columns can't be given values, so they're left out of the INSERTs. (EXTRA is also
+      // DEFAULT_GENERATED for `DEFAULT CURRENT_TIMESTAMP`, which must stay in.)
+      const [cols] = await conn.query<mysql.RowDataPacket[]>(
+        `SELECT COLUMN_NAME AS name, COLUMN_KEY AS k, EXTRA AS extra
+           FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ?
+          ORDER BY ORDINAL_POSITION`,
+        [table.schema ?? null, table.name],
+      );
+      const columns = cols.filter((c) => !/\b(VIRTUAL|STORED) GENERATED\b/i.test(String(c.extra ?? ''))).map((c) => String(c.name));
+      planned.push({
+        table,
+        create: `${use(table)}${sql.trim().replace(/;$/, '')};\n`,
+        columns,
+        orderBy: cols.filter((c) => c.k === 'PRI').map((c) => ({ column: String(c.name), direction: 'asc' as const })),
+        insert: (rows) => dumpInserts(name, '`', columns, rows, mysqlLiteral, (h) => `X'${h}'`),
+      });
+    }
+    let viewSql = '';
+    for (const view of views) {
+      const [rows] = await conn.query<mysql.RowDataPacket[]>(`SHOW CREATE VIEW ${qualifiedName(view)}`);
+      const sql = rows[0]?.['Create View'];
+      if (typeof sql !== 'string') continue;
+      const db = view.schema ?? this.config.database;
+      // Portable: no DEFINER (the user may not exist elsewhere), no source-database prefix on names.
+      let body = sql.replace(/\s+DEFINER=`(?:[^`]|``)*`@`(?:[^`]|``)*`/, '');
+      if (db) body = body.split(`${quoteIdent(db, '`')}.`).join('');
+      viewSql += `${body.trim().replace(/;$/, '')};\n`;
+    }
+    return {
+      // Like mysqldump: no foreign-key checks while loading, and an id of 0 stays 0 instead of a new AUTO_INCREMENT.
+      start:
+        "SET NAMES utf8mb4;\nSET @DBDECK_OLD_FK = @@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS = 0;\nSET @DBDECK_OLD_SQL_MODE = @@SQL_MODE, SQL_MODE = CONCAT(@@SQL_MODE, ',NO_AUTO_VALUE_ON_ZERO');\n",
+      structure: '',
+      tables: planned,
+      afterData: '',
+      sequenceValues: '',
+      views: viewSql,
+      end: 'SET FOREIGN_KEY_CHECKS = @DBDECK_OLD_FK, SQL_MODE = @DBDECK_OLD_SQL_MODE;\n',
+    };
+  }
+
+  async dumpRows(table: TableInfo, columns: string[], page: TablePage): Promise<DumpCell[][]> {
+    const conn = await this.getConnection();
+    const [rows] = await conn.query({ sql: buildDumpQuery(qualifiedName(table), '`', columns, page), rowsAsArray: true });
+    return (rows as unknown[][]).map((row) => row.map(toDumpCell));
+  }
+
+  /** On its own connection, so the editor's session (and any open transaction) is never touched. */
+  async runScript(statements: string[], options: ScriptOptions): Promise<ScriptResult> {
+    const conn = await this.createConnection();
+    conn.on('error', () => {}); // a dropped connection fails the running statement instead of crashing
+    try {
+      return await runScriptStatements(
+        statements,
+        options,
+        async (sql) => {
+          const [result] = await conn.query(sql);
+          // DML returns a ResultSetHeader; SELECTs return rows (not counted).
+          return !Array.isArray(result) && /^(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(stripLeadingComments(sql)) ? (result as mysql.ResultSetHeader).affectedRows : undefined;
+        },
+        {
+          begin: async () => void (await conn.query('START TRANSACTION')),
+          commit: async () => void (await conn.query('COMMIT')),
+          rollback: async () => void (await conn.query('ROLLBACK')),
+        },
+      );
+    } finally {
+      await conn.end().catch(() => {});
+    }
+  }
+
   async applyChanges(statements: ChangeStatement[]): Promise<void> {
     const conn = await this.createConnection(['FOUND_ROWS']);
     conn.on('error', () => {}); // a dropped connection fails the pending query instead of crashing

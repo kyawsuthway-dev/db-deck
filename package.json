@@ -88,6 +88,9 @@
       { "command": "dbDeck.editConnection", "title": "Edit Connection…", "category": "DB Deck", "icon": "$(edit)" },
       { "command": "dbDeck.moveToFolder", "title": "Move to Folder…", "category": "DB Deck" },
       { "command": "dbDeck.renameFolder", "title": "Rename Folder…", "category": "DB Deck" },
+      { "command": "dbDeck.dumpDatabase", "title": "Dump to SQL File…", "category": "DB Deck" },
+      { "command": "dbDeck.dumpTable", "title": "Dump Table to SQL File…", "category": "DB Deck" },
+      { "command": "dbDeck.runSqlFile", "title": "Run SQL File…", "category": "DB Deck", "icon": "$(run-all)" },
       { "command": "dbDeck.openEnvFile", "title": "Open Source File", "category": "DB Deck", "icon": "$(go-to-file)" },
       { "command": "dbDeck.saveAsConnection", "title": "Save as Connection…", "category": "DB Deck" },
       { "command": "dbDeck.toggleEnvReadOnly", "title": "Toggle Read-only", "category": "DB Deck" },
@@ -141,6 +144,8 @@
         { "command": "dbDeck.saveAsConnection", "when": "view == dbDeck.connections && viewItem =~ /\\.env$/", "group": "2_manage@7" },
         { "command": "dbDeck.toggleEnvReadOnly", "when": "view == dbDeck.connections && viewItem =~ /\\.env$/", "group": "2_manage@8" },
         { "command": "dbDeck.removeConnection", "when": "view == dbDeck.connections && viewItem =~ /^connection(\\.connected)?(\\.server)?$/", "group": "3_remove@1" },
+        { "command": "dbDeck.dumpDatabase", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "2_transfer@1" },
+        { "command": "dbDeck.dumpTable", "when": "view == dbDeck.connections && viewItem == table", "group": "2_transfer@1" },
         { "command": "dbDeck.previewTable", "when": "view == dbDeck.connections && viewItem =~ /^(table|view)$/", "group": "inline@1" },
         { "command": "dbDeck.previewTable", "when": "view == dbDeck.connections && viewItem =~ /^(table|view)$/", "group": "1_query@1" },
         { "command": "dbDeck.newQuery", "when": "view == dbDeck.connections && viewItem =~ /^(table|view)$/", "group": "1_query@2" },
@@ -169,7 +174,11 @@
         { "command": "dbDeck.saveQuery", "when": "editorLangId == sql", "group": "navigation@2" }
       ],
       "editor/context": [
-        { "command": "dbDeck.saveQuery", "when": "editorLangId == sql", "group": "1_dbDeck@1" }
+        { "command": "dbDeck.saveQuery", "when": "editorLangId == sql", "group": "1_dbDeck@1" },
+        { "command": "dbDeck.runSqlFile", "when": "editorLangId == sql && resourceScheme == file", "group": "1_dbDeck@2" }
+      ],
+      "explorer/context": [
+        { "command": "dbDeck.runSqlFile", "when": "resourceExtname == .sql", "group": "1_dbDeck@1" }
       ],
       "webview/context": [
         { "command": "dbDeck.copySelection", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "1_copy@1" },
@@ -194,6 +203,8 @@
         { "command": "dbDeck.switchDatabase", "when": "false" },
         { "command": "dbDeck.renameFolder", "when": "false" },
         { "command": "dbDeck.openEnvFile", "when": "false" },
+        { "command": "dbDeck.dumpDatabase", "when": "false" },
+        { "command": "dbDeck.dumpTable", "when": "false" },
         { "command": "dbDeck.saveAsConnection", "when": "false" },
         { "command": "dbDeck.toggleEnvReadOnly", "when": "false" },
         { "command": "dbDeck.runSavedQuery", "when": "false" },

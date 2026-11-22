@@ -7,8 +7,8 @@ import type { ConnectionManager, ConnectionSecrets } from '../connectionManager'
 import { checkForm, initialValues, readValues, type FieldErrors, type FormContext, type FormValues, type KindInfo } from '../connectionForm/fields';
 import { errorMessage } from '../drivers/common';
 import { DATABASE_SCOPE, DB_KINDS, USES_NETWORK } from '../drivers';
-import { logoUris } from '../logos';
 import type { ConnectionsTree } from '../tree/ConnectionsTree';
+import { FormPanel, FormTabs } from './FormPanel';
 import type { ConnectionConfig } from '../types';
 
 /** Which file a Browse… button picks. */
@@ -68,7 +68,7 @@ function kinds(): KindInfo[] {
  * one for a new connection. Save tests the connection first; on failure the form offers Save Anyway.
  */
 export class ConnectionForms implements vscode.Disposable {
-  private readonly forms = new Map<string, ConnectionFormPanel>();
+  private readonly forms = new FormTabs<ConnectionFormPanel>();
   private readonly subscription: vscode.Disposable;
 
   constructor(
@@ -78,44 +78,29 @@ export class ConnectionForms implements vscode.Disposable {
   ) {
     // A connection removed while its form is open: close the form.
     this.subscription = manager.onDidChange(() => {
-      for (const form of [...this.forms.values()]) if (form.editingId && !manager.get(form.editingId)) form.dispose();
+      for (const form of this.forms.all()) if (form.editingId && !manager.get(form.editingId)) form.dispose();
     });
   }
 
   /** A new connection; `copyOf` (a .env connection) prefills it, and its password is used unless one is typed. */
   openAdd(copyOf?: ConnectionConfig): void {
-    this.open(copyOf ? `copy:${copyOf.id}` : 'new', () =>
+    this.forms.open(copyOf ? `copy:${copyOf.id}` : 'new', () =>
       new ConnectionFormPanel(this.extensionUri, this.manager, this.tree, randomUUID(), undefined, copyOf),
     );
   }
 
   openEdit(config: ConnectionConfig): void {
-    this.open(config.id, () => new ConnectionFormPanel(this.extensionUri, this.manager, this.tree, config.id, config));
+    this.forms.open(config.id, () => new ConnectionFormPanel(this.extensionUri, this.manager, this.tree, config.id, config));
   }
 
   dispose(): void {
-    for (const form of [...this.forms.values()]) form.dispose();
+    this.forms.dispose();
     this.subscription.dispose();
-  }
-
-  private open(key: string, create: () => ConnectionFormPanel): void {
-    const existing = this.forms.get(key);
-    if (existing) {
-      existing.reveal();
-      return;
-    }
-    const form = create();
-    this.forms.set(key, form);
-    form.onDidDispose(() => {
-      if (this.forms.get(key) === form) this.forms.delete(key);
-    });
   }
 }
 
-class ConnectionFormPanel {
-  private readonly panel: vscode.WebviewPanel;
+class ConnectionFormPanel extends FormPanel<FormMessage> {
   private busy = false;
-  private readonly extensionUri: vscode.Uri;
   /** Stored secrets of the connection being edited, read once when the form opens. */
   private stored: ConnectionSecrets = {};
   readonly editingId?: string;
@@ -128,55 +113,15 @@ class ConnectionFormPanel {
     editing: ConnectionConfig | undefined,
     private readonly copyOf?: ConnectionConfig,
   ) {
+    super(extensionUri, 'dbDeck.connectionForm', editing ? `Edit ${editing.name}` : copyOf ? `Save ${copyOf.name}` : 'Add Connection', 'connectionForm');
     this.editingId = editing?.id;
-    this.extensionUri = extensionUri;
-    const distUri = vscode.Uri.joinPath(extensionUri, 'dist', 'webview');
-    const logosUri = vscode.Uri.joinPath(extensionUri, 'media', 'logos');
-    this.panel = vscode.window.createWebviewPanel(
-      'dbDeck.connectionForm',
-      editing ? `Edit ${editing.name}` : copyOf ? `Save ${copyOf.name}` : 'Add Connection',
-      vscode.ViewColumn.Active,
-      // Kept alive while hidden, so switching tabs doesn't lose what was typed.
-      { enableScripts: true, localResourceRoots: [distUri, logosUri], retainContextWhenHidden: true },
-    );
-    const webview = this.panel.webview;
-    const script = webview.asWebviewUri(vscode.Uri.joinPath(distUri, 'connectionForm.js'));
-    const style = webview.asWebviewUri(vscode.Uri.joinPath(distUri, 'connectionForm.css'));
-    // Same rules as the Results grid (webview.md): no inline code, values inserted with textContent.
-    webview.html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource}; script-src ${webview.cspSource};">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="${style}">
-  <script src="${script}" defer></script>
-</head>
-<body><main id="root"></main></body>
-</html>`;
-    webview.onDidReceiveMessage((msg: unknown) => void this.onMessage(msg));
     const folders = vscode.workspace.onDidChangeWorkspaceFolders(() =>
       this.post({ type: 'workspace', hasWorkspace: this.manager.hasWorkspace() }),
     );
     this.panel.onDidDispose(() => folders.dispose());
   }
 
-  readonly onDidDispose = (listener: () => void) => this.panel.onDidDispose(listener);
-
-  reveal(): void {
-    this.panel.reveal();
-  }
-
-  dispose(): void {
-    this.panel.dispose();
-  }
-
-  private post(message: FormMessage): void {
-    void this.panel.webview.postMessage(message);
-  }
-
-  private async onMessage(raw: unknown): Promise<void> {
-    if (!raw || typeof raw !== 'object') return;
+  protected async onMessage(raw: Record<string, unknown>): Promise<void> {
     const msg = raw as Partial<FormRequest> & { values?: unknown; force?: unknown; target?: unknown };
     switch (msg.type) {
       case 'ready':
@@ -219,11 +164,10 @@ class ConnectionFormPanel {
   }
 
   private logos(all: KindInfo[]): Record<string, { light: string; dark: string }> {
-    const webview = this.panel.webview;
     const result: Record<string, { light: string; dark: string }> = {};
     for (const k of all) {
-      const uris = logoUris(this.extensionUri, k.logo);
-      if (uris) result[k.logo] = { light: webview.asWebviewUri(uris.light).toString(), dark: webview.asWebviewUri(uris.dark).toString() };
+      const uris = this.logo(k.logo);
+      if (uris) result[k.logo] = uris;
     }
     return result;
   }

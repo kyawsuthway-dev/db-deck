@@ -1,4 +1,4 @@
-/* Add / Edit Connection form. Theme variables only, so light, dark and high-contrast themes work (webview.md). */
+/* Shared look of DB Deck's form webviews (connection, dump, run file, CSV import). Theme variables only, so light, dark and high-contrast themes work (webview.md). */
 :root {
   --radius: 6px;
   --gap: 14px;
@@ -579,4 +579,141 @@ fieldset.off {
   .icon-spinner {
     animation: none;
   }
+}
+
+/* Section title with something at its right (e.g. "3 of 4 selected"). */
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.section-head .section-title {
+  margin-bottom: 10px;
+}
+.section-aside {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.92em;
+}
+.link-button {
+  padding: 0;
+  color: var(--vscode-textLink-foreground);
+  background: none;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.link-button:hover {
+  text-decoration: underline;
+}
+.link-button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A checklist (dump: tables and views). */
+.checklist {
+  max-height: 280px;
+  margin-top: 8px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.check-item:last-child {
+  border-bottom: 0;
+}
+.check-item:hover {
+  background: var(--vscode-list-hoverBackground, transparent);
+}
+.check-item input {
+  margin: 0;
+  accent-color: var(--vscode-button-background);
+}
+.check-item .icon {
+  color: var(--muted);
+}
+.check-item .item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.check-item .item-kind {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.check-item.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.checklist-empty {
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
+/* Notes in a tone: warnings and blocking errors stand out from plain information. */
+.note.warning {
+  border-left-color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
+}
+.note.warning .icon {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
+}
+.note.error {
+  border-left-color: var(--vscode-errorForeground);
+}
+.note.error .icon {
+  color: var(--vscode-errorForeground);
+}
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* A read-only value line (Run SQL File: the file). */
+.value-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+.value-line .icon {
+  color: var(--muted);
+}
+.value-line .value-detail {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* A database logo in the header badge: on the form's surface instead of the accent color. */
+.badge:has(.logo) {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.badge .logo,
+.badge .logo img {
+  width: 26px;
+  height: 26px;
 }

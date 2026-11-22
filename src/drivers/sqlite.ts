@@ -2,13 +2,32 @@ import * as fs from 'fs';
 import * as path from 'path';
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
-import type { Cell, ChangeStatement, ColumnInfo, DbObject, Driver, FilterOperator, IndexInfo, RowChange, StatementResult, TableInfo, TablePage } from '../types';
+import type {
+  Cell,
+  ChangeStatement,
+  ColumnInfo,
+  DbObject,
+  Driver,
+  DumpCell,
+  DumpPlan,
+  DumpTable,
+  FilterOperator,
+  IndexInfo,
+  RowChange,
+  ScriptOptions,
+  ScriptResult,
+  StatementResult,
+  TableInfo,
+  TablePage,
+} from '../types';
 import {
   buildChangeStatements,
   buildCountQuery,
+  buildDumpQuery,
   buildPageQuery,
   ChangeConflict,
   countFrom,
+  dumpInserts,
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
@@ -16,7 +35,10 @@ import {
   MAX_ROWS,
   quoteIdent,
   runEach,
+  runScriptStatements,
+  ScriptCancelled,
   standardLiteral,
+  toDumpCell,
   type WriteDialect,
 } from './common';
 
@@ -205,6 +227,89 @@ export class SqliteDriver implements Driver {
       db.close();
     }
     this.dropCopy();
+  }
+
+  async dumpPlan(tables: TableInfo[], views: TableInfo[]): Promise<DumpPlan> {
+    const db = await this.database();
+    const one = (sql: string, params: string[]) => {
+      const stmt = db.prepare(sql);
+      try {
+        stmt.bind(params);
+        const rows: unknown[][] = [];
+        while (stmt.step()) rows.push(stmt.get());
+        return rows;
+      } finally {
+        stmt.free();
+      }
+    };
+    const planned: DumpTable[] = [];
+    let afterData = '';
+    for (const table of tables) {
+      const [created] = one("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", [table.name]);
+      if (typeof created?.[0] !== 'string') continue;
+      const name = quoteIdent(table.name, '"');
+      // table_xinfo: hidden 0 = normal column, 2/3 = generated (can't be given values).
+      const info = one(`SELECT name, hidden, pk FROM pragma_table_xinfo(?)`, [table.name]);
+      const columns = info.filter((c) => Number(c[1]) === 0).map((c) => String(c[0]));
+      const keys = info.filter((c) => Number(c[2]) > 0).sort((a, b) => Number(a[2]) - Number(b[2]));
+      afterData += one("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL", [table.name])
+        .map((r) => `${String(r[0]).trim().replace(/;$/, '')};\n`)
+        .join('');
+      planned.push({
+        table,
+        create: `${created[0].trim().replace(/;$/, '')};\n`,
+        columns,
+        orderBy: keys.map((k) => ({ column: String(k[0]), direction: 'asc' as const })),
+        insert: (rows) => dumpInserts(name, '"', columns, rows, standardLiteral, (h) => `X'${h}'`),
+      });
+    }
+    const viewSql = views
+      .map((v) => one("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ?", [v.name])[0]?.[0])
+      .filter((sql): sql is string => typeof sql === 'string')
+      .map((sql) => `${sql.trim().replace(/;$/, '')};\n`)
+      .join('');
+    // Foreign keys are checked at COMMIT, not per statement, so tables can load in any order.
+    return { start: 'PRAGMA defer_foreign_keys = ON;\n', structure: '', tables: planned, afterData, sequenceValues: '', views: viewSql, end: '' };
+  }
+
+  async dumpRows(table: TableInfo, columns: string[], page: TablePage): Promise<DumpCell[][]> {
+    const db = await this.database();
+    const { rows } = readStatement(db, buildDumpQuery(quoteIdent(table.name, '"'), '"', columns, page));
+    return rows.map((row) => row.map(toDumpCell));
+  }
+
+  /**
+   * On a separate in-memory copy, written to the file once at the end: once per script, not per statement.
+   * Without a transaction, statements before an error (or a cancel) are kept, so the copy is written then too.
+   */
+  async runScript(statements: string[], options: ScriptOptions): Promise<ScriptResult> {
+    if (this.readOnly) throw new Error('This connection is read-only.');
+    const SQL = await loadSqlJs();
+    const db = new SQL.Database(fs.readFileSync(this.filePath));
+    let ran = false;
+    try {
+      const result = await runScriptStatements(
+        statements,
+        { ...options, onProgress: (n) => ((ran = n > 0), options.onProgress?.(n)) },
+        async (sql) => {
+          db.run(sql);
+          return /^(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(stripLeadingComments(sql)) ? db.getRowsModified() : undefined;
+        },
+        {
+          begin: async () => void db.exec('BEGIN'),
+          commit: async () => void db.exec('COMMIT'),
+          rollback: async () => void db.exec('ROLLBACK'),
+        },
+      );
+      fs.writeFileSync(this.filePath, db.export());
+      return result;
+    } catch (err) {
+      if (!options.transaction && (ran || err instanceof ScriptCancelled)) fs.writeFileSync(this.filePath, db.export());
+      throw err;
+    } finally {
+      db.close();
+      this.dropCopy();
+    }
   }
 
   async close(): Promise<void> {

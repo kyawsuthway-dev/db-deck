@@ -143,3 +143,14 @@ export const USES_NETWORK: Record<DbType, boolean> = {
   postgres: true,
   mysql: true,
 };
+
+/**
+ * Whether the database can roll back schema changes (CREATE / ALTER / DROP) in a transaction. MySQL commits
+ * at each of them, including the statements before it, so Run SQL File warns that a failing script there
+ * keeps everything up to its last schema change.
+ */
+export const TRANSACTIONAL_DDL: Record<DbType, boolean> = {
+  sqlite: true,
+  postgres: true,
+  mysql: false,
+};

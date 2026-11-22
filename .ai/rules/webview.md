@@ -7,7 +7,7 @@ paths:
     - 'media/logos/**'
 ---
 
-# Webviews — results grid and connection form
+# Webviews — results grid and forms
 
 The results grid is plain TypeScript + CSS (no framework). Moving to React/Svelte needs a trade-off discussion with the maintainer first, not a drive-by change.
 
@@ -18,18 +18,25 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 - CSP stays strict: `default-src 'none'; style-src ${cspSource}; script-src ${cspSource}`. Never add `'unsafe-inline'`, `'unsafe-eval'`, or remote origins.
 - No inline `<script>`, `<style>`, `style="…"`, or `on…=` attributes. Styles go in `src/webview/*.css`; behavior in `src/webview/*.ts`.
 - Insert data with `textContent` or `document.createElement` only. Never `innerHTML`, `outerHTML`, `insertAdjacentHTML`, or `document.write` with anything derived from data.
-- `localResourceRoots` stays limited to `dist/webview` (the connection form adds `media/logos`, nothing else).
+- `localResourceRoots` stays limited to `dist/webview` (forms add `media/logos`, nothing else).
 - The table-edit save confirmation is rendered in the webview, so the strict CSP and `textContent`-only rules are what keep that confirmation trustworthy. Never relax them.
 - The detail pane may indent JSON only by changing whitespace between tokens (`jsonText.ts`); never re-print values through `JSON.parse`. Copy always copies the value as stored (or as edited), never the indented form.
 - Values cross the boundary as `Cell` (`string | null`) — already converted in the driver layer. The webview never changes how a value is displayed; client-side sorting may compare them as numbers, but always shows the original text.
 
 ## Build
 
-- `src/webview/results.ts` (Results grid) and `src/webview/connectionForm.ts` (connection form) are esbuild entries (browser, IIFE) → `dist/webview/<name>.js` + `<name>.css` (imported from the TS file).
-- They run in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`, `ConnectionForm.ts`, `connectionForm/fields.ts`). Runtime imports come only from `src/webview/` and `src/shared/`.
+- `src/webview/results.ts` (Results grid) and the forms `connectionForm.ts`, `dumpForm.ts`, `runScriptForm.ts` are esbuild entries (browser, IIFE) → `dist/webview/<name>.js` + `<name>.css` (imported from the TS file).
+- They run in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`, the form panels in `src/views/`, `connectionForm/fields.ts`, `transfer/dumpWriter.ts`). Runtime imports come only from `src/webview/` and `src/shared/`.
 - Other `src/webview/*.ts` modules (e.g. `autocomplete.ts`, `icons.ts`) and `src/shared/*.ts` are imported by an entry and bundled into it. Keep their logic DOM-free where possible so it can be smoke-tested in plain Node.
 
-## Connection form
+## Forms (connection, dump, run file, CSV import)
+
+- Every form is built from `src/webview/forms/kit.ts` (header, sections, fields, segmented controls, chips, switches, checklists, notes, action bar, status) and `src/webview/forms/form.css`, with `src/views/FormPanel.ts` on the extension side (`FormPanel`: the CSP below, roots, `retainContextWhenHidden`, `post`, `logo()`; `FormTabs`: one tab per key). New forms reuse them instead of adding their own styles or panel code, so all forms look and behave the same.
+- The page posts `{ type: 'ready' }`; the panel replies with `init`. Everything a form sends is untrusted: the panel checks each field (enums, keys into its own lists, absolute paths) before acting.
+- Long work (dump, run file, import) reports progress through the form's status, with Close turning into Cancel while it runs.
+- A form's main button may be the confirmation for a write (Run N Statements) when the form first shows what will happen; the extension re-reads and re-checks its input when the button is clicked.
+
+### Connection form
 
 - Same CSP and `textContent`-only rules as the grid, plus `img-src ${cspSource}` for the database logos; `localResourceRoots` is `dist/webview` and `media/logos`, nothing wider.
 - It never receives a stored password: password fields start empty ("Unchanged — type to replace"). Every field it sends is checked in the extension (`readValues`, `checkForm` in `src/connectionForm/fields.ts`), never only in the form.
