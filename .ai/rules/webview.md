@@ -25,7 +25,7 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 
 ## Build
 
-- `src/webview/results.ts` (Results grid) and the forms `connectionForm.ts`, `dumpForm.ts`, `runScriptForm.ts`, `importForm.ts`, `tableDesignForm.ts`, `dangerForm.ts`, and the panels `explainView.ts`, `serverView.ts`, `diagram.ts` are esbuild entries (browser, IIFE) → `dist/webview/<name>.js` + `<name>.css` (imported from the TS file).
+- `src/webview/results.ts` (Results grid) and the forms `connectionForm.ts`, `dumpForm.ts`, `runScriptForm.ts`, `importForm.ts`, `tableDesignForm.ts`, `dangerForm.ts`, and the panels `explainView.ts`, `serverView.ts`, `diagram.ts`, and the form `compareForm.ts` are esbuild entries (browser, IIFE) → `dist/webview/<name>.js` + `<name>.css` (imported from the TS file).
 - They run in a browser: no Node built-ins, no `vscode` module, only `import type` from extension code (`types.ts`, `ResultsPanel.ts`, the form panels in `src/views/`, `connectionForm/fields.ts`, `transfer/dumpWriter.ts`). Forms don't import extension helpers at runtime, so a form may repeat a small check the extension also does (Import CSV's mapping warnings); the extension's check is the one that counts. Runtime imports come only from `src/webview/` and `src/shared/`.
 - Other `src/webview/*.ts` modules (e.g. `autocomplete.ts`, `icons.ts`) and `src/shared/*.ts` are imported by an entry and bundled into it. Keep their logic DOM-free where possible so it can be smoke-tested in plain Node.
 
@@ -38,6 +38,7 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 - Forms for destructive actions (Truncate, Drop) use the danger badge and the red `.button.danger`, and enable it only when the object's name is typed exactly; the extension compares the name again.
 - The ER diagram is SVG built with `createElementNS` and `textContent` (names in `<title>` for hover); positions are SVG `transform` attributes, never inline styles. Group and table header colors are only names from the theme palette (`GROUP_COLORS` → `--vscode-charts-*` through `c-<color>` classes), checked again by the extension. Export copies computed styles onto a detached clone through the CSSOM. PNG export draws that SVG from a `blob:` image: `img-src … blob:` is allowed on the diagram panel only (`FormPanel` option `blobImages`), and the extension checks the SVG start or PNG signature and size before writing the file.
 - Panels that aren't forms (Explain, Server, ER Diagram) use the same kit, form.css and `FormPanel`, with a `ready` handshake and load tokens so an older answer never replaces a newer one. Sizes from data (the plan's cost bars) are CSS classes in steps, never inline styles (CSP).
+- Compare Structure's form sends only picks (connection + schema from the lists the extension sent), ticks (item ids) and renames (column names). The extension recomputes the differences and SQL from its own snapshot for every change, keeps only valid renames (`validRenames`), and never takes SQL or designs from the form.
 - Long work (dump, run file, import) reports progress through the form's status, with Close turning into Cancel while it runs.
 - A form's main button may be the confirmation for a write (Run N Statements) when the form first shows what will happen; the extension re-reads and re-checks its input when the button is clicked.
 

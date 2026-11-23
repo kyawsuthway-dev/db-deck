@@ -477,7 +477,8 @@ export class MysqlDriver implements Driver {
       return [...by.values()].map((all) => make(all[0], all));
     };
     const pk = stats.filter((r) => r.name === 'PRIMARY').map((r) => String(r.col));
-    const here = table.schema ?? this.config.database;
+    // Like PostgreSQL's: no refSchema means the connection's own database (unqualified SQL resolves there).
+    const here = this.config.database ?? '';
     const numeric = /^(tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|real|bit|year)$/i;
     return {
       schema: table.schema,
@@ -666,6 +667,12 @@ export class MysqlDriver implements Driver {
     if (!/^\d+$/.test(id)) throw new Error('Not a session id.');
     // KILL takes no parameters; the id is checked to be digits above.
     await (await this.getConnection()).query(how === 'cancel' ? `KILL QUERY ${id}` : `KILL ${id}`);
+  }
+
+  /** The connection's database, or every non-system one when it has none (as the tree shows them). */
+  async listSchemas(): Promise<string[]> {
+    if (this.config.database) return [this.config.database];
+    return this.listDatabases();
   }
 
   async schemaDiagram(schema?: string): Promise<SchemaDiagram> {

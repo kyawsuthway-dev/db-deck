@@ -1,13 +1,14 @@
 import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
 import { describeChange, diffDesign, type DesignChange } from '../design/diff';
+import { changeNotes, type DesignNote, type DesignNoteTone } from '../design/notes';
 import { checkDesign, parseDesign, withServerFields, type DesignErrors, type TableDesign } from '../design/model';
 import { errorMessage, ScriptError } from '../drivers/common';
 import { createDriver, DB_KINDS, TABLE_FEATURES, TRANSACTIONAL_DDL, typeLabel } from '../drivers';
 import type { TableInfo } from '../types';
 import { FormPanel, FormTabs } from './FormPanel';
 
-export type DesignNoteTone = 'info' | 'warning' | 'error';
+export type { DesignNoteTone };
 type Init = Extract<DesignMessage, { type: 'init' }>;
 
 /** Messages to the Table Designer (src/webview/tableDesignForm.ts). */
@@ -289,24 +290,11 @@ class TableDesignPanel extends FormPanel<DesignMessage> {
       }
     }
     this.statements = statements;
-    const notes: { tone: DesignNoteTone; text: string }[] = [];
-    for (const c of changes) {
-      if (c.kind === 'dropColumn') notes.push({ tone: 'warning', text: `Dropping ${c.column.name} deletes its data.` });
-      if (c.kind === 'alterColumn' && c.type) {
-        notes.push({
-          tone: 'warning',
-          text: `Changing the type of ${c.after.name}: if values can’t be converted, or the database refuses it (PostgreSQL does while a view uses the column), the whole change fails and nothing is kept.`,
-        });
-      }
-      if (c.kind === 'alterColumn' && c.nullable && !c.after.nullable) {
-        const nulls = this.nullCounts.get(c.after.key);
-        if (nulls === undefined) void this.countNulls(c.after.key, c.before.name);
-        else if (nulls > 0) notes.push({ tone: 'warning', text: `${c.after.name} has ${nulls.toLocaleString()} NULL value${nulls === 1 ? '' : 's'}: NOT NULL will fail until they’re filled in.` });
-      }
-      if ((c.kind === 'addIndex' && c.index.unique) || (c.kind === 'primaryKey' && c.after.length)) {
-        notes.push({ tone: 'info', text: 'A new unique index or primary key fails if the columns have duplicate values; nothing is changed then.' });
-      }
-    }
+    const notes: DesignNote[] = changeNotes(changes, (c) => {
+      const nulls = this.nullCounts.get(c.after.key);
+      if (nulls === undefined) void this.countNulls(c.after.key, c.before.name);
+      return nulls;
+    });
     if (rebuild) {
       notes.push({
         tone: 'warning',

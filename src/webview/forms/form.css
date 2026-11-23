@@ -1204,3 +1204,144 @@ table.server-table td.row-actions {
   border: 1px solid var(--border);
   border-radius: 8px;
 }
+
+/* Compare Structure: the two sides, the differences list (tables, their changes, renames). */
+.compare-sides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.compare-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.compare-side-title {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 600;
+}
+.compare-side-title .icon {
+  color: var(--muted);
+}
+.compare-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.compare-field .select {
+  width: 100%;
+  height: var(--control-height);
+  box-sizing: border-box;
+  padding: 0 8px;
+}
+.compare-swap {
+  position: static;
+  width: 28px;
+  height: 28px;
+}
+.compare-sides + .button-row {
+  margin-top: 10px;
+}
+.compare-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: baseline;
+}
+.compare-direction {
+  font-weight: 600;
+  white-space: pre;
+}
+.compare-list {
+  max-height: 420px;
+}
+.compare-table {
+  border-bottom: 1px solid var(--border);
+}
+.compare-table:last-child {
+  border-bottom: 0;
+}
+.compare-table .check-item {
+  border-bottom: 0;
+}
+.compare-head {
+  cursor: default;
+}
+.compare-child {
+  padding-left: 40px;
+}
+.compare-child.drop .item-kind {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
+}
+.compare-badge {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 96px;
+  font-size: 0.9em;
+  color: var(--muted);
+}
+.compare-badge .icon {
+  width: 13px;
+  height: 13px;
+}
+.compare-badge.new .icon {
+  color: var(--vscode-charts-green, var(--muted));
+}
+.compare-badge.changed .icon {
+  color: var(--vscode-charts-blue, var(--muted));
+}
+.compare-badge.onlyTarget .icon {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
+}
+.compare-same {
+  width: 100%;
+  color: var(--muted);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  font: inherit;
+}
+.compare-same .icon {
+  width: 12px;
+  height: 12px;
+}
+.compare-renames {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 12px 6px 40px;
+}
+.compare-rename {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.compare-rename-name {
+  min-width: 120px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+.compare-rename .select {
+  height: 26px;
+  padding: 0 6px;
+}
+.section-actions {
+  display: inline-flex;
+  gap: 14px;
+}
+@media (max-width: 600px) {
+  .compare-sides {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .compare-swap {
+    justify-self: center;
+    transform: rotate(90deg);
+  }
+}
