@@ -21,6 +21,7 @@ import type {
   ImportRow,
   IndexInfo,
   RowChange,
+  SchemaDiagram,
   ScriptOptions,
   ScriptResult,
   ServerItem,
@@ -52,6 +53,7 @@ import {
   runScriptStatements,
   toDumpCell,
   type WriteDialect,
+  assembleDiagram,
 } from './common';
 
 const SYSTEM_SCHEMAS = ['mysql', 'information_schema', 'performance_schema', 'sys'];
@@ -664,6 +666,49 @@ export class MysqlDriver implements Driver {
     if (!/^\d+$/.test(id)) throw new Error('Not a session id.');
     // KILL takes no parameters; the id is checked to be digits above.
     await (await this.getConnection()).query(how === 'cancel' ? `KILL QUERY ${id}` : `KILL ${id}`);
+  }
+
+  async schemaDiagram(schema?: string): Promise<SchemaDiagram> {
+    const conn = await this.getConnection();
+    const db = schema ?? this.config.database ?? null;
+    const [[here]] = await conn.query<mysql.RowDataPacket[]>('SELECT COALESCE(?, DATABASE()) AS s', [db]);
+    const nsp = here?.s === null || here?.s === undefined ? undefined : String(here.s);
+    if (!nsp) throw new Error('Pick a database for the diagram: this connection has no default database.');
+    const [cols] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT c.TABLE_NAME AS t, c.COLUMN_NAME AS name, c.COLUMN_TYPE AS type, c.IS_NULLABLE AS nullable
+         FROM information_schema.COLUMNS c
+         JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME AND t.TABLE_TYPE = 'BASE TABLE'
+        WHERE c.TABLE_SCHEMA = ? ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION`,
+      [nsp],
+    );
+    // Unique indexes on columns (COLUMN_NAME is null for an expression part: those are left out below).
+    const [keys] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT TABLE_NAME AS t, INDEX_NAME AS k, COLUMN_NAME AS col FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = ? AND NON_UNIQUE = 0 ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX`,
+      [nsp],
+    );
+    const expression = new Set(keys.filter((k) => k.col === null).map((k) => `${String(k.t)}\u0000${String(k.k)}`));
+    const [fks] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT TABLE_NAME AS t, CONSTRAINT_NAME AS name, COLUMN_NAME AS col, REFERENCED_TABLE_SCHEMA AS rs,
+              REFERENCED_TABLE_NAME AS rt, REFERENCED_COLUMN_NAME AS rc
+         FROM information_schema.KEY_COLUMN_USAGE
+        WHERE TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION`,
+      [nsp],
+    );
+    return assembleDiagram(
+      cols.map((c) => ({ table: String(c.t), name: String(c.name), type: String(c.type), nullable: String(c.nullable) === 'YES' })),
+      keys
+        .filter((k) => !expression.has(`${String(k.t)}\u0000${String(k.k)}`))
+        .map((k) => ({ table: String(k.t), key: String(k.k), primary: String(k.k) === 'PRIMARY', column: String(k.col) })),
+      fks.map((f) => ({
+        table: String(f.t),
+        name: String(f.name),
+        column: String(f.col),
+        refSchema: String(f.rs) === nsp ? undefined : String(f.rs),
+        refTable: String(f.rt),
+        refColumn: String(f.rc),
+      })),
+    );
   }
 
   async referencingTables(table: TableInfo): Promise<string[]> {

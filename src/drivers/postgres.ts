@@ -21,6 +21,7 @@ import type {
   ImportRow,
   IndexInfo,
   RowChange,
+  SchemaDiagram,
   ScriptOptions,
   ScriptResult,
   ServerItem,
@@ -52,6 +53,7 @@ import {
   standardLiteral,
   toDumpCell,
   type WriteDialect,
+  assembleDiagram,
 } from './common';
 
 /** What tableParts reads from the catalog. */
@@ -766,6 +768,47 @@ export class PostgresDriver implements Driver {
       [id],
     );
     if (rows[0]?.ok !== 'true') throw new Error(`PostgreSQL didn’t ${how === 'cancel' ? 'cancel the query' : 'end the session'} (it may have finished, or you lack the privilege).`);
+  }
+
+  async schemaDiagram(schema?: string): Promise<SchemaDiagram> {
+    const client = await this.getClient();
+    const nsp = schema ?? 'public';
+    // Base and partitioned tables, not the partitions themselves.
+    const tables = `SELECT c.oid, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = $1 AND c.relkind IN ('r', 'p') AND NOT c.relispartition`;
+    const { rows: cols } = await client.query<{ t: string; name: string; type: string; notnull: string }>(
+      `WITH t AS (${tables})
+       SELECT t.relname AS t, a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS notnull
+         FROM t JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum > 0 AND NOT a.attisdropped
+        ORDER BY t.relname, a.attnum`,
+      [nsp],
+    );
+    // Unique indexes on plain columns (no expressions, no WHERE), primary key included.
+    const { rows: keys } = await client.query<{ t: string; key: string; pk: string; col: string }>(
+      `WITH t AS (${tables})
+       SELECT t.relname AS t, i.indexrelid::text AS key, i.indisprimary AS pk, a.attname AS col
+         FROM t JOIN pg_index i ON i.indrelid = t.oid AND i.indisunique AND i.indpred IS NULL AND i.indexprs IS NULL
+         CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum, ord)
+         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+        ORDER BY t.relname, i.indexrelid, k.ord`,
+      [nsp],
+    );
+    const { rows: fks } = await client.query<{ t: string; name: string; col: string; rs: string; rt: string; rc: string }>(
+      `WITH t AS (${tables})
+       SELECT t.relname AS t, c.conname AS name, a.attname AS col, rn.nspname AS rs, rc.relname AS rt, ra.attname AS rc
+         FROM t JOIN pg_constraint c ON c.conrelid = t.oid AND c.contype = 'f'
+         CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY k(attnum, refnum, ord)
+         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+         JOIN pg_class rc ON rc.oid = c.confrelid JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+         JOIN pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = k.refnum
+        ORDER BY t.relname, c.conname, k.ord`,
+      [nsp],
+    );
+    return assembleDiagram(
+      cols.map((c) => ({ table: c.t, name: c.name, type: c.type, nullable: c.notnull !== 'true' })),
+      keys.map((k) => ({ table: k.t, key: k.key, primary: k.pk === 'true', column: k.col })),
+      fks.map((f) => ({ table: f.t, name: f.name, column: f.col, refSchema: f.rs === nsp ? undefined : f.rs, refTable: f.rt, refColumn: f.rc })),
+    );
   }
 
   async referencingTables(table: TableInfo): Promise<string[]> {

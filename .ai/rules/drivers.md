@@ -20,7 +20,7 @@ Before adding a runtime dependency, check and report to the user:
 - Files it loads at runtime (like `sql-wasm.wasm`) are copied into `dist/` by `esbuild.mjs`; `.vscodeignore` excludes `node_modules/`.
 - License is MIT-compatible.
 
-Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (MySQL/MariaDB). SSH tunnels: `ssh2`; its optional native parts (`sshcrypto.node`, `cpu-features`) are `external` in `esbuild.mjs`, so it uses its pure-JavaScript crypto. Compose files: `yaml` (pure JavaScript).
+Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (MySQL/MariaDB). SSH tunnels: `ssh2`; its optional native parts (`sshcrypto.node`, `cpu-features`) are `external` in `esbuild.mjs`, so it uses its pure-JavaScript crypto. Compose files: `yaml` (pure JavaScript). ER diagram layout: `@dagrejs/dagre` (pure JavaScript, MIT), bundled into the diagram webview only, never the extension.
 
 ## The `Driver` contract (`src/types.ts`)
 
@@ -38,6 +38,7 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 - `readDesign` is read-only and fills the same `TableDesign` the designer creates; parts it can't show (expression or partial indexes, SQLite triggers) go to `preserved`, untouched by the designer. PostgreSQL lists come back as `json_agg(...)::text` and are parsed: DB Deck's pg type parsers return every value as text, so `array_agg` would give `{a,b}`.
 - `alterTableSql` only builds SQL from `diffDesign`'s changes: PostgreSQL type changes use `USING col::type`; MySQL writes one `ALTER TABLE` (all or nothing, despite its per-statement commits); SQLite uses direct `ALTER TABLE` where it can, otherwise the documented rebuild (copy into a new table, drop, rename, recreate indexes, `preserved` indexes and triggers), and refuses tables with generated columns.
 - `listColumns` also reports `hasDefault` (default, identity, auto-increment) and `generated`, which Import CSV uses to offer targets and warn about required columns.
+- `schemaDiagram(schema?)` is read-only and reads a whole schema in a few catalog queries (never `readDesign` per table): base tables only, columns with type, nullability and primary key, unique keys on plain columns, and foreign keys with `refSchema` set only for another schema. Rows go through `assembleDiagram` in `common.ts`. SQLite numbers its unnamed foreign keys and resolves `REFERENCES parent` without columns to the parent's primary key.
 - `explain(sql, analyze)` returns a `PlanNode` tree (parsed in `tools/plan.ts`) and the raw output. Plain Explain runs on the editor's connection and never executes the statement; Analyze runs on its own short-lived connection inside `BEGIN READ ONLY` / `START TRANSACTION READ ONLY`, always rolled back, and throws where the database has none (SQLite, MariaDB). `serverStatus`, `serverSettings` and `listProcesses` are read-only; `listProcesses` marks DB Deck's own sessions (`own`). `endProcess` checks the id is digits and uses the database's own cancel / kill (`pg_cancel_backend` / `pg_terminate_backend`, `KILL QUERY` / `KILL`).
 - Errors: let them throw; callers format them with `errorMessage()`. Never put a password into an error.
 
