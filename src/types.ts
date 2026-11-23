@@ -1,4 +1,5 @@
 import type { Duplex } from 'stream';
+import type { DesignChange } from './design/diff';
 import type { TableDesign } from './design/model';
 
 export type DbType = 'sqlite' | 'postgres' | 'mysql';
@@ -314,6 +315,13 @@ export interface Driver {
   truncateTableSql(table: TableInfo): string;
   /** DROP TABLE or DROP VIEW, never with CASCADE. Builds SQL only. */
   dropSql(object: TableInfo): string;
+  /** An existing table as a design (columns, keys, indexes, foreign keys, checks, comments). Read-only. */
+  readDesign(table: TableInfo): Promise<TableDesign>;
+  /**
+   * SQL for the changes from `before` (as read) to `after`. Builds SQL only; `rebuild` says a SQLite table is
+   * recreated. Throws a readable error for a change the database can't make.
+   */
+  alterTableSql(before: TableDesign, after: TableDesign, changes: DesignChange[]): { statements: string[]; rebuild: boolean };
   /** Tables whose foreign keys reference this one (labels like `schema.name`), for the Truncate / Drop forms. Read-only. */
   referencingTables(table: TableInfo): Promise<string[]>;
   close(): Promise<void>;

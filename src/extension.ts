@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
+import type { TableInfo } from './types';
 import { EnvConnections } from './env/envConnections';
 import { askFolderName, pickFolder } from './connectionFolders';
 import { errorMessage } from './drivers/common';
@@ -102,6 +103,8 @@ export function activate(context: vscode.ExtensionContext) {
       else if (node instanceof FolderNode) designs.openNew(node.connectionId, node.parent instanceof SchemaNode ? node.parent.label : undefined);
     }),
     command('renameTable', (node?: TableNode) => objects.renameTable(node, schemaChanged)),
+    // From the tree (a TableNode) or from New Table's success status ({ connectionId, table }).
+    command('designTable', (node?: { connectionId: string; table: TableInfo }) => node && designs.openDesign(node.connectionId, node.table)),
     command('truncateTable', (node?: TableNode) => node && dangers.open('truncate', node.connectionId, node.table)),
     command('dropTable', (node?: TableNode) => node && dangers.open('drop', node.connectionId, node.table)),
 

@@ -14,12 +14,16 @@ export interface ColumnDesign {
   primaryKey: boolean;
   autoIncrement: boolean;
   comment: string;
+  /** A generated (computed) column of an existing table: shown, never changed. Set by the extension only. */
+  generated?: boolean;
 }
 
 export interface IndexDesign {
   name: string;
   columns: string[];
   unique: boolean;
+  /** Backs a UNIQUE constraint (dropped with DROP CONSTRAINT, not DROP INDEX). Set by the extension only. */
+  constraint?: boolean;
 }
 
 export interface ForeignKeyDesign {
@@ -46,6 +50,13 @@ export interface TableDesign {
   indexes: IndexDesign[];
   foreignKeys: ForeignKeyDesign[];
   checks: CheckDesign[];
+  /** The existing primary key constraint's name (to drop it when the key changes). Set by the extension only. */
+  primaryKeyName?: string;
+  /**
+   * What a SQLite rebuild must restore but the designer can't show: the table's triggers and indexes it can't
+   * represent (expressions, partial). SQL from the database itself; never taken from the form.
+   */
+  preserved?: { triggers: string[]; indexes: string[] };
 }
 
 /** Problems by field path (`name`, `columns.2.type`, `indexes.0.columns`…), so the form can mark them. */
@@ -145,4 +156,24 @@ export function parseDesign(raw: unknown): TableDesign | undefined {
     checks.push({ name: c.name, expression: c.expression });
   }
   return { schema: r.schema as string | undefined, name: r.name, comment: r.comment, columns, indexes, foreignKeys, checks };
+}
+
+/**
+ * The edited design with the parts only the extension may set (generated columns, constraint-backed indexes,
+ * the PK name, SQL to restore) taken from the design read from the database, never from the form.
+ */
+export function withServerFields(edited: TableDesign, original: TableDesign): TableDesign {
+  const generated = new Map(original.columns.filter((c) => c.generated).map((c) => [c.key, c]));
+  const constraints = new Set(original.indexes.filter((x) => x.constraint).map((x) => x.name));
+  return {
+    ...edited,
+    // Generated columns can't be edited: the original definition is kept wherever the form put it.
+    columns: [
+      ...edited.columns.filter((c) => !generated.has(c.key)).map((c) => ({ ...c, generated: undefined })),
+      ...[...generated.values()],
+    ],
+    indexes: edited.indexes.map((x) => ({ ...x, constraint: constraints.has(x.name) || undefined })),
+    primaryKeyName: original.primaryKeyName,
+    preserved: original.preserved,
+  };
 }

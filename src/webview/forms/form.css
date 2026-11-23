@@ -342,6 +342,27 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) .logo-dark {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
+.tab-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+  font-size: 0.8em;
+  line-height: 16px;
+  text-align: center;
+}
+.tab-error {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vscode-errorForeground);
+}
+.tab-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
 .tab-dot {
   width: 7px;
   height: 7px;
@@ -769,12 +790,12 @@ table.preview td.null {
 }
 .design-row {
   display: grid;
-  grid-template-columns: minmax(110px, 1.2fr) minmax(110px, 1.1fr) 40px 40px 44px minmax(90px, 1fr) 84px;
+  grid-template-columns: minmax(110px, 1.1fr) minmax(150px, 1.3fr) 40px 40px 44px minmax(90px, 1fr) 84px;
   gap: 6px;
   align-items: center;
 }
 .design-row.with-comment {
-  grid-template-columns: minmax(110px, 1.2fr) minmax(110px, 1.1fr) 40px 40px 44px minmax(90px, 1fr) minmax(90px, 1fr) 84px;
+  grid-template-columns: minmax(110px, 1.1fr) minmax(150px, 1.3fr) 40px 40px 44px minmax(90px, 1fr) minmax(90px, 1fr) 84px;
 }
 .design-head {
   color: var(--muted);
@@ -849,6 +870,10 @@ table.preview td.null {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+/* In a list item (a column flexbox) a field takes its own height; flex-basis would make it 180px tall. */
+.design-item > .design-field {
+  flex: none;
 }
 .design-refs {
   display: flex;
@@ -929,4 +954,45 @@ table.preview td.null {
   .design-head span:nth-child(n + 6) {
     display: none;
   }
+}
+
+/* Design Table: new and changed columns, removed ones, the list of changes. */
+.design-row.new,
+.design-row.changed {
+  position: relative;
+}
+.design-row.new::before,
+.design-row.changed::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  width: 4px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.design-row.new::before {
+  background: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+.design-row.generated {
+  opacity: 0.6;
+}
+.removed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  margin-top: 8px;
+}
+.removed:empty {
+  display: none;
+}
+.removed-item {
+  display: inline-flex;
+  gap: 6px;
+  color: var(--vscode-errorForeground);
+}
+.note.changes ul {
+  margin: 0;
+  padding-left: 18px;
 }

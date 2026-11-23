@@ -1,4 +1,4 @@
-// The Table Designer (New Table), in a webview. Built from the shared form kit. The page only edits the design:
+// The Table Designer (New Table, Design Table), in a webview. Built from the shared form kit. The page only edits the design:
 // the extension checks it and builds the SQL (TableDesignForm.ts), and checks it again before running it.
 import type { ColumnDesign, DesignErrors, ForeignKeyDesign, TableDesign } from '../design/model';
 import type { DesignMessage, DesignRequest } from '../views/TableDesignForm';
@@ -19,6 +19,7 @@ import {
   selectControl,
   showStatus,
   submitButton,
+  tabs as kitTabs,
   vscodeApi,
 } from './forms/kit';
 import './forms/form.css';
@@ -27,15 +28,20 @@ const vscode = vscodeApi<DesignRequest>();
 const root = document.getElementById('root')!;
 
 type Init = Extract<DesignMessage, { type: 'init' }>;
+type DesignTab = 'columns' | 'indexes' | 'foreignKeys' | 'checks';
 type Preview = Extract<DesignMessage, { type: 'preview' }>;
 
 let init: Init | undefined;
 let design: TableDesign;
+/** Design Table: the table as read, to mark changes and for Reset / Undo. */
+let original: TableDesign | undefined;
 let preview: Preview | undefined;
 let running = false;
 let created = false;
 let nextKey = 2;
 const refColumns = new Map<string, string[]>();
+/** Each column's last non-empty name (by key), so indexes and keys follow a rename even through an empty field. */
+const lastNames = new Map<string, string>();
 /** The referenced table's key per foreign key (index), to look up its columns. */
 const fkTable: (string | undefined)[] = [];
 /** Inputs by field path, to mark errors. */
@@ -49,6 +55,11 @@ window.addEventListener('message', (event: MessageEvent<DesignMessage>) => {
     case 'init':
       init = msg;
       design = structuredClone(msg.design);
+      original = msg.mode === 'alter' ? structuredClone(msg.design) : undefined;
+      created = false;
+      fkTable.length = 0;
+      for (const f of design.foreignKeys) fkTable.push(keyOfTable(f.refTable, f.refSchema));
+      for (const k of fkTable) if (k && !refColumns.has(k)) vscode.postMessage({ type: 'refColumns', key: k });
       ui = build(msg);
       renderAll();
       break;
@@ -64,17 +75,28 @@ window.addEventListener('message', (event: MessageEvent<DesignMessage>) => {
       running = msg.running;
       updateButtons();
       break;
-    case 'status':
+    case 'status': {
       if (!ui) return;
       if (msg.created) {
         created = true;
         updateButtons();
       }
-      showStatus(ui.status, msg.state, msg.text, ...(msg.created ? [button('Show Rows', 'table', () => vscode.postMessage({ type: 'showRows' }))] : []));
+      const extra = msg.created
+        ? [button('Show Rows', 'table', () => vscode.postMessage({ type: 'showRows' })), button('Design Table', 'structure', () => vscode.postMessage({ type: 'designTable' }))]
+        : msg.reload
+          ? [button('Reload', 'down', () => vscode.postMessage({ type: 'reload' }))]
+          : [];
+      showStatus(ui.status, msg.state, msg.text, ...extra);
+      if (msg.state === 'error') showFirstError();
       break;
+    }
   }
 });
 vscode.postMessage({ type: 'ready' });
+
+function keyOfTable(name: string, schema?: string): string | undefined {
+  return init?.tables.find((t) => t.name === name && (t.schema ?? '') === (schema ?? ''))?.key;
+}
 
 /** Tells the extension the design changed; it answers with the SQL and errors. */
 function changed(structure = false): void {
@@ -92,6 +114,8 @@ function build(msg: Init) {
   const tableSection = section('table', 'Table');
   const tableFields = el('div', 'fields');
   const name = inputControl('t-name', { icon: 'table', placeholder: 'orders', value: design.name });
+  // Renaming a table is Rename Table… in the tree; the designer changes what's inside it.
+  name.input.disabled = msg.mode === 'alter';
   name.input.addEventListener('input', () => {
     design.name = name.input.value;
     changed();
@@ -101,6 +125,7 @@ function build(msg: Init) {
   if (msg.schemas.length) {
     const schema = selectControl('t-schema', msg.schemas.map((s) => ({ value: s, label: s })), 'structure', design.schema ?? msg.schemas[0]);
     design.schema = schema.select.value;
+    schema.select.disabled = msg.mode === 'alter';
     schema.select.addEventListener('change', () => {
       design.schema = schema.select.value;
       changed();
@@ -126,34 +151,40 @@ function build(msg: Init) {
     o.value = t;
     types.append(o);
   }
-  const listSection = (id: string, title: string, add: string, onAdd: () => void) => {
+  // Columns, indexes, foreign keys and checks each in a tab (like the connection form's tabs).
+  const tabs = kitTabs<DesignTab>('design', [
+    { id: 'columns', label: 'Columns', icon: 'table' },
+    { id: 'indexes', label: 'Indexes', icon: 'search' },
+    { id: 'foreignKeys', label: 'Foreign Keys', icon: 'link' },
+    { id: 'checks', label: 'Checks', icon: 'check' },
+  ]);
+  page.append(tabs.list, tabs.panels.columns, tabs.panels.indexes, tabs.panels.foreignKeys, tabs.panels.checks);
+  const listSection = (id: DesignTab, add: string, onAdd: () => void) => {
     const addButton = el('button', 'link-button', add);
     addButton.type = 'button';
     addButton.addEventListener('click', onAdd);
-    const aside = el('span', 'section-aside');
-    aside.append(addButton);
-    const s = section(id, title, aside);
+    const toolbar = el('div', 'tab-toolbar');
+    toolbar.append(addButton);
     const body = el('div', 'design-list');
-    s.section.append(body);
-    page.append(s.section);
+    tabs.panels[id].append(toolbar, body);
     return body;
   };
-  const columns = listSection('columns', 'Columns', '+ Add Column', () => {
+  const columns = listSection('columns', '+ Add Column', () => {
     design.columns.push({ key: `c${nextKey++}`, name: '', type: '', nullable: true, default: '', primaryKey: false, autoIncrement: false, comment: '' });
     changed(true);
     ui?.columns.querySelector<HTMLInputElement>('.design-row:last-child input')?.focus();
   });
   columns.parentElement!.append(types, el('p', 'hint', `Defaults are SQL expressions (0, 'text', now()). Auto-increment: ${msg.features.autoIncrement}.`));
-  const indexes = listSection('indexes', 'Indexes', '+ Add Index', () => {
+  const indexes = listSection('indexes', '+ Add Index', () => {
     design.indexes.push({ name: '', columns: [], unique: false });
     changed(true);
   });
-  const foreignKeys = listSection('foreignKeys', 'Foreign keys', '+ Add Foreign Key', () => {
+  const foreignKeys = listSection('foreignKeys', '+ Add Foreign Key', () => {
     design.foreignKeys.push({ name: '', columns: [], refTable: '', refColumns: [], onDelete: 'NO ACTION', onUpdate: 'NO ACTION' });
     fkTable.push(undefined);
     changed(true);
   });
-  const checks = listSection('checks', 'Checks', '+ Add Check', () => {
+  const checks = listSection('checks', '+ Add Check', () => {
     design.checks.push({ name: '', expression: '' });
     changed(true);
   });
@@ -169,17 +200,27 @@ function build(msg: Init) {
   sqlSection.section.append(sql);
   page.append(sqlSection.section);
 
-  const notesSection = section('notes', 'Before you create it');
+  const notesSection = section('notes', msg.mode === 'alter' ? 'Before you apply it' : 'Before you create it');
   const notes = el('div', 'notes');
   notesSection.section.append(notes);
   page.append(notesSection.section);
 
   const close = button('Close', 'close', () => vscode.postMessage({ type: 'close' }));
-  const submit = submitButton('Create Table', 'check');
-  const bar = actionBar(close, submit.button);
+  const reset = button('Reset', 'up', () => {
+    if (!original) return;
+    design = structuredClone(original);
+    fkTable.length = 0;
+    for (const f of design.foreignKeys) fkTable.push(keyOfTable(f.refTable, f.refSchema));
+    changed(true);
+  });
+  reset.hidden = msg.mode !== 'alter';
+  const submit = submitButton(msg.mode === 'alter' ? 'Apply Changes' : 'Create Table', 'check');
+  const bar = actionBar(close, reset, submit.button);
   form.append(page, bar.footer);
   root.replaceChildren(form);
-  return { columns, indexes, foreignKeys, checks, sql, notes, close, submit, status: bar.status };
+  const removed = el('div', 'removed');
+  columns.parentElement!.insertBefore(removed, columns.nextSibling);
+  return { tabs, columns, removed, indexes, foreignKeys, checks, sql, notes, close, reset, submit, status: bar.status };
 }
 
 function renderAll(): void {
@@ -188,6 +229,30 @@ function renderAll(): void {
   renderForeignKeys();
   renderChecks();
   markErrors();
+  updateTabs();
+}
+
+/** Brings the tab with the first problem forward (after a refused Create / Apply). */
+function showFirstError(): void {
+  const first = Object.keys(preview?.errors ?? {})[0]?.split('.')[0];
+  if (ui && first && (['columns', 'indexes', 'foreignKeys', 'checks'] as string[]).includes(first)) ui.tabs.select(first as DesignTab);
+}
+
+/** Each tab's count, and a red dot on tabs whose items have a problem. */
+function updateTabs(): void {
+  if (!ui) return;
+  const sizes: Record<DesignTab, number> = {
+    columns: design.columns.length,
+    indexes: design.indexes.length,
+    foreignKeys: design.foreignKeys.length,
+    checks: design.checks.length,
+  };
+  const errors = Object.keys(preview?.errors ?? {});
+  for (const id of Object.keys(sizes) as DesignTab[]) {
+    ui.tabs.counts[id].textContent = String(sizes[id]);
+    ui.tabs.counts[id].hidden = false;
+    ui.tabs.errors[id].hidden = !errors.some((p) => p === id || p.startsWith(`${id}.`));
+  }
 }
 
 /** A small text input bound to a field of an item. */
@@ -252,12 +317,32 @@ function removeButton(onRemove: () => void, label: string): HTMLButtonElement {
 function renderColumns(): void {
   if (!ui || !init) return;
   const comments = init.features.comments;
+  const canMove = init.mode === 'create' || init.features.reorder !== 'none';
   const head = el('div', `design-row design-head${comments ? ' with-comment' : ''}`);
   for (const h of ['Name', 'Type', 'Null', 'PK', 'Auto', 'Default', ...(comments ? ['Comment'] : []), '']) head.append(el('span', undefined, h));
+  const before = new Map((original?.columns ?? []).map((c) => [c.key, c]));
   const rows = design.columns.map((c: ColumnDesign, i) => {
-    const row = el('div', `design-row${comments ? ' with-comment' : ''}`);
+    const was = before.get(c.key);
+    const state = !original ? '' : !was ? ' new' : JSON.stringify({ ...was }) !== JSON.stringify({ ...c }) ? ' changed' : '';
+    const row = el('div', `design-row${comments ? ' with-comment' : ''}${state}${c.generated ? ' generated' : ''}`);
+    if (state) row.title = state.trim() === 'new' ? 'New column' : 'Changed';
+    if (c.name.trim()) lastNames.set(c.key, c.name.trim());
+    const nameInput = textInput(`columns.${i}.name`, c.name, 'Column name', (v) => {
+      // A rename follows the column into indexes and foreign keys.
+      c.name = v;
+      const old = lastNames.get(c.key);
+      const now = v.trim();
+      if (!now) return;
+      lastNames.set(c.key, now);
+      if (old && old !== now) {
+        for (const x of design.indexes) x.columns = x.columns.map((n) => (n === old ? now : n));
+        for (const f of design.foreignKeys) f.columns = f.columns.map((n) => (n === old ? now : n));
+        renderIndexes();
+        renderForeignKeys();
+      }
+    });
     row.append(
-      textInput(`columns.${i}.name`, c.name, 'Column name', (v) => (c.name = v)),
+      nameInput,
       textInput(`columns.${i}.type`, c.type, 'Type', (v) => (c.type = v), 'types'),
       checkbox(`columns.${i}.nullable`, c.nullable, 'Nullable', (v) => (c.nullable = v)),
       checkbox(`columns.${i}.primaryKey`, c.primaryKey, 'Primary key', (v) => {
@@ -269,11 +354,44 @@ function renderColumns(): void {
     );
     if (comments) row.append(textInput(`columns.${i}.comment`, c.comment, 'Comment', (v) => (c.comment = v)));
     const actions = moveButtons(design.columns, i);
+    if (!canMove) actions.querySelectorAll('button').forEach((b) => ((b as HTMLButtonElement).disabled = true));
     actions.append(removeButton(() => design.columns.splice(i, 1), `Remove column ${c.name}`));
     row.append(actions);
+    if (c.generated) {
+      // Generated columns are shown, never changed.
+      row.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button').forEach((x) => (x.disabled = true));
+      row.title = 'Generated column: shown for reference, not changed by the designer.';
+    }
     return row;
   });
-  ui.columns.replaceChildren(head, ...rows);
+  const hint = init.mode === 'alter' && !canMove ? [el('p', 'hint', 'This database adds new columns at the end and can’t move existing ones.')] : [];
+  ui.columns.replaceChildren(head, ...rows, ...hint);
+  renderRemoved();
+}
+
+/** Columns of the original table that were removed, with Undo. */
+function renderRemoved(): void {
+  if (!ui) return;
+  const kept = new Set(design.columns.map((c) => c.key));
+  const gone = (original?.columns ?? []).filter((c) => !kept.has(c.key));
+  if (!gone.length) {
+    ui.removed.replaceChildren();
+    return;
+  }
+  const items = gone.map((c) => {
+    const item = el('span', 'removed-item');
+    item.append(el('s', undefined, c.name));
+    const undo = el('button', 'link-button', 'Undo');
+    undo.type = 'button';
+    undo.addEventListener('click', () => {
+      const at = Math.min(original!.columns.findIndex((x) => x.key === c.key), design.columns.length);
+      design.columns.splice(at, 0, structuredClone(c));
+      changed(true);
+    });
+    item.append(undo);
+    return item;
+  });
+  ui.removed.replaceChildren(el('span', 'hint', 'Removed:'), ...items);
 }
 
 /** Toggle buttons for this table's columns, in the order they were picked (index and FK column lists). */
@@ -462,26 +580,49 @@ function markErrors(): void {
 function renderPreview(): void {
   if (!ui || !preview) return;
   const errors = Object.entries(preview.errors);
-  ui.sql.textContent = preview.statements.length ? preview.statements.join('\n\n') : '-- Fix the problems below to see the SQL.';
+  ui.sql.textContent = preview.statements.length
+    ? preview.statements.join('\n\n')
+    : errors.length
+      ? '-- Fix the problems below to see the SQL.'
+      : '-- No changes yet.';
+  const changeList = preview.changes.length ? [changesNote(preview.changes)] : [];
   const parts = [
+    ...changeList,
     ...errors.map(([path, message]) => note('alert', `${describe(path)}: ${message}`, 'error')),
     ...preview.notes.map((n) => note(n.tone === 'info' ? 'info' : 'alert', n.text, n.tone)),
   ];
   ui.notes.replaceChildren(...parts);
   markErrors();
+  updateTabs();
   updateButtons();
 }
 
+/** The list of changes (Design Table). */
+function changesNote(changes: string[]): HTMLElement {
+  const box = el('div', 'note info changes');
+  box.append(icon('structure'));
+  const list = el('ul');
+  list.append(...changes.map((c) => el('li', undefined, c)));
+  box.append(list);
+  return box;
+}
+
 function updateButtons(): void {
-  if (!ui) return;
+  if (!ui || !init) return;
   const ok = !!preview && !Object.keys(preview.errors).length && preview.statements.length > 0;
   ui.submit.button.disabled = running || created || !ok;
-  ui.submit.label.textContent = running ? 'Creating…' : created ? 'Created' : 'Create Table';
+  ui.reset.disabled = running;
+  if (init.mode === 'alter') {
+    const n = preview?.changes.length ?? 0;
+    ui.submit.label.textContent = running ? 'Applying…' : n ? `Apply ${n} Change${n === 1 ? '' : 's'}` : 'Apply Changes';
+  } else {
+    ui.submit.label.textContent = running ? 'Creating…' : created ? 'Created' : 'Create Table';
+  }
 }
 
 function create(): void {
-  if (!ui || ui.submit.button.disabled) return;
+  if (!ui || !init || ui.submit.button.disabled) return;
   clearStatus(ui.status);
   clearTimeout(timer);
-  vscode.postMessage({ type: 'create', design });
+  vscode.postMessage(init.mode === 'alter' ? { type: 'apply', design } : { type: 'create', design });
 }
