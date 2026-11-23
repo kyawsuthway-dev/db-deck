@@ -1,0 +1,189 @@
+// Query plans from each database's EXPLAIN output, as one tree the Explain panel draws, plus the check that
+// a statement is read-only (Explain Analyze runs it). No `vscode`, no I/O, so it's smoke-tested in plain Node.
+import type { DbType } from '../types';
+
+export interface PlanNode {
+  /** The operation: "Hash Join", "Table scan on o", "SEARCH c USING …". */
+  label: string;
+  /** Conditions, keys and other details, as "Name: value". */
+  details: string[];
+  /** Estimated total cost (the database's own units). */
+  cost?: number;
+  /** Estimated rows. */
+  rows?: number;
+  /** Explain Analyze: time spent, rows produced (per loop) and loops. */
+  actualMs?: number;
+  actualRows?: number;
+  loops?: number;
+  /** A gentle hint ("may help"); the panel shows it on the step. */
+  hint?: string;
+  children: PlanNode[];
+}
+
+/** Estimated rows above which a full scan gets a hint. */
+const LARGE = 1000;
+
+const num = (v: unknown): number | undefined => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : undefined;
+};
+
+/** PostgreSQL `EXPLAIN (FORMAT JSON …)`: `[{ "Plan": {…} }]`. */
+export function parsePostgresPlan(json: string): PlanNode {
+  const doc = JSON.parse(json) as { Plan: Record<string, unknown> }[];
+  const walk = (p: Record<string, unknown>): PlanNode => {
+    const type = String(p['Node Type'] ?? 'Step');
+    const join = p['Join Type'] ? ` (${String(p['Join Type'])})` : '';
+    const on = p['Relation Name'] ? ` on ${String(p['Relation Name'])}${p.Alias && p.Alias !== p['Relation Name'] ? ` ${String(p.Alias)}` : ''}` : '';
+    const using = p['Index Name'] ? ` using ${String(p['Index Name'])}` : '';
+    const details: string[] = [];
+    for (const key of ['Index Cond', 'Hash Cond', 'Merge Cond', 'Join Filter', 'Filter', 'Recheck Cond', 'Sort Key', 'Group Key', 'Strategy', 'Rows Removed by Filter', 'Shared Hit Blocks', 'Shared Read Blocks']) {
+      const v = p[key];
+      if (v !== undefined && v !== null && v !== '') details.push(`${key}: ${Array.isArray(v) ? v.join(', ') : String(v)}`);
+    }
+    return {
+      label: `${type}${join}${on}${using}`,
+      details,
+      cost: num(p['Total Cost']),
+      rows: num(p['Plan Rows']),
+      actualMs: num(p['Actual Total Time']),
+      actualRows: num(p['Actual Rows']),
+      loops: num(p['Actual Loops']),
+      children: Array.isArray(p.Plans) ? (p.Plans as Record<string, unknown>[]).map(walk) : [],
+    };
+  };
+  const root = walk(doc[0].Plan);
+  return hint(root, (n) => (/^Seq Scan on /.test(n.label) && (n.rows ?? 0) > LARGE ? 'Reads the whole table; an index on the filtered or joined columns may help.' : undefined));
+}
+
+/** MySQL 8 `EXPLAIN FORMAT=TREE` / `EXPLAIN ANALYZE`: indented `-> step  (cost=… rows=…) (actual time=a..b rows=… loops=…)`. */
+export function parseMysqlTree(text: string): PlanNode {
+  const root: PlanNode = { label: 'Query', details: [], children: [] };
+  const stack: { depth: number; node: PlanNode }[] = [{ depth: -1, node: root }];
+  for (const line of text.split('\n')) {
+    const m = /^(\s*)-> (.*)$/.exec(line);
+    if (!m) continue;
+    let rest = m[2];
+    const node: PlanNode = { label: '', details: [], children: [] };
+    const actual = /\s*\(actual time=([\d.e+-]+)\.\.([\d.e+-]+) rows=([\d.e+-]+) loops=(\d+)\)\s*$/.exec(rest);
+    if (actual) {
+      node.actualMs = num(actual[2]);
+      node.actualRows = num(actual[3]);
+      node.loops = num(actual[4]);
+      rest = rest.slice(0, actual.index);
+    }
+    const cost = /\s*\(cost=([\d.e+-]+) rows=([\d.e+-]+)\)\s*$/.exec(rest);
+    if (cost) {
+      node.cost = num(cost[1]);
+      node.rows = num(cost[2]);
+      rest = rest.slice(0, cost.index);
+    }
+    // "Filter: (cond)" → a label and a detail.
+    const colon = /^(Filter|Sort|Group aggregate|Covering index lookup|Index lookup)\b(.*?): (.+)$/.exec(rest);
+    if (colon && colon[1] === 'Filter') {
+      node.label = 'Filter';
+      node.details.push(`Condition: ${colon[3]}`);
+    } else {
+      node.label = rest.trim();
+    }
+    const depth = m[1].length;
+    while (stack.length > 1 && stack[stack.length - 1].depth >= depth) stack.pop();
+    stack[stack.length - 1].node.children.push(node);
+    stack.push({ depth, node });
+  }
+  const top = root.children.length === 1 ? root.children[0] : root;
+  return hint(top, (n) =>
+    /^Table scan on (?!<)/.test(n.label) && (n.rows ?? 0) > LARGE ? 'Reads the whole table; an index on the filtered or joined columns may help.' : undefined,
+  );
+}
+
+/** Tabular `EXPLAIN` (MariaDB, older MySQL): one step per row, in join order. */
+export function parseMysqlTable(columns: string[], rows: (string | null)[][]): PlanNode {
+  const col = (row: (string | null)[], name: string) => row[columns.findIndex((c) => c.toLowerCase() === name)] ?? null;
+  const children = rows.map((row): PlanNode => {
+    const type = col(row, 'type') ?? '';
+    const details = ['key', 'possible_keys', 'ref', 'filtered', 'extra']
+      .map((k) => [k, col(row, k)] as const)
+      .filter(([, v]) => v !== null && v !== '')
+      .map(([k, v]) => `${k === 'extra' ? 'Extra' : k.replace('_', ' ')}: ${v}`);
+    return { label: `${col(row, 'table') ?? '?'}: ${type || 'access'}${type === 'ALL' ? ' (full table scan)' : ''}`, details, rows: num(col(row, 'rows')), children: [] };
+  });
+  const root: PlanNode = { label: 'Query', details: [], children };
+  return hint(root, (n) => (/\(full table scan\)$/.test(n.label) && (n.rows ?? 0) > LARGE ? 'Reads the whole table; an index on the filtered or joined columns may help.' : undefined));
+}
+
+/** SQLite `EXPLAIN QUERY PLAN` rows: id, parent, notused, detail. */
+export function parseSqlitePlan(rows: (string | null)[][]): PlanNode {
+  const root: PlanNode = { label: 'Query', details: [], children: [] };
+  const byId = new Map<string, PlanNode>([['0', root]]);
+  for (const [id, parent, , detail] of rows) {
+    const node: PlanNode = { label: String(detail ?? ''), details: [], children: [] };
+    byId.set(String(id), node);
+    (byId.get(String(parent)) ?? root).children.push(node);
+  }
+  const top = root.children.length === 1 ? root.children[0] : root;
+  // SQLite gives no row estimates: a SCAN (not SEARCH) of a table may be fine for small tables.
+  return hint(top, (n) => (/^SCAN (?!CONSTANT|SUBQUERY)/.test(n.label) && !/COVERING INDEX|USING INDEX/.test(n.label) ? 'Reads the whole table; if it’s large, an index on the filtered or joined columns may help.' : undefined));
+}
+
+/** Adds `make`'s hint to each step, and (Explain Analyze) a hint where estimates were far from actual rows. */
+function hint(root: PlanNode, make: (n: PlanNode) => string | undefined): PlanNode {
+  const visit = (n: PlanNode) => {
+    const estimate = n.rows;
+    const actual = n.actualRows !== undefined ? n.actualRows * (n.loops ?? 1) : undefined;
+    n.hint = make(n);
+    if (!n.hint && estimate !== undefined && actual !== undefined && Math.max(estimate, actual) >= 10 && Math.max(estimate, actual) > 10 * Math.max(1, Math.min(estimate, actual))) {
+      n.hint = `The estimate (${estimate.toLocaleString()} rows) was far from the actual ${actual.toLocaleString()}: the table’s statistics may be out of date.`;
+    }
+    n.children.forEach(visit);
+  };
+  visit(root);
+  return root;
+}
+
+/** The statement without strings, quoted names and comments, so keywords inside them don't count. */
+function codeOnly(sql: string, dialect: DbType): string {
+  let out = '';
+  for (let i = 0; i < sql.length; ) {
+    const c = sql[i];
+    const two = sql.slice(i, i + 2);
+    if (two === '--' || (c === '#' && dialect === 'mysql')) {
+      const end = sql.indexOf('\n', i);
+      i = end === -1 ? sql.length : end;
+    } else if (two === '/*') {
+      const end = sql.indexOf('*/', i + 2);
+      i = end === -1 ? sql.length : end + 2;
+    } else if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1;
+      while (j < sql.length && !(sql[j] === c && sql[j + 1] !== c)) j += sql[j] === c || (sql[j] === '\\' && dialect === 'mysql') ? 2 : 1;
+      i = j + 1;
+      out += ' ';
+    } else if (c === '$' && dialect === 'postgres' && /^\$[A-Za-z_]*\$/.test(sql.slice(i))) {
+      const tag = /^\$[A-Za-z_]*\$/.exec(sql.slice(i))![0];
+      const end = sql.indexOf(tag, i + tag.length);
+      i = end === -1 ? sql.length : end + tag.length;
+      out += ' ';
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether Explain Analyze may run a statement: it executes it. Only SELECT / VALUES / TABLE, or a WITH that
+ * changes nothing; SELECT … INTO (creates a table) isn't. Returns the reason when not.
+ */
+export function readOnlyStatement(sql: string, dialect: DbType): { ok: true } | { ok: false; reason: string } {
+  const code = codeOnly(sql, dialect).trim().replace(/;\s*$/, '');
+  const first = /^\(*\s*([A-Za-z]+)/.exec(code)?.[1]?.toUpperCase();
+  if (!first || !['SELECT', 'VALUES', 'TABLE', 'WITH'].includes(first)) {
+    return { ok: false, reason: `Explain Analyze runs the statement, so it’s only offered for reading statements (SELECT, WITH, VALUES, TABLE), not ${first ?? 'this'}.` };
+  }
+  if (/\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|DROP|ALTER)\b/i.test(code)) {
+    return { ok: false, reason: 'Explain Analyze runs the statement, and this one changes data (it contains INSERT, UPDATE, DELETE or similar).' };
+  }
+  if (first !== 'WITH' && /\bINTO\b/i.test(code)) return { ok: false, reason: 'Explain Analyze runs the statement, and SELECT … INTO writes.' };
+  return { ok: true };
+}

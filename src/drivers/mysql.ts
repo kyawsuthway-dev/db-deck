@@ -2,6 +2,7 @@ import mysql from 'mysql2/promise';
 import type { TableDesign } from '../design/model';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
 import type { DesignChange } from '../design/diff';
+import { parseMysqlTable, parseMysqlTree } from '../tools/plan';
 import { checkClause, columnDefinition, createTableStatements, foreignKeyClause, type DdlDialect } from './ddl';
 import type {
   Cell,
@@ -13,6 +14,7 @@ import type {
   DumpCell,
   DumpPlan,
   DumpTable,
+  ExplainResult,
   FilterOperator,
   ImportOptions,
   ImportResult,
@@ -21,6 +23,8 @@ import type {
   RowChange,
   ScriptOptions,
   ScriptResult,
+  ServerItem,
+  ServerProcess,
   StatementResult,
   StreamOpener,
   TableInfo,
@@ -35,6 +39,8 @@ import {
   ChangeConflict,
   countFrom,
   dumpInserts,
+  formatBytes,
+  formatDuration,
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
@@ -560,6 +566,104 @@ export class MysqlDriver implements Driver {
 
   dropSql(object: TableInfo): string {
     return `DROP ${object.kind === 'view' ? 'VIEW' : 'TABLE'} ${qualifiedName(object)};`;
+  }
+
+  /** MariaDB answers VERSION() with "…-MariaDB…"; it has no FORMAT=TREE or EXPLAIN ANALYZE. */
+  private async isMariaDb(conn: mysql.Connection): Promise<boolean> {
+    const [[row]] = await conn.query<mysql.RowDataPacket[]>('SELECT VERSION() AS v');
+    return /mariadb/i.test(String(row?.v ?? ''));
+  }
+
+  async explain(sql: string, analyze: boolean): Promise<ExplainResult> {
+    const statement = sql.trim().replace(/;\s*$/, '');
+    const conn = await this.getConnection();
+    const maria = await this.isMariaDb(conn);
+    const tabular = async (note?: string): Promise<ExplainResult> => {
+      const [rows, fields] = await conn.query({ sql: `EXPLAIN ${statement}`, rowsAsArray: true });
+      const columns = (fields ?? []).map((f) => f.name);
+      const cells = (rows as unknown[][]).map((r) => r.map((v) => (v === null || v === undefined ? null : String(v))));
+      const raw = [columns.join('\t'), ...cells.map((r) => r.map((v) => v ?? 'NULL').join('\t'))].join('\n');
+      return { plan: parseMysqlTable(columns, cells), raw, note };
+    };
+    if (analyze) {
+      if (maria) throw new Error('MariaDB has no EXPLAIN ANALYZE (it uses ANALYZE <statement>, which DB Deck doesn’t support yet). Use Explain.');
+      // Runs the statement: a read-only transaction rejects writes, and it's always rolled back, on its own connection.
+      const own = await this.createConnection();
+      own.on('error', () => {});
+      try {
+        await own.query('START TRANSACTION READ ONLY');
+        const [rows] = await own.query({ sql: `EXPLAIN ANALYZE ${statement}`, rowsAsArray: true });
+        const raw = String((rows as unknown[][])[0]?.[0] ?? '');
+        return { plan: parseMysqlTree(raw), raw };
+      } finally {
+        await own.query('ROLLBACK').catch(() => {});
+        await own.end().catch(() => {});
+      }
+    }
+    if (maria) return tabular('MariaDB shows the plan as a table (no tree format).');
+    try {
+      const [rows] = await conn.query({ sql: `EXPLAIN FORMAT=TREE ${statement}`, rowsAsArray: true });
+      const raw = String((rows as unknown[][])[0]?.[0] ?? '');
+      return { plan: parseMysqlTree(raw), raw };
+    } catch {
+      // MySQL before 8.0.16 has no tree format.
+      return tabular('This server shows the plan as a table (no tree format).');
+    }
+  }
+
+  async serverStatus(): Promise<ServerItem[]> {
+    const conn = await this.getConnection();
+    const [[v]] = await conn.query<mysql.RowDataPacket[]>('SELECT VERSION() AS v, DATABASE() AS db, @@max_connections AS maxc');
+    const [statusRows] = await conn.query<mysql.RowDataPacket[]>(
+      `SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime', 'Threads_connected', 'Questions', 'Slow_queries',
+        'Innodb_buffer_pool_read_requests', 'Innodb_buffer_pool_reads')`,
+    );
+    const st = new Map(statusRows.map((r) => [String(r.Variable_name), Number(r.Value)]));
+    const [[size]] = await conn.query<mysql.RowDataPacket[]>(
+      'SELECT SUM(DATA_LENGTH + INDEX_LENGTH) AS b FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()',
+    );
+    const uptime = st.get('Uptime') ?? 0;
+    const requests = st.get('Innodb_buffer_pool_read_requests') ?? 0;
+    const reads = st.get('Innodb_buffer_pool_reads') ?? 0;
+    return [
+      { label: 'Version', value: String(v.v) },
+      { label: 'Uptime', value: formatDuration(uptime) },
+      { label: 'Database size', value: v.db ? formatBytes(Number(size?.b ?? 0)) : 'n/a', detail: v.db ? String(v.db) : 'No database selected' },
+      { label: 'Connections', value: `${st.get('Threads_connected') ?? '?'} of ${v.maxc}` },
+      { label: 'Queries per second', value: uptime ? ((st.get('Questions') ?? 0) / uptime).toFixed(1) : 'n/a', detail: 'Average since the server started' },
+      { label: 'Buffer pool hit ratio', value: requests ? `${(100 * (1 - reads / requests)).toFixed(2)}%` : 'n/a', detail: 'InnoDB reads served from memory' },
+      { label: 'Slow queries', value: (st.get('Slow_queries') ?? 0).toLocaleString() },
+    ];
+  }
+
+  async serverSettings(): Promise<ServerItem[]> {
+    const [rows] = await (await this.getConnection()).query<mysql.RowDataPacket[]>('SHOW GLOBAL VARIABLES');
+    return rows.map((r) => ({ label: String(r.Variable_name), value: String(r.Value ?? '') }));
+  }
+
+  async listProcesses(): Promise<ServerProcess[]> {
+    const conn = await this.getConnection();
+    const [[me]] = await conn.query<mysql.RowDataPacket[]>('SELECT CONNECTION_ID() AS id');
+    const [rows] = await conn.query<mysql.RowDataPacket[]>('SHOW FULL PROCESSLIST');
+    return rows
+      .filter((r) => String(r.Command) !== 'Daemon')
+      .map((r) => ({
+        id: String(r.Id),
+        user: String(r.User ?? ''),
+        database: String(r.db ?? ''),
+        client: String(r.Host ?? ''),
+        state: [r.Command, r.State].filter((x) => x !== null && x !== undefined && x !== '').join(' · '),
+        seconds: r.Time === null || r.Time === undefined ? undefined : Number(r.Time),
+        query: String(r.Info ?? ''),
+        // MySQL has no application name in the process list: DB Deck's long-lived connection is this one.
+        own: String(r.Id) === String(me?.id),
+      }));
+  }
+
+  async endProcess(id: string, how: 'cancel' | 'terminate'): Promise<void> {
+    if (!/^\d+$/.test(id)) throw new Error('Not a session id.');
+    // KILL takes no parameters; the id is checked to be digits above.
+    await (await this.getConnection()).query(how === 'cancel' ? `KILL QUERY ${id}` : `KILL ${id}`);
   }
 
   async referencingTables(table: TableInfo): Promise<string[]> {

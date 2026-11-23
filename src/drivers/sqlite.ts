@@ -4,6 +4,7 @@ import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import type { TableDesign } from '../design/model';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
 import type { DesignChange } from '../design/diff';
+import { parseSqlitePlan } from '../tools/plan';
 import { columnDefinition, createIndexStatement, createTableStatements, type DdlDialect } from './ddl';
 import type {
   Cell,
@@ -14,6 +15,7 @@ import type {
   DumpCell,
   DumpPlan,
   DumpTable,
+  ExplainResult,
   FilterOperator,
   ImportOptions,
   ImportResult,
@@ -22,6 +24,8 @@ import type {
   RowChange,
   ScriptOptions,
   ScriptResult,
+  ServerItem,
+  ServerProcess,
   StatementResult,
   TableInfo,
   TablePage,
@@ -35,6 +39,7 @@ import {
   ChangeConflict,
   countFrom,
   dumpInserts,
+  formatBytes,
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
@@ -395,6 +400,53 @@ export class SqliteDriver implements Driver {
 
   dropSql(object: TableInfo): string {
     return `DROP ${object.kind === 'view' ? 'VIEW' : 'TABLE'} ${quoteIdent(object.name, '"')};`;
+  }
+
+  async explain(sql: string, analyze: boolean): Promise<ExplainResult> {
+    if (analyze) throw new Error('SQLite has no EXPLAIN ANALYZE. Use Explain to see the plan.');
+    const db = await this.database();
+    const { rows } = readStatement(db, `EXPLAIN QUERY PLAN ${sql.trim().replace(/;\s*$/, '')}`);
+    const cells = rows.map((r) => r.map((v) => (v === null || v === undefined ? null : String(v))));
+    const raw = cells.map((r) => `${r[0]}\t${r[1]}\t${r[3]}`).join('\n');
+    return { plan: parseSqlitePlan(cells), raw: `id\tparent\tdetail\n${raw}` };
+  }
+
+  async serverStatus(): Promise<ServerItem[]> {
+    const db = await this.database();
+    const one = (sql: string) => {
+      const { rows } = readStatement(db, sql);
+      return rows[0]?.[0] === null || rows[0]?.[0] === undefined ? '' : String(rows[0][0]);
+    };
+    const pages = Number(one('PRAGMA page_count'));
+    const pageSize = Number(one('PRAGMA page_size'));
+    const stat = fs.statSync(this.filePath);
+    return [
+      { label: 'SQLite version', value: one('SELECT sqlite_version()'), detail: 'sql.js (WebAssembly)' },
+      { label: 'File size', value: formatBytes(stat.size), detail: this.filePath },
+      { label: 'Pages', value: `${pages.toLocaleString()} × ${pageSize.toLocaleString()} bytes`, detail: `${Number(one('PRAGMA freelist_count')).toLocaleString()} free` },
+      { label: 'Journal mode', value: one('PRAGMA journal_mode') },
+      { label: 'Encoding', value: one('PRAGMA encoding') },
+      { label: 'Foreign keys enforced', value: one('PRAGMA foreign_keys') === '1' ? 'Yes' : 'No', detail: 'In DB Deck’s copy of the file' },
+      { label: 'Auto-vacuum', value: ['None', 'Full', 'Incremental'][Number(one('PRAGMA auto_vacuum'))] ?? one('PRAGMA auto_vacuum') },
+      { label: 'User version', value: one('PRAGMA user_version') },
+    ];
+  }
+
+  async serverSettings(): Promise<ServerItem[]> {
+    const db = await this.database();
+    const names = ['application_id', 'auto_vacuum', 'automatic_index', 'cache_size', 'case_sensitive_like', 'encoding', 'foreign_keys', 'journal_mode', 'locking_mode', 'page_size', 'recursive_triggers', 'secure_delete', 'synchronous', 'temp_store', 'user_version'];
+    return names.map((name) => {
+      const { rows } = readStatement(db, `PRAGMA ${name}`);
+      return { label: name, value: rows[0]?.[0] === null || rows[0]?.[0] === undefined ? '' : String(rows[0][0]) };
+    });
+  }
+
+  async listProcesses(): Promise<ServerProcess[]> {
+    return []; // a file, not a server: no other sessions to see
+  }
+
+  async endProcess(): Promise<void> {
+    throw new Error('SQLite has no server sessions.');
   }
 
   async referencingTables(table: TableInfo): Promise<string[]> {

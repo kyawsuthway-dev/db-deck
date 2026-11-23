@@ -484,3 +484,23 @@ export async function importRowsWith(rows: AsyncIterable<ImportRow>, options: Im
 export function importBatchRows(maxParameters: number, columns: number): number {
   return Math.max(1, Math.min(1_000, Math.floor(maxParameters / Math.max(1, columns))));
 }
+
+/** "12.3 MB" for the Server panel. */
+export function formatBytes(bytes: number): string {
+  const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+  let n = bytes;
+  let u = 0;
+  while (n >= 1024 && u < units.length - 1) {
+    n /= 1024;
+    u++;
+  }
+  return u ? `${n.toFixed(1)} ${units[u]}` : `${n} bytes`;
+}
+
+/** "3d 4h 12m" for the Server panel. */
+export function formatDuration(seconds: number): string {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m` : `${m}m ${Math.floor(seconds % 60)}s`;
+}

@@ -144,20 +144,29 @@ export class QueryController implements vscode.Disposable {
   }
 
   private async runEditor(scope: 'cursor' | 'all'): Promise<void> {
+    const picked = await this.editorSql(scope);
+    if (picked) await this.runSql(picked.connectionId, picked.sql);
+  }
+
+  /**
+   * The SQL the active editor would run (Run Query, Explain): the whole editor, the selection, or the
+   * statement at the cursor; asks for a connection if the editor has none. Says why when there's nothing.
+   */
+  async editorSql(scope: 'cursor' | 'all' = 'cursor'): Promise<{ connectionId: string; sql: string } | undefined> {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       void vscode.window.showInformationMessage('Open a SQL editor to run a query (DB Deck: New Query).');
-      return;
+      return undefined;
     }
     const doc = editor.document;
     if (!doc.getText().trim()) {
       void vscode.window.showInformationMessage('There is no SQL to run.');
-      return;
+      return undefined;
     }
     let connectionId = this.connectionFor(doc);
     if (!connectionId) {
       connectionId = await this.pickConnection();
-      if (!connectionId) return;
+      if (!connectionId) return undefined;
       await this.setConnection(doc, connectionId);
     }
     let sql: string;
@@ -172,9 +181,20 @@ export class QueryController implements vscode.Disposable {
     }
     if (!sql.trim()) {
       void vscode.window.showInformationMessage('There is no SQL to run.');
-      return;
+      return undefined;
     }
-    await this.runSql(connectionId, sql);
+    return { connectionId, sql };
+  }
+
+  /** The statement at `offset` in an open SQL document, read now (the Explain CodeLens). */
+  statementIn(uri: unknown, offset: unknown): { connectionId: string; sql: string } | undefined {
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri);
+    if (!doc || typeof offset !== 'number' || !Number.isSafeInteger(offset)) return undefined;
+    const connectionId = this.connectionFor(doc);
+    if (!connectionId) return undefined;
+    const text = doc.getText();
+    const statement = statementAt(text, splitSqlRanges(text, this.manager.get(connectionId)!.type), offset);
+    return statement ? { connectionId, sql: statement.text } : undefined;
   }
 
   /**

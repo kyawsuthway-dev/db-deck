@@ -16,6 +16,8 @@ import { HistoryNode, HistoryTree } from './tree/HistoryTree';
 import { SavedQueriesTree, SavedQueryNode } from './tree/SavedQueriesTree';
 import { ConnectionForms } from './views/ConnectionForm';
 import { DangerForms } from './views/DangerForm';
+import { Explainer } from './views/ExplainPanel';
+import { ServerPanels } from './views/ServerPanel';
 import { DumpForms } from './views/DumpForm';
 import { ImportForms } from './views/ImportForm';
 import { RunScriptForms } from './views/RunScriptForm';
@@ -51,6 +53,8 @@ export function activate(context: vscode.ExtensionContext) {
     await objects.reveal(id, { kind: 'table', name: table.name, schema: table.schema });
   });
   const dangers = new DangerForms(context.extensionUri, manager, schemaChanged);
+  const explainer = new Explainer(context.extensionUri, manager, queries);
+  const servers = new ServerPanels(context.extensionUri, manager);
 
   const command = (id: string, handler: (...args: any[]) => unknown) =>
     vscode.commands.registerCommand(`dbDeck.${id}`, handler);
@@ -64,6 +68,8 @@ export function activate(context: vscode.ExtensionContext) {
     imports,
     designs,
     dangers,
+    explainer,
+    servers,
     scripts,
     queries,
     exporter,
@@ -185,6 +191,11 @@ export function activate(context: vscode.ExtensionContext) {
     command('runAll', () => queries.runAll()),
     // ▶ Run CodeLens: the document and the statement's offset (see SqlEditor).
     command('runStatement', (uri?: unknown, offset?: unknown) => queries.runStatementAt(uri, offset)),
+    // Quick tools.
+    command('explain', () => explainer.explain(false)),
+    command('explainAnalyze', () => explainer.explain(true)),
+    command('explainStatement', (uri?: unknown, offset?: unknown) => uri !== undefined && explainer.explain(false, uri, offset)),
+    command('serverPanel', (node?: ConnectionNode) => node && servers.open(node.config.id)),
     command('selectConnection', () => queries.selectConnectionForActiveEditor()),
 
     // Connections tree objects.

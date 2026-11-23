@@ -76,6 +76,10 @@
       { "command": "dbDeck.runQuery", "title": "Run Query", "category": "DB Deck", "icon": "$(play)" },
       { "command": "dbDeck.runAll", "title": "Run All", "category": "DB Deck", "icon": "$(run-all)" },
       { "command": "dbDeck.runStatement", "title": "Run Statement", "category": "DB Deck" },
+      { "command": "dbDeck.explain", "title": "Explain", "category": "DB Deck" },
+      { "command": "dbDeck.explainAnalyze", "title": "Explain Analyze", "category": "DB Deck" },
+      { "command": "dbDeck.explainStatement", "title": "Explain Statement", "category": "DB Deck" },
+      { "command": "dbDeck.serverPanel", "title": "Server…", "category": "DB Deck" },
       { "command": "dbDeck.showDdl", "title": "Show DDL", "category": "DB Deck", "icon": "$(code)" },
       { "command": "dbDeck.generateSelect", "title": "SELECT", "category": "DB Deck" },
       { "command": "dbDeck.generateInsert", "title": "INSERT", "category": "DB Deck" },
@@ -143,6 +147,7 @@
         { "command": "dbDeck.refresh", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "2_manage@1" },
         { "command": "dbDeck.disconnect", "when": "view == dbDeck.connections && viewItem =~ /^connection\\.connected/", "group": "2_manage@2" },
         { "command": "dbDeck.switchDatabase", "when": "view == dbDeck.connections && viewItem =~ /^connection.*\\.server$/", "group": "2_manage@3" },
+        { "command": "dbDeck.serverPanel", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "2_manage@3" },
         { "command": "dbDeck.editConnection", "when": "view == dbDeck.connections && viewItem =~ /^connection(\\.connected)?(\\.server)?$/", "group": "2_manage@4" },
         { "command": "dbDeck.moveToFolder", "when": "view == dbDeck.connections && viewItem =~ /^connection(\\.connected)?(\\.server)?$/", "group": "2_manage@5" },
         { "command": "dbDeck.renameFolder", "when": "view == dbDeck.connections && viewItem == folder", "group": "2_manage@1" },
@@ -190,6 +195,8 @@
       ],
       "editor/context": [
         { "command": "dbDeck.saveQuery", "when": "editorLangId == sql", "group": "1_dbDeck@1" },
+        { "command": "dbDeck.explain", "when": "editorLangId == sql", "group": "1_dbDeck@3" },
+        { "command": "dbDeck.explainAnalyze", "when": "editorLangId == sql", "group": "1_dbDeck@4" },
         { "command": "dbDeck.runSqlFile", "when": "editorLangId == sql && resourceScheme == file", "group": "1_dbDeck@2" }
       ],
       "explorer/context": [
@@ -209,6 +216,8 @@
       "commandPalette": [
         { "command": "dbDeck.previewTable", "when": "false" },
         { "command": "dbDeck.runStatement", "when": "false" },
+        { "command": "dbDeck.explainStatement", "when": "false" },
+        { "command": "dbDeck.serverPanel", "when": "false" },
         { "command": "dbDeck.showDdl", "when": "false" },
         { "command": "dbDeck.generateSelect", "when": "false" },
         { "command": "dbDeck.generateInsert", "when": "false" },

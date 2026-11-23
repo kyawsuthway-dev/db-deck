@@ -2,6 +2,7 @@ import { Client, type CustomTypesConfig, type QueryResult } from 'pg';
 import type { TableDesign } from '../design/model';
 import { splitSql } from '../query/splitSql';
 import type { DesignChange } from '../design/diff';
+import { parsePostgresPlan } from '../tools/plan';
 import { checkClause, columnDefinition, createIndexStatement, createTableStatements, foreignKeyClause, type DdlDialect } from './ddl';
 import type {
   Cell,
@@ -13,6 +14,7 @@ import type {
   DumpCell,
   DumpPlan,
   DumpTable,
+  ExplainResult,
   FilterOperator,
   ImportOptions,
   ImportResult,
@@ -21,6 +23,8 @@ import type {
   RowChange,
   ScriptOptions,
   ScriptResult,
+  ServerItem,
+  ServerProcess,
   SslMode,
   StatementResult,
   StreamOpener,
@@ -679,6 +683,89 @@ export class PostgresDriver implements Driver {
 
   dropSql(object: TableInfo): string {
     return `DROP ${object.kind === 'view' ? 'VIEW' : 'TABLE'} ${qualifiedName(object)};`;
+  }
+
+  async explain(sql: string, analyze: boolean): Promise<ExplainResult> {
+    const statement = sql.trim().replace(/;\s*$/, '');
+    if (!analyze) {
+      const { rows } = await (await this.getClient()).query<{ 'QUERY PLAN': string }>(`EXPLAIN (FORMAT JSON) ${statement}`);
+      const raw = String(rows[0]['QUERY PLAN']);
+      return { plan: parsePostgresPlan(raw), raw };
+    }
+    // Explain Analyze runs the statement: a read-only transaction rejects any write (even from a function),
+    // and it's always rolled back. Its own connection keeps the editor's session out of it.
+    const client = await this.newClient('DB Deck (explain)');
+    client.on('error', () => {});
+    await client.connect();
+    try {
+      await client.query('BEGIN READ ONLY');
+      const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS) ${statement}`);
+      const raw = String(rows[0]['QUERY PLAN']);
+      return { plan: parsePostgresPlan(raw), raw };
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      await client.end().catch(() => {});
+    }
+  }
+
+  async serverStatus(): Promise<ServerItem[]> {
+    const client = await this.getClient();
+    const { rows } = await client.query<Record<string, string>>(
+      `SELECT version() AS version,
+              date_trunc('second', now() - pg_postmaster_start_time())::text AS uptime,
+              pg_size_pretty(pg_database_size(current_database())) AS size,
+              current_database() AS db,
+              (SELECT count(*) FROM pg_stat_activity)::text AS connections,
+              current_setting('max_connections') AS max_connections,
+              (SELECT round(100.0 * blks_hit / nullif(blks_hit + blks_read, 0), 2)::text FROM pg_stat_database WHERE datname = current_database()) AS hit,
+              (SELECT xact_commit::text FROM pg_stat_database WHERE datname = current_database()) AS commits,
+              (SELECT xact_rollback::text FROM pg_stat_database WHERE datname = current_database()) AS rollbacks,
+              (SELECT deadlocks::text FROM pg_stat_database WHERE datname = current_database()) AS deadlocks`,
+    );
+    const r = rows[0];
+    return [
+      { label: 'Version', value: r.version.replace(/ on .*$/, ''), detail: r.version },
+      { label: 'Uptime', value: r.uptime },
+      { label: 'Database size', value: r.size, detail: r.db },
+      { label: 'Connections', value: `${r.connections} of ${r.max_connections}` },
+      { label: 'Cache hit ratio', value: r.hit ? `${r.hit}%` : 'n/a', detail: 'Blocks read from memory vs disk, this database' },
+      { label: 'Transactions', value: `${Number(r.commits).toLocaleString()} committed`, detail: `${Number(r.rollbacks).toLocaleString()} rolled back` },
+      { label: 'Deadlocks', value: Number(r.deadlocks).toLocaleString() },
+    ];
+  }
+
+  async serverSettings(): Promise<ServerItem[]> {
+    const { rows } = await (await this.getClient()).query<{ name: string; setting: string; unit: string | null; short_desc: string; source: string }>(
+      'SELECT name, setting, unit, short_desc, source FROM pg_settings ORDER BY name',
+    );
+    return rows.map((r) => ({ label: r.name, value: r.unit ? `${r.setting} ${r.unit}` : r.setting, detail: `${r.short_desc} (${r.source})` }));
+  }
+
+  async listProcesses(): Promise<ServerProcess[]> {
+    const { rows } = await (await this.getClient()).query<Record<string, string | null>>(
+      `SELECT pid::text, usename, datname, coalesce(client_addr::text, 'local') AS client, coalesce(state, backend_type) AS state,
+              extract(epoch FROM now() - coalesce(query_start, backend_start))::bigint::text AS seconds, query, application_name
+         FROM pg_stat_activity WHERE backend_type = 'client backend' ORDER BY query_start NULLS LAST`,
+    );
+    return rows.map((r) => ({
+      id: String(r.pid),
+      user: r.usename ?? '',
+      database: r.datname ?? '',
+      client: r.client ?? '',
+      state: r.state ?? '',
+      seconds: r.seconds === null ? undefined : Number(r.seconds),
+      query: r.query ?? '',
+      own: /^DB Deck/.test(r.application_name ?? ''),
+    }));
+  }
+
+  async endProcess(id: string, how: 'cancel' | 'terminate'): Promise<void> {
+    if (!/^\d+$/.test(id)) throw new Error('Not a session id.');
+    const { rows } = await (await this.getClient()).query<{ ok: string }>(
+      how === 'cancel' ? 'SELECT pg_cancel_backend($1::int)::text AS ok' : 'SELECT pg_terminate_backend($1::int)::text AS ok',
+      [id],
+    );
+    if (rows[0]?.ok !== 'true') throw new Error(`PostgreSQL didn’t ${how === 'cancel' ? 'cancel the query' : 'end the session'} (it may have finished, or you lack the privilege).`);
   }
 
   async referencingTables(table: TableInfo): Promise<string[]> {
