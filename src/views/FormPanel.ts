@@ -15,6 +15,8 @@ export abstract class FormPanel<Message> {
     viewType: string,
     title: string,
     entry: string,
+    /** `blobImages`: also allow `blob:` images, so the page can draw its own SVG into a canvas (ER diagram PNG export). */
+    options: { blobImages?: boolean } = {},
   ) {
     const distUri = vscode.Uri.joinPath(extensionUri, 'dist', 'webview');
     const logosUri = vscode.Uri.joinPath(extensionUri, 'media', 'logos');
@@ -26,12 +28,13 @@ export abstract class FormPanel<Message> {
     const webview = this.panel.webview;
     const script = webview.asWebviewUri(vscode.Uri.joinPath(distUri, `${entry}.js`));
     const style = webview.asWebviewUri(vscode.Uri.joinPath(distUri, `${entry}.css`));
+    const images = `${webview.cspSource}${options.blobImages ? ' blob:' : ''}`;
     // No inline code; the page inserts every value with textContent.
     webview.html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource}; script-src ${webview.cspSource};">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${images}; style-src ${webview.cspSource}; script-src ${webview.cspSource};">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="${style}">
   <script src="${script}" defer></script>

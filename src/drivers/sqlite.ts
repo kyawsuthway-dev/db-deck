@@ -22,6 +22,7 @@ import type {
   ImportRow,
   IndexInfo,
   RowChange,
+  SchemaDiagram,
   ScriptOptions,
   ScriptResult,
   ServerItem,
@@ -54,6 +55,7 @@ import {
   standardLiteral,
   toDumpCell,
   type WriteDialect,
+  assembleDiagram,
 } from './common';
 
 /** How SQLite writes table DDL (drivers/ddl.ts). */
@@ -447,6 +449,45 @@ export class SqliteDriver implements Driver {
 
   async endProcess(): Promise<void> {
     throw new Error('SQLite has no server sessions.');
+  }
+
+  async schemaDiagram(): Promise<SchemaDiagram> {
+    const db = await this.database();
+    const all = (sql: string) => db.exec(sql)[0]?.values ?? [];
+    const tables = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'";
+    const cols = all(`SELECT m.name, p.name, p.type, p."notnull", p.pk FROM (${tables}) m JOIN pragma_table_info(m.name) p ORDER BY m.name, p.cid`);
+    // The primary key from table_info (in pk order); unique indexes on plain columns from index_list / index_info.
+    const pk = cols.filter((c) => Number(c[4]) > 0).sort((a, b) => String(a[0]).localeCompare(String(b[0])) || Number(a[4]) - Number(b[4]));
+    const uniques = all(
+      `SELECT m.name, l.name, i.name FROM (${tables}) m JOIN pragma_index_list(m.name) l JOIN pragma_index_info(l.name) i
+        WHERE l."unique" = 1 AND l.partial = 0 AND l.origin <> 'pk'
+          AND NOT EXISTS (SELECT 1 FROM pragma_index_info(l.name) x WHERE x.cid < 0)
+        ORDER BY m.name, l.name, i.seqno`,
+    );
+    const fks = all(`SELECT m.name, f.id, f."from", f."table", f."to" FROM (${tables}) m JOIN pragma_foreign_key_list(m.name) f ORDER BY m.name, f.id, f.seq`);
+    // REFERENCES parent without columns means the parent's primary key.
+    const pkOf = (table: string) => pk.filter((c) => String(c[0]).toLowerCase() === table.toLowerCase()).map((c) => String(c[1]));
+    const seen = new Map<string, number>();
+    return assembleDiagram(
+      cols.map((c) => ({ table: String(c[0]), name: String(c[1]), type: String(c[2] ?? ''), nullable: Number(c[3]) === 0 && Number(c[4]) === 0 })),
+      [
+        ...pk.map((c) => ({ table: String(c[0]), key: '', primary: true, column: String(c[1]) })),
+        ...uniques.map((u) => ({ table: String(u[0]), key: String(u[1]), primary: false, column: String(u[2]) })),
+      ],
+      fks.map((f) => {
+        const id = `${String(f[0])}\u0000${String(f[1])}`;
+        const index = seen.get(id) ?? 0;
+        seen.set(id, index + 1);
+        return {
+          table: String(f[0]),
+          // SQLite foreign keys have no names: number them per table.
+          name: `fk_${String(f[0])}_${Number(f[1]) + 1}`,
+          column: String(f[2]),
+          refTable: String(f[3]),
+          refColumn: f[4] === null || f[4] === undefined ? (pkOf(String(f[3]))[index] ?? '') : String(f[4]),
+        };
+      }),
+    );
   }
 
   async referencingTables(table: TableInfo): Promise<string[]> {

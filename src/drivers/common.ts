@@ -1,5 +1,5 @@
 import { splitSql } from '../query/splitSql';
-import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, DumpCell, FilterOperator, ImportOptions, ImportResult, ImportRow, RowChange, ScriptOptions, ScriptResult, StatementResult, TablePage } from '../types';
+import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, DiagramForeignKey, DiagramTable, DumpCell, FilterOperator, ImportOptions, ImportResult, ImportRow, RowChange, SchemaDiagram, ScriptOptions, ScriptResult, StatementResult, TablePage } from '../types';
 
 /** Rows kept per statement; the grid shows a "truncated" note beyond this. */
 export const MAX_ROWS = 10_000;
@@ -503,4 +503,41 @@ export function formatDuration(seconds: number): string {
   const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   return d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m` : `${m}m ${Math.floor(seconds % 60)}s`;
+}
+
+/** Catalog rows, in column / key / FK order, as a `SchemaDiagram` (shared by the drivers' `schemaDiagram`). */
+export function assembleDiagram(
+  columns: { table: string; name: string; type: string; nullable: boolean }[],
+  keys: { table: string; key: string; primary: boolean; column: string }[],
+  fks: { table: string; name: string; column: string; refSchema?: string; refTable: string; refColumn: string }[],
+): SchemaDiagram {
+  const tables = new Map<string, DiagramTable>();
+  for (const c of columns) {
+    const t = tables.get(c.table) ?? { name: c.table, columns: [], uniques: [] };
+    t.columns.push({ name: c.name, type: c.type, nullable: c.nullable, primaryKey: false });
+    tables.set(c.table, t);
+  }
+  const byKey = new Map<string, { table: string; primary: boolean; columns: string[] }>();
+  for (const k of keys) {
+    const id = `${k.table}\u0000${k.key}`;
+    const entry = byKey.get(id) ?? { table: k.table, primary: k.primary, columns: [] };
+    entry.columns.push(k.column);
+    byKey.set(id, entry);
+  }
+  for (const k of byKey.values()) {
+    const t = tables.get(k.table);
+    if (!t) continue;
+    if (k.primary) for (const c of t.columns) c.primaryKey ||= k.columns.includes(c.name);
+    else t.uniques.push(k.columns);
+  }
+  const byFk = new Map<string, DiagramForeignKey>();
+  for (const f of fks) {
+    if (!tables.has(f.table)) continue;
+    const id = `${f.table}\u0000${f.name}`;
+    const entry = byFk.get(id) ?? { name: f.name, table: f.table, columns: [], ...(f.refSchema !== undefined ? { refSchema: f.refSchema } : {}), refTable: f.refTable, refColumns: [] };
+    entry.columns.push(f.column);
+    entry.refColumns.push(f.refColumn);
+    byFk.set(id, entry);
+  }
+  return { tables: [...tables.values()].sort((a, b) => a.name.localeCompare(b.name)), foreignKeys: [...byFk.values()] };
 }

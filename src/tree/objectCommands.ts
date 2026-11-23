@@ -31,14 +31,18 @@ export class ObjectCommands {
 
   /** Opens the object's definition in a new SQL editor linked to its connection. Nothing runs. */
   async showDdl(node?: TableNode | ObjectNode): Promise<void> {
-    if (!node) return;
+    if (node) await this.showDdlFor(node.connectionId, node.object);
+  }
+
+  /** Show DDL for an object found elsewhere (the ER diagram). */
+  async showDdlFor(connectionId: string, object: DbObject): Promise<void> {
     try {
-      const driver = await this.manager.getDriver(node.connectionId);
-      const ddl = await driver.objectDdl(node.object);
-      const header = `-- ${KIND_LABEL[node.object.kind]} ${this.qualified(driver, node.object)} · ${this.manager.get(node.connectionId)?.name ?? ''}\n`;
-      await this.queries.openSql(node.connectionId, header + ddl);
+      const driver = await this.manager.getDriver(connectionId);
+      const ddl = await driver.objectDdl(object);
+      const header = `-- ${KIND_LABEL[object.kind]} ${this.qualified(driver, object)} · ${this.manager.get(connectionId)?.name ?? ''}\n`;
+      await this.queries.openSql(connectionId, header + ddl);
     } catch (err) {
-      void vscode.window.showErrorMessage(`Couldn’t get the definition of ${node.object.name}: ${errorMessage(err)}`);
+      void vscode.window.showErrorMessage(`Couldn’t get the definition of ${object.name}: ${errorMessage(err)}`);
     }
   }
 

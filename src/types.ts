@@ -266,6 +266,29 @@ export interface ServerItem {
   detail?: string;
 }
 
+/** A schema's base tables, keys and foreign keys, for the ER diagram (`Driver.schemaDiagram`). */
+export interface SchemaDiagram {
+  tables: DiagramTable[];
+  foreignKeys: DiagramForeignKey[];
+}
+
+export interface DiagramTable {
+  name: string;
+  columns: { name: string; type: string; nullable: boolean; primaryKey: boolean }[];
+  /** Column lists of unique indexes and constraints (without the primary key), for one-to-one lines. */
+  uniques: string[][];
+}
+
+export interface DiagramForeignKey {
+  name: string;
+  table: string;
+  columns: string[];
+  /** Set only when the referenced table is in another schema than the diagram's. */
+  refSchema?: string;
+  refTable: string;
+  refColumns: string[];
+}
+
 /** A session in the Server panel's Processes tab. */
 export interface ServerProcess {
   id: string;
@@ -369,5 +392,10 @@ export interface Driver {
   endProcess(id: string, how: 'cancel' | 'terminate'): Promise<void>;
   /** Tables whose foreign keys reference this one (labels like `schema.name`), for the Truncate / Drop forms. Read-only. */
   referencingTables(table: TableInfo): Promise<string[]>;
+  /**
+   * Base tables of one schema (undefined: the default one, as in `TableInfo.schema`) with columns, primary and
+   * unique keys and foreign keys, in a few catalog queries. Read-only.
+   */
+  schemaDiagram(schema?: string): Promise<SchemaDiagram>;
   close(): Promise<void>;
 }

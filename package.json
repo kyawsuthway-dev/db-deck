@@ -80,6 +80,10 @@
       { "command": "dbDeck.explainAnalyze", "title": "Explain Analyze", "category": "DB Deck" },
       { "command": "dbDeck.explainStatement", "title": "Explain Statement", "category": "DB Deck" },
       { "command": "dbDeck.serverPanel", "title": "Server…", "category": "DB Deck" },
+      { "command": "dbDeck.erDiagram", "title": "ER Diagram", "category": "DB Deck" },
+      { "command": "dbDeck.diagramOpenRows", "title": "Open Rows", "category": "DB Deck" },
+      { "command": "dbDeck.diagramDesignTable", "title": "Design Table…", "category": "DB Deck" },
+      { "command": "dbDeck.diagramShowDdl", "title": "Show DDL", "category": "DB Deck" },
       { "command": "dbDeck.showDdl", "title": "Show DDL", "category": "DB Deck", "icon": "$(code)" },
       { "command": "dbDeck.generateSelect", "title": "SELECT", "category": "DB Deck" },
       { "command": "dbDeck.generateInsert", "title": "INSERT", "category": "DB Deck" },
@@ -159,6 +163,7 @@
         { "command": "dbDeck.dumpDatabase", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "2_transfer@1" },
         { "command": "dbDeck.newTable", "when": "view == dbDeck.connections && viewItem =~ /^connection/", "group": "2_design@1" },
         { "command": "dbDeck.newTable", "when": "view == dbDeck.connections && (viewItem == schema || viewItem == objects.table)", "group": "2_design@1" },
+        { "command": "dbDeck.erDiagram", "when": "view == dbDeck.connections && (viewItem =~ /^connection/ || viewItem == schema || viewItem == objects.table)", "group": "2_design@2" },
         { "command": "dbDeck.newTable", "when": "view == dbDeck.connections && viewItem == objects.table", "group": "inline@1" },
         { "command": "dbDeck.designTable", "when": "view == dbDeck.connections && viewItem == table", "group": "2_design@0" },
         { "command": "dbDeck.renameTable", "when": "view == dbDeck.connections && viewItem == table", "group": "2_design@1" },
@@ -204,6 +209,9 @@
         { "command": "dbDeck.importCsvFile", "when": "resourceExtname =~ /^\\.(csv|tsv)$/i", "group": "1_dbDeck@2" }
       ],
       "webview/context": [
+        { "command": "dbDeck.diagramOpenRows", "when": "webviewId == 'dbDeck.diagram' && webviewSection == 'table'", "group": "1_table@1" },
+        { "command": "dbDeck.diagramDesignTable", "when": "webviewId == 'dbDeck.diagram' && webviewSection == 'table'", "group": "1_table@2" },
+        { "command": "dbDeck.diagramShowDdl", "when": "webviewId == 'dbDeck.diagram' && webviewSection == 'table'", "group": "1_table@3" },
         { "command": "dbDeck.copySelection", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "1_copy@1" },
         { "command": "dbDeck.copySelectionWithHeaders", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "1_copy@2" },
         { "command": "dbDeck.copySelectionAsCsv", "when": "webviewId == 'dbDeck.results' && webviewSection == 'grid'", "group": "2_copyAs@1" },
@@ -217,6 +225,10 @@
         { "command": "dbDeck.previewTable", "when": "false" },
         { "command": "dbDeck.runStatement", "when": "false" },
         { "command": "dbDeck.explainStatement", "when": "false" },
+        { "command": "dbDeck.erDiagram", "when": "false" },
+        { "command": "dbDeck.diagramOpenRows", "when": "false" },
+        { "command": "dbDeck.diagramDesignTable", "when": "false" },
+        { "command": "dbDeck.diagramShowDdl", "when": "false" },
         { "command": "dbDeck.serverPanel", "when": "false" },
         { "command": "dbDeck.showDdl", "when": "false" },
         { "command": "dbDeck.generateSelect", "when": "false" },
@@ -313,6 +325,7 @@
     "typescript": "^5.6.0"
   },
   "dependencies": {
+    "@dagrejs/dagre": "3.1.3",
     "mysql2": "^3.24.6",
     "pg": "^8.23.1",
     "sql-formatter": "15.10.0",

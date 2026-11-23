@@ -16,6 +16,7 @@ import { HistoryNode, HistoryTree } from './tree/HistoryTree';
 import { SavedQueriesTree, SavedQueryNode } from './tree/SavedQueriesTree';
 import { ConnectionForms } from './views/ConnectionForm';
 import { DangerForms } from './views/DangerForm';
+import { DiagramPanels } from './views/DiagramPanel';
 import { Explainer } from './views/ExplainPanel';
 import { ServerPanels } from './views/ServerPanel';
 import { DumpForms } from './views/DumpForm';
@@ -55,6 +56,11 @@ export function activate(context: vscode.ExtensionContext) {
   const dangers = new DangerForms(context.extensionUri, manager, schemaChanged);
   const explainer = new Explainer(context.extensionUri, manager, queries);
   const servers = new ServerPanels(context.extensionUri, manager);
+  const diagrams = new DiagramPanels(context, manager, {
+    openRows: (id, table) => queries.previewTable(id, table, `${tableLabel(table)} · ${manager.get(id)?.name ?? ''}`),
+    design: (id, table) => designs.openDesign(id, table),
+    showDdl: (id, table) => objects.showDdlFor(id, { kind: 'table', name: table.name, schema: table.schema }),
+  });
 
   const command = (id: string, handler: (...args: any[]) => unknown) =>
     vscode.commands.registerCommand(`dbDeck.${id}`, handler);
@@ -70,6 +76,7 @@ export function activate(context: vscode.ExtensionContext) {
     dangers,
     explainer,
     servers,
+    diagrams,
     scripts,
     queries,
     exporter,
@@ -157,7 +164,10 @@ export function activate(context: vscode.ExtensionContext) {
         { modal: true },
         'Remove',
       );
-      if (confirm) await manager.remove(config.id);
+      if (confirm) {
+        await manager.remove(config.id);
+        await diagrams.forget(config.id);
+      }
     }),
 
     command('refresh', (node?: TreeNode) => {
@@ -196,6 +206,15 @@ export function activate(context: vscode.ExtensionContext) {
     command('explainAnalyze', () => explainer.explain(true)),
     command('explainStatement', (uri?: unknown, offset?: unknown) => uri !== undefined && explainer.explain(false, uri, offset)),
     command('serverPanel', (node?: ConnectionNode) => node && servers.open(node.config.id)),
+    // ER diagram: from a connection (asks for the schema when there are several), a schema, or a Tables folder.
+    command('erDiagram', (node?: ConnectionNode | SchemaNode | FolderNode) => {
+      if (node instanceof ConnectionNode) return diagrams.open(node.config.id, undefined, true);
+      if (node instanceof SchemaNode) return diagrams.open(node.connectionId, node.objects[0]?.schema, false);
+      if (node instanceof FolderNode) return diagrams.open(node.connectionId, node.objects[0]?.schema, node.objects.length === 0);
+    }),
+    command('diagramOpenRows', (ctx?: unknown) => diagrams.run(ctx, 'rows')),
+    command('diagramDesignTable', (ctx?: unknown) => diagrams.run(ctx, 'design')),
+    command('diagramShowDdl', (ctx?: unknown) => diagrams.run(ctx, 'ddl')),
     command('selectConnection', () => queries.selectConnectionForActiveEditor()),
 
     // Connections tree objects.
