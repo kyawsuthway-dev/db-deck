@@ -143,14 +143,14 @@ export class SqlEditor implements vscode.Disposable {
     if (!config) return [];
     return splitSqlRanges(doc.getText(), config.type)
       .slice(0, MAX_LENSES)
-      .map((r) => {
+      .flatMap((r) => {
         const at = doc.positionAt(r.codeStart);
-        return new vscode.CodeLens(new vscode.Range(at, at), {
-          title: '$(play) Run',
-          tooltip: 'Run this statement',
-          command: 'dbDeck.runStatement',
-          arguments: [doc.uri.toString(), r.codeStart],
-        });
+        const range = new vscode.Range(at, at);
+        const args = [doc.uri.toString(), r.codeStart];
+        return [
+          new vscode.CodeLens(range, { title: '$(play) Run', tooltip: 'Run this statement', command: 'dbDeck.runStatement', arguments: args }),
+          new vscode.CodeLens(range, { title: 'Explain', tooltip: 'Show how the database would run this statement (nothing runs)', command: 'dbDeck.explainStatement', arguments: args }),
+        ];
       });
   }
 

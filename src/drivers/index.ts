@@ -209,3 +209,11 @@ export const TABLE_FEATURES: Record<DbType, TableFeatures> = {
     dropNote: 'Indexes and triggers on the table are dropped with it. It runs in a transaction.',
   },
 };
+
+/** Which Server panel and Explain features a database has. */
+export const SERVER_TOOLS: Record<DbType, { processes: boolean; explainAnalyze: boolean }> = {
+  postgres: { processes: true, explainAnalyze: true },
+  // MariaDB has neither EXPLAIN ANALYZE nor FORMAT=TREE; the driver detects it and says so.
+  mysql: { processes: true, explainAnalyze: true },
+  sqlite: { processes: false, explainAnalyze: false },
+};

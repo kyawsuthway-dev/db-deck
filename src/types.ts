@@ -1,6 +1,7 @@
 import type { Duplex } from 'stream';
 import type { DesignChange } from './design/diff';
 import type { TableDesign } from './design/model';
+import type { PlanNode } from './tools/plan';
 
 export type DbType = 'sqlite' | 'postgres' | 'mysql';
 
@@ -249,6 +250,36 @@ export interface ImportResult {
   deleted: number;
 }
 
+/** A query plan for the Explain panel. */
+export interface ExplainResult {
+  plan: PlanNode;
+  /** The database's own output, for the Raw tab. */
+  raw: string;
+  /** Something the panel should say (e.g. a fallback format was used). */
+  note?: string;
+}
+
+/** A line of the Server panel's Status or Settings tab. */
+export interface ServerItem {
+  label: string;
+  value: string;
+  detail?: string;
+}
+
+/** A session in the Server panel's Processes tab. */
+export interface ServerProcess {
+  id: string;
+  user: string;
+  database: string;
+  client: string;
+  state: string;
+  /** How long the current query (or state) has lasted; undefined when unknown. */
+  seconds?: number;
+  query: string;
+  /** One of DB Deck's own connections. */
+  own: boolean;
+}
+
 export interface Driver {
   /** Opens the connection. Throws with a readable message when it can't. */
   connect(): Promise<void>;
@@ -322,6 +353,20 @@ export interface Driver {
    * recreated. Throws a readable error for a change the database can't make.
    */
   alterTableSql(before: TableDesign, after: TableDesign, changes: DesignChange[]): { statements: string[]; rebuild: boolean };
+  /**
+   * The plan of one statement. Plain: estimates only, on the long-lived connection (session settings apply).
+   * `analyze`: runs it, on a short-lived connection inside a read-only transaction that is rolled back;
+   * callers check `readOnlyStatement` first. Throws a readable error where the database can't.
+   */
+  explain(sql: string, analyze: boolean): Promise<ExplainResult>;
+  /** Version, uptime, sizes, connections… (read-only). */
+  serverStatus(): Promise<ServerItem[]>;
+  /** The server's settings (read-only). */
+  serverSettings(): Promise<ServerItem[]>;
+  /** Sessions on the server (read-only); empty where there are none (SQLite). */
+  listProcesses(): Promise<ServerProcess[]>;
+  /** Cancels a session's running query, or ends the session. Only after the user confirmed. */
+  endProcess(id: string, how: 'cancel' | 'terminate'): Promise<void>;
   /** Tables whose foreign keys reference this one (labels like `schema.name`), for the Truncate / Drop forms. Read-only. */
   referencingTables(table: TableInfo): Promise<string[]>;
   close(): Promise<void>;

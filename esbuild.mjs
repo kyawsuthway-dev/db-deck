@@ -56,7 +56,7 @@ const extension = await esbuild.context({
 // Each emits <name>.js and <name>.css.
 const webview = await esbuild.context({
   ...shared,
-  entryPoints: ['src/webview/results.ts', 'src/webview/connectionForm.ts', 'src/webview/dumpForm.ts', 'src/webview/runScriptForm.ts', 'src/webview/importForm.ts', 'src/webview/tableDesignForm.ts', 'src/webview/dangerForm.ts'],
+  entryPoints: ['src/webview/results.ts', 'src/webview/connectionForm.ts', 'src/webview/dumpForm.ts', 'src/webview/runScriptForm.ts', 'src/webview/importForm.ts', 'src/webview/tableDesignForm.ts', 'src/webview/dangerForm.ts', 'src/webview/explainView.ts', 'src/webview/serverView.ts'],
   format: 'iife',
   platform: 'browser',
   target: 'es2022',
