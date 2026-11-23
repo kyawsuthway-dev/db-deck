@@ -23,6 +23,7 @@ import {
   showStatus as renderStatus,
   submitButton,
   switchRow,
+  tabs as kitTabs,
   vscodeApi,
   type Span,
   type StatusState,
@@ -54,7 +55,6 @@ const FIELD_TAB: Partial<Record<keyof FormValues, Tab>> = {
 
 let init: Init | undefined;
 let values: FormValues;
-let tab: Tab = 'main';
 let busy = false;
 const inputs = new Map<keyof FormValues, HTMLInputElement | HTMLSelectElement>();
 const errorSpans = new Map<keyof FormValues, HTMLElement>();
@@ -153,15 +153,12 @@ function build(msg: Init) {
   page.append(general);
 
   // Tabs.
-  const tabList = el('div', 'tabs');
-  tabList.setAttribute('role', 'tablist');
-  const tabs: Record<Tab, ReturnType<typeof makeTab>> = {
-    main: makeTab('main', 'Connection', 'plug'),
-    ssh: makeTab('ssh', 'SSH Tunnel', 'tunnel'),
-    options: makeTab('options', 'Options', 'shield'),
-  };
-  tabList.append(tabs.main.button, tabs.ssh.button, tabs.options.button);
-  page.append(tabList, tabs.main.panel, tabs.ssh.panel, tabs.options.panel);
+  const tabs = kitTabs<Tab>('conn', [
+    { id: 'main', label: 'Connection', icon: 'plug' },
+    { id: 'ssh', label: 'SSH Tunnel', icon: 'tunnel' },
+    { id: 'options', label: 'Options', icon: 'shield' },
+  ]);
+  page.append(tabs.list, tabs.panels.main, tabs.panels.ssh, tabs.panels.options);
 
   // Connection: SQLite file, or server settings.
   const sqlite = el('div', 'fields');
@@ -201,7 +198,7 @@ function build(msg: Init) {
   const tunnelNote = note('tunnel', 'SSH tunnel on: enter the host and port as seen from the SSH host (often localhost).');
   tunnelNote.classList.add('span-6');
   server.append(urlField, divider, host.field, port.field, user.field, password.field, database.field, ssl.field, tunnelNote);
-  tabs.main.panel.append(sqlite, server);
+  tabs.panels.main.append(sqlite, server);
 
   // SSH tunnel.
   const sshToggle = switchField('sshEnabled', 'Connect through an SSH tunnel', 'One SSH session per connection, no local port opened. The first time, DB Deck asks you to trust the SSH host’s key.');
@@ -223,7 +220,7 @@ function build(msg: Init) {
   keyPath.control.append(iconButton('Browse…', 'folderOpen', () => browse('sshKey')));
   const secret = textField('sshSecret', 'SSH password', { icon: 'lock', type: 'password', span: 6 });
   sshFields.append(sshHost.field, sshPort.field, sshUser.field, auth.field, keyPath.field, secret.field);
-  tabs.ssh.panel.append(sshToggle.row, sshFields);
+  tabs.panels.ssh.append(sshToggle.row, sshFields);
 
   // Options.
   const readOnly = switchField(
@@ -231,7 +228,7 @@ function build(msg: Init) {
     'Read-only connection',
     'The database session is read-only and table editing is off. A guard against mistakes, not a security boundary: for a real guarantee, connect as a user that can’t write.',
   );
-  tabs.options.panel.append(readOnly.row);
+  tabs.panels.options.append(readOnly.row);
 
   // Action bar.
   const test = button('Test Connection', 'plug', () => send('test'));
@@ -262,37 +259,6 @@ function build(msg: Init) {
     url,
     focusFirst: () => (msg.mode === 'edit' ? name.input : types.choices.find((c) => c.value === values.kind)?.button ?? name.input).focus(),
   };
-}
-
-function makeTab(id: Tab, label: string, iconName: IconName) {
-  const b = el('button', 'tab');
-  b.type = 'button';
-  b.id = `tab-${id}`;
-  b.setAttribute('role', 'tab');
-  b.setAttribute('aria-controls', `panel-${id}`);
-  const dot = el('span', 'tab-dot');
-  dot.title = 'On';
-  b.append(icon(iconName), el('span', undefined, label), dot);
-  b.addEventListener('click', () => {
-    tab = id;
-    update();
-  });
-  b.addEventListener('keydown', (e) => {
-    const order = (['main', 'ssh', 'options'] as Tab[]).filter((t) => t !== 'ssh' || kind().network);
-    const i = order.indexOf(id);
-    const next = e.key === 'ArrowRight' ? order[(i + 1) % order.length] : e.key === 'ArrowLeft' ? order[(i + order.length - 1) % order.length] : undefined;
-    if (next) {
-      e.preventDefault();
-      tab = next;
-      update();
-      ui?.tabs[next].button.focus();
-    }
-  });
-  const panel = el('section', 'tab-panel');
-  panel.id = `panel-${id}`;
-  panel.setAttribute('role', 'tabpanel');
-  panel.setAttribute('aria-labelledby', b.id);
-  return { button: b, panel, dot };
 }
 
 interface FieldOptions {
@@ -372,17 +338,9 @@ function update(): void {
   const k = kind();
   const isFile = k.database === 'none';
   paintChoices(ui.types.choices, values.kind);
-  if (!k.network && tab === 'ssh') tab = 'main';
-  for (const [id, t] of Object.entries(ui.tabs) as [Tab, ReturnType<typeof makeTab>][]) {
-    const on = id === tab;
-    t.button.setAttribute('aria-selected', String(on));
-    t.button.tabIndex = on ? 0 : -1;
-    t.panel.hidden = !on;
-  }
-  ui.tabs.ssh.button.hidden = !k.network;
-  ui.tabs.ssh.dot.hidden = !(values.sshEnabled && k.network);
-  ui.tabs.options.dot.hidden = !values.readOnly;
-  ui.tabs.main.dot.hidden = true;
+  ui.tabs.setHidden('ssh', !k.network);
+  ui.tabs.dots.ssh.hidden = !(values.sshEnabled && k.network);
+  ui.tabs.dots.options.hidden = !values.readOnly;
   ui.sqlite.hidden = !isFile;
   ui.server.hidden = isFile;
   ui.tunnelNote.hidden = isFile || !values.sshEnabled;
@@ -522,7 +480,7 @@ function showErrors(errors: FieldErrors): void {
   }
   const first = (Object.keys(errors) as (keyof FormValues)[])[0];
   if (first) {
-    tab = FIELD_TAB[first] ?? 'main';
+    ui?.tabs.select(FIELD_TAB[first] ?? 'main');
     update();
     inputs.get(first)?.focus();
   }

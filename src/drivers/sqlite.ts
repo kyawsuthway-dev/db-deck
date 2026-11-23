@@ -3,7 +3,8 @@ import * as path from 'path';
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import type { TableDesign } from '../design/model';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
-import { createTableStatements } from './ddl';
+import type { DesignChange } from '../design/diff';
+import { columnDefinition, createIndexStatement, createTableStatements, type DdlDialect } from './ddl';
 import type {
   Cell,
   ChangeStatement,
@@ -49,6 +50,43 @@ import {
   toDumpCell,
   type WriteDialect,
 } from './common';
+
+/** How SQLite writes table DDL (drivers/ddl.ts). */
+const DDL: DdlDialect = {
+  quote: '"',
+  table: (_schema, name) => quoteIdent(name, '"'),
+  literal: standardLiteral,
+  autoIncrement: { clause: 'AUTOINCREMENT', position: 'afterType', primaryKeyInline: true },
+  comments: 'none',
+};
+
+/**
+ * CHECK constraints from a CREATE TABLE text (SQLite has no catalog for them): `[CONSTRAINT name] CHECK (…)`,
+ * with balanced parentheses and quotes respected. Column-level checks come back as table checks.
+ */
+export function checkConstraints(sql: string): { name: string; expression: string }[] {
+  const found: { name: string; expression: string }[] = [];
+  const re = /(?:\bCONSTRAINT\s+("(?:[^"]|"")+"|`(?:[^`]|``)+`|\[[^\]]+\]|\w+)\s+)?\bCHECK\s*\(/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql))) {
+    let depth = 1;
+    let i = re.lastIndex;
+    let quote: string | undefined;
+    for (; i < sql.length && depth > 0; i++) {
+      const ch = sql[i];
+      if (quote) {
+        if (ch === quote) quote = sql[i + 1] === quote ? (i++, quote) : undefined;
+      } else if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+      else if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+    }
+    const rawName = m[1] ?? '';
+    const name = rawName.replace(/^["`[]|["`\]]$/g, '').replace(/""/g, '"');
+    found.push({ name, expression: sql.slice(re.lastIndex, i - 1).trim() });
+    re.lastIndex = i;
+  }
+  return found;
+}
 
 const WRITE_DIALECT: WriteDialect = {
   quote: '"',
@@ -223,13 +261,127 @@ export class SqliteDriver implements Driver {
    * the saved file. (A transaction left open in the editor isn't kept for SQLite anyway; see README.)
    */
   createTableSql(design: TableDesign): string[] {
-    return createTableStatements(design, {
-      quote: '"',
-      table: (_schema, name) => quoteIdent(name, '"'),
-      literal: standardLiteral,
-      autoIncrement: { clause: 'AUTOINCREMENT', position: 'afterType', primaryKeyInline: true },
-      comments: 'none',
+    return createTableStatements(design, DDL);
+  }
+
+  async readDesign(table: TableInfo): Promise<TableDesign> {
+    const db = await this.database();
+    const rows = (sql: string, params: unknown[] = []) => {
+      const stmt = db.prepare(sql);
+      try {
+        stmt.bind(params as never[]);
+        const out: unknown[][] = [];
+        while (stmt.step()) out.push(stmt.get());
+        return out;
+      } finally {
+        stmt.free();
+      }
+    };
+    const created = rows("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", [table.name])[0]?.[0];
+    if (typeof created !== 'string') throw new Error(`Table ${table.name} wasn’t found.`);
+    // table_xinfo: cid, name, type, notnull, dflt_value, pk, hidden (2/3 = generated).
+    const cols = rows('SELECT name, type, "notnull", dflt_value, pk, hidden FROM pragma_table_xinfo(?)', [table.name]);
+    const keyCols = cols.filter((c) => Number(c[4]) > 0);
+    const autoIncrement = /\bAUTOINCREMENT\b/i.test(created) && keyCols.length === 1;
+    // index_list: seq, name, unique, origin (c = CREATE INDEX, u = UNIQUE constraint, pk), partial.
+    const indexes: TableDesign['indexes'] = [];
+    const preservedIndexes: string[] = [];
+    for (const [, name, unique, origin, partial] of rows('SELECT seq, name, "unique", origin, partial FROM pragma_index_list(?)', [table.name])) {
+      if (origin === 'pk') continue;
+      const info = rows('SELECT cid, name FROM pragma_index_info(?) ORDER BY seqno', [String(name)]);
+      const plain = info.every((r) => Number(r[0]) >= 0) && Number(partial) === 0;
+      if (plain) indexes.push({ name: String(name), columns: info.map((r) => String(r[1])), unique: Number(unique) === 1, ...(origin === 'u' ? { constraint: true } : {}) });
+      else {
+        const sql = rows("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", [String(name)])[0]?.[0];
+        if (typeof sql === 'string') preservedIndexes.push(`${sql.trim().replace(/;$/, '')};`);
+      }
+    }
+    // foreign_key_list: id, seq, table, from, to, on_update, on_delete.
+    const fkRows = rows('SELECT id, seq, "table", "from", "to", on_update, on_delete FROM pragma_foreign_key_list(?) ORDER BY id, seq', [table.name]);
+    const fks = new Map<number, TableDesign['foreignKeys'][number]>();
+    for (const [id, , ref, from, to, upd, del] of fkRows) {
+      const f = fks.get(Number(id)) ?? { name: '', columns: [], refTable: String(ref), refColumns: [], onDelete: String(del), onUpdate: String(upd) };
+      f.columns.push(String(from));
+      f.refColumns.push(String(to ?? ''));
+      fks.set(Number(id), f);
+    }
+    const triggers = rows("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? AND sql IS NOT NULL", [table.name]).map(
+      (r) => `${String(r[0]).trim().replace(/;$/, '')};`,
+    );
+    return {
+      name: table.name,
+      comment: '',
+      columns: cols.map((c, i) => ({
+        key: `c${i}`,
+        name: String(c[0]),
+        type: String(c[1] ?? ''),
+        nullable: Number(c[2]) === 0 && Number(c[4]) === 0,
+        default: c[3] === null || c[3] === undefined ? '' : String(c[3]),
+        primaryKey: Number(c[4]) > 0,
+        autoIncrement: autoIncrement && Number(c[4]) > 0,
+        comment: '',
+        ...(Number(c[5]) === 2 || Number(c[5]) === 3 ? { generated: true } : {}),
+      })),
+      indexes,
+      foreignKeys: [...fks.values()],
+      checks: checkConstraints(created),
+      preserved: { triggers, indexes: preservedIndexes },
+    };
+  }
+
+  /**
+   * ADD / RENAME / DROP COLUMN and index changes run directly. Anything else rebuilds the table, SQLite's
+   * documented way: a new table with the new design, the rows copied, the old one dropped, the new one renamed,
+   * then its indexes and triggers recreated, all in the script's transaction.
+   */
+  alterTableSql(before: TableDesign, after: TableDesign, changes: DesignChange[]): { statements: string[]; rebuild: boolean } {
+    const table = quoteIdent(before.name, '"');
+    const q = (n: string) => quoteIdent(n.trim(), '"');
+    const used = new Set([...before.indexes.flatMap((x) => x.columns), ...before.foreignKeys.flatMap((f) => f.columns)]);
+    const direct = changes.every((c) => {
+      switch (c.kind) {
+        case 'renameColumn':
+        case 'addIndex':
+          return true;
+        case 'dropIndex':
+          return !c.index.constraint;
+        case 'addColumn':
+          // ADD COLUMN can't add a key, or NOT NULL without a default, or a default that's an expression.
+          return !c.column.primaryKey && !c.column.autoIncrement && (c.column.nullable || !!c.column.default.trim()) && !/^\s*\(|CURRENT_/i.test(c.column.default);
+        case 'dropColumn':
+          return !c.column.primaryKey && !used.has(c.column.name) && before.checks.length === 0;
+        default:
+          return false;
+      }
     });
+    if (direct) {
+      const statements: string[] = [];
+      for (const c of changes) if (c.kind === 'dropIndex') statements.push(`DROP INDEX ${q(c.index.name)};`);
+      for (const c of changes) if (c.kind === 'renameColumn') statements.push(`ALTER TABLE ${table} RENAME COLUMN ${q(c.from)} TO ${q(c.to)};`);
+      for (const c of changes) if (c.kind === 'dropColumn') statements.push(`ALTER TABLE ${table} DROP COLUMN ${q(c.column.name)};`);
+      for (const c of changes) if (c.kind === 'addColumn') statements.push(`ALTER TABLE ${table} ADD COLUMN ${columnDefinition(c.column, DDL)};`);
+      for (const c of changes) if (c.kind === 'addIndex') statements.push(createIndexStatement(c.index, table, DDL));
+      return { statements, rebuild: false };
+    }
+    if (before.columns.some((c) => c.generated)) {
+      throw new Error('This change needs SQLite to rebuild the table, and DB Deck can’t rebuild a table with generated columns yet.');
+    }
+    const temp = `_dbdeck_new_${before.name}`;
+    const beforeByKey = new Map(before.columns.map((c) => [c.key, c]));
+    const kept = after.columns.filter((c) => beforeByKey.has(c.key));
+    const statements = [
+      createTableStatements({ ...after, name: temp }, DDL, { indexes: false })[0],
+      `INSERT INTO ${q(temp)} (${kept.map((c) => q(c.name)).join(', ')}) SELECT ${kept.map((c) => q(beforeByKey.get(c.key)!.name)).join(', ')} FROM ${table};`,
+      `DROP TABLE ${table};`,
+      // Renaming checks the whole schema; legacy mode keeps a view or trigger elsewhere from blocking it.
+      'PRAGMA legacy_alter_table = ON;',
+      `ALTER TABLE ${q(temp)} RENAME TO ${table};`,
+      'PRAGMA legacy_alter_table = OFF;',
+      ...after.indexes.map((x) => createIndexStatement(x, table, DDL)),
+      ...(before.preserved?.indexes ?? []),
+      ...(before.preserved?.triggers ?? []),
+    ];
+    return { statements, rebuild: true };
   }
 
   renameTableSql(table: TableInfo, newName: string): string {

@@ -310,3 +310,97 @@ export function formElement(submit: () => void): HTMLFormElement {
   });
   return form;
 }
+
+export interface TabItem<T extends string> {
+  id: T;
+  label: string;
+  icon: IconName;
+}
+
+/** A tab strip and its panels. Each tab has a green "on" dot, a count and a red error dot (all hidden at first). */
+export interface Tabs<T extends string> {
+  list: HTMLElement;
+  panels: Record<T, HTMLElement>;
+  buttons: Record<T, HTMLButtonElement>;
+  dots: Record<T, HTMLElement>;
+  counts: Record<T, HTMLElement>;
+  errors: Record<T, HTMLElement>;
+  current(): T;
+  /** Shows a tab; `focus` moves the keyboard focus to its button. */
+  select(id: T, focus?: boolean): void;
+  /** Hides or shows a tab's button; hiding the current tab selects the first visible one. */
+  setHidden(id: T, hidden: boolean): void;
+}
+
+/** Tabs as in the connection form: arrow keys move between visible tabs, only the current one is in the Tab order. */
+export function tabs<T extends string>(prefix: string, items: TabItem<T>[], onSelect?: (id: T) => void): Tabs<T> {
+  const list = el('div', 'tabs');
+  list.setAttribute('role', 'tablist');
+  const panels = {} as Record<T, HTMLElement>;
+  const buttons = {} as Record<T, HTMLButtonElement>;
+  const dots = {} as Record<T, HTMLElement>;
+  const counts = {} as Record<T, HTMLElement>;
+  const errors = {} as Record<T, HTMLElement>;
+  let current = items[0].id;
+  const visible = () => items.filter((i) => !buttons[i.id].hidden).map((i) => i.id);
+  const select = (id: T, focus = false) => {
+    current = id;
+    for (const item of items) {
+      const on = item.id === id;
+      buttons[item.id].setAttribute('aria-selected', String(on));
+      buttons[item.id].tabIndex = on ? 0 : -1;
+      panels[item.id].hidden = !on;
+    }
+    if (focus) buttons[id].focus();
+    onSelect?.(id);
+  };
+  for (const item of items) {
+    const b = el('button', 'tab');
+    b.type = 'button';
+    b.id = `${prefix}-tab-${item.id}`;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-controls', `${prefix}-panel-${item.id}`);
+    const dot = el('span', 'tab-dot');
+    dot.title = 'On';
+    dot.hidden = true;
+    const count = el('span', 'tab-count');
+    count.hidden = true;
+    const error = el('span', 'tab-error');
+    error.title = 'Has a problem';
+    error.hidden = true;
+    b.append(icon(item.icon), el('span', undefined, item.label), count, dot, error);
+    b.addEventListener('click', () => select(item.id));
+    b.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      const order = visible();
+      const i = order.indexOf(item.id);
+      select(order[(i + (e.key === 'ArrowRight' ? 1 : order.length - 1)) % order.length], true);
+    });
+    const panel = el('section', 'tab-panel');
+    panel.id = `${prefix}-panel-${item.id}`;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', b.id);
+    buttons[item.id] = b;
+    panels[item.id] = panel;
+    dots[item.id] = dot;
+    counts[item.id] = count;
+    errors[item.id] = error;
+    list.append(b);
+  }
+  select(current);
+  return {
+    list,
+    panels,
+    buttons,
+    dots,
+    counts,
+    errors,
+    current: () => current,
+    select,
+    setHidden(id, hidden) {
+      buttons[id].hidden = hidden;
+      if (hidden && current === id) select(visible()[0] ?? items[0].id);
+    },
+  };
+}

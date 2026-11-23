@@ -1,7 +1,8 @@
 import mysql from 'mysql2/promise';
 import type { TableDesign } from '../design/model';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
-import { createTableStatements } from './ddl';
+import type { DesignChange } from '../design/diff';
+import { checkClause, columnDefinition, createTableStatements, foreignKeyClause, type DdlDialect } from './ddl';
 import type {
   Cell,
   ChangeStatement,
@@ -48,6 +49,15 @@ import {
 } from './common';
 
 const SYSTEM_SCHEMAS = ['mysql', 'information_schema', 'performance_schema', 'sys'];
+
+/** How MySQL writes table DDL (drivers/ddl.ts). */
+const DDL: DdlDialect = {
+  quote: '`',
+  table: (schema, name) => qualifiedName({ schema, name }),
+  literal: (value) => mysqlLiteral(value),
+  autoIncrement: { clause: 'AUTO_INCREMENT', position: 'afterNotNull' },
+  comments: 'inline',
+};
 
 /** MySQL and MariaDB. */
 export class MysqlDriver implements Driver {
@@ -414,13 +424,130 @@ export class MysqlDriver implements Driver {
   }
 
   createTableSql(design: TableDesign): string[] {
-    return createTableStatements(design, {
-      quote: '`',
-      table: (schema, name) => qualifiedName({ schema, name }),
-      literal: mysqlLiteral,
-      autoIncrement: { clause: 'AUTO_INCREMENT', position: 'afterNotNull' },
-      comments: 'inline',
+    return createTableStatements(design, DDL);
+  }
+
+  async readDesign(table: TableInfo): Promise<TableDesign> {
+    const conn = await this.getConnection();
+    const where = [table.schema ?? null, table.name];
+    const [[info]] = await conn.query<mysql.RowDataPacket[]>(
+      'SELECT TABLE_COMMENT AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ?',
+      where,
+    );
+    if (!info) throw new Error(`Table ${table.name} wasn’t found.`);
+    const [cols] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type, IS_NULLABLE AS nullable, COLUMN_DEFAULT AS def, EXTRA AS extra,
+              COLUMN_COMMENT AS comment, DATA_TYPE AS dt
+         FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ?
+        ORDER BY ORDINAL_POSITION`,
+      where,
+    );
+    const [stats] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT INDEX_NAME AS name, NON_UNIQUE AS nu, COLUMN_NAME AS col FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
+      where,
+    );
+    const [fkRows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT k.CONSTRAINT_NAME AS name, k.COLUMN_NAME AS col, k.REFERENCED_TABLE_SCHEMA AS rs, k.REFERENCED_TABLE_NAME AS rt,
+              k.REFERENCED_COLUMN_NAME AS rc, r.DELETE_RULE AS del, r.UPDATE_RULE AS upd
+         FROM information_schema.KEY_COLUMN_USAGE k
+         JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+           ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+        WHERE k.TABLE_SCHEMA = COALESCE(?, DATABASE()) AND k.TABLE_NAME = ? AND k.REFERENCED_TABLE_NAME IS NOT NULL
+        ORDER BY k.CONSTRAINT_NAME, k.ORDINAL_POSITION`,
+      where,
+    );
+    const [checkRows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT t.CONSTRAINT_NAME AS name, c.CHECK_CLAUSE AS expr FROM information_schema.TABLE_CONSTRAINTS t
+         JOIN information_schema.CHECK_CONSTRAINTS c ON c.CONSTRAINT_SCHEMA = t.CONSTRAINT_SCHEMA AND c.CONSTRAINT_NAME = t.CONSTRAINT_NAME
+        WHERE t.TABLE_SCHEMA = COALESCE(?, DATABASE()) AND t.TABLE_NAME = ? AND t.CONSTRAINT_TYPE = 'CHECK' ORDER BY 1`,
+      where,
+    );
+    const group = <T>(rows: mysql.RowDataPacket[], make: (first: mysql.RowDataPacket, all: mysql.RowDataPacket[]) => T) => {
+      const by = new Map<string, mysql.RowDataPacket[]>();
+      for (const r of rows) by.set(String(r.name), [...(by.get(String(r.name)) ?? []), r]);
+      return [...by.values()].map((all) => make(all[0], all));
+    };
+    const pk = stats.filter((r) => r.name === 'PRIMARY').map((r) => String(r.col));
+    const here = table.schema ?? this.config.database;
+    const numeric = /^(tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|real|bit|year)$/i;
+    return {
+      schema: table.schema,
+      name: table.name,
+      comment: String(info.c ?? ''),
+      columns: cols.map((c, i) => {
+        const extra = String(c.extra ?? '');
+        const def = c.def === null || c.def === undefined ? '' : String(c.def);
+        // COLUMN_DEFAULT is the bare value for literals, an expression for DEFAULT_GENERATED (CURRENT_TIMESTAMP, (expr)).
+        const expression = /DEFAULT_GENERATED/i.test(extra) || (numeric.test(String(c.dt)) && /^-?[\d.]+$/.test(def)) || /^NULL$/i.test(def);
+        return {
+          key: `c${i}`,
+          name: String(c.name),
+          type: String(c.type),
+          nullable: String(c.nullable) === 'YES',
+          default: !def || /^NULL$/i.test(def) ? '' : expression ? (/DEFAULT_GENERATED/i.test(extra) && !/^\(.*\)$/.test(def) && !/^CURRENT_TIMESTAMP/i.test(def) ? `(${def})` : def) : mysqlLiteral(def),
+          primaryKey: pk.includes(String(c.name)),
+          autoIncrement: /auto_increment/i.test(extra),
+          comment: String(c.comment ?? ''),
+          ...(/\b(VIRTUAL|STORED) GENERATED\b/i.test(extra) ? { generated: true } : {}),
+        };
+      }),
+      // Indexes on columns; ones on expressions (COLUMN_NAME null) aren't shown and are left alone.
+      indexes: group(stats.filter((r) => r.name !== 'PRIMARY'), (first, all) => ({ first, all }))
+        .filter(({ all }) => all.every((r) => r.col !== null))
+        .map(({ first, all }) => ({ name: String(first.name), columns: all.map((r) => String(r.col)), unique: String(first.nu) === '0' })),
+      foreignKeys: group(fkRows, (first, all) => ({
+        name: String(first.name),
+        columns: all.map((r) => String(r.col)),
+        refSchema: String(first.rs) === here ? undefined : String(first.rs),
+        refTable: String(first.rt),
+        refColumns: all.map((r) => String(r.rc)),
+        onDelete: String(first.del),
+        onUpdate: String(first.upd),
+      })),
+      checks: checkRows.map((c) => ({ name: String(c.name), expression: String(c.expr).replace(/^\(([\s\S]*)\)$/, '$1') })),
+    };
+  }
+
+  /** Everything in one ALTER TABLE: MySQL commits DDL statement by statement, so one statement is all or nothing. */
+  alterTableSql(before: TableDesign, after: TableDesign, changes: DesignChange[]): { statements: string[]; rebuild: boolean } {
+    const table = qualifiedName({ schema: before.schema, name: before.name });
+    const q = (n: string) => quoteIdent(n.trim(), '`');
+    const specs: string[] = [];
+    const pkChange = changes.find((c) => c.kind === 'primaryKey');
+    const reorder = changes.some((c) => c.kind === 'reorder');
+    const beforeByKey = new Map(before.columns.map((c) => [c.key, c]));
+    for (const c of changes) {
+      if (c.kind === 'dropForeignKey') specs.push(`DROP FOREIGN KEY ${q(c.foreignKey.name)}`);
+      else if (c.kind === 'dropCheck') specs.push(`DROP CHECK ${q(c.check.name)}`);
+      else if (c.kind === 'dropIndex') specs.push(`DROP INDEX ${q(c.index.name)}`);
+    }
+    if (pkChange && pkChange.before.length) specs.push('DROP PRIMARY KEY');
+    for (const c of changes) if (c.kind === 'dropColumn') specs.push(`DROP COLUMN ${q(c.column.name)}`);
+    // Columns in their new order: new ones are added at their place; changed, renamed or moved ones are
+    // redefined in full (CHANGE COLUMN) with their place.
+    const touched = new Set(changes.flatMap((c) => (c.kind === 'alterColumn' ? [c.after.key] : [])));
+    const renamedFrom = new Map<string, string>();
+    for (const col of after.columns) {
+      const old = beforeByKey.get(col.key);
+      if (old && old.name.trim() !== col.name.trim()) renamedFrom.set(col.key, old.name.trim());
+    }
+    after.columns.forEach((col, i) => {
+      if (col.generated) return;
+      const place = i === 0 ? ' FIRST' : ` AFTER ${q(after.columns[i - 1].name)}`;
+      const definition = columnDefinition({ ...col, primaryKey: false }, DDL);
+      const old = beforeByKey.get(col.key);
+      if (!old) specs.push(`ADD COLUMN ${definition}${place}`);
+      else if (touched.has(col.key) || renamedFrom.has(col.key) || reorder) specs.push(`CHANGE COLUMN ${q(old.name)} ${definition}${reorder ? place : ''}`);
     });
+    if (pkChange?.after.length) specs.push(`ADD PRIMARY KEY (${pkChange.after.map(q).join(', ')})`);
+    for (const c of changes) {
+      if (c.kind === 'addIndex') specs.push(`ADD ${c.index.unique ? 'UNIQUE ' : ''}INDEX ${q(c.index.name)} (${c.index.columns.map(q).join(', ')})`);
+      else if (c.kind === 'addForeignKey') specs.push(`ADD ${foreignKeyClause(c.foreignKey, DDL)}`);
+      else if (c.kind === 'addCheck') specs.push(`ADD ${checkClause(c.check, DDL)}`);
+      else if (c.kind === 'tableComment') specs.push(`COMMENT = ${mysqlLiteral(c.comment)}`);
+    }
+    return { statements: specs.length ? [`ALTER TABLE ${table}\n  ${specs.join(',\n  ')};`] : [], rebuild: false };
   }
 
   renameTableSql(table: TableInfo, newName: string): string {

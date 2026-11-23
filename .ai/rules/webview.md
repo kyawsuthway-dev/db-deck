@@ -33,6 +33,8 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 
 - Every form is built from `src/webview/forms/kit.ts` (header, sections, fields, segmented controls, chips, switches, checklists, notes, action bar, status) and `src/webview/forms/form.css`, with `src/views/FormPanel.ts` on the extension side (`FormPanel`: the CSP below, roots, `retainContextWhenHidden`, `post`, `logo()`; `FormTabs`: one tab per key). New forms reuse them instead of adding their own styles or panel code, so all forms look and behave the same.
 - The page posts `{ type: 'ready' }`; the panel replies with `init`. Everything a form sends is untrusted: the panel checks each field (enums, keys into its own lists, absolute paths) before acting.
+- Tabs come from the kit's `tabs()` (counts, an "on" dot, an error dot, arrow keys over visible tabs); forms don't build their own tab strips.
+- Anything a form could make the extension run or drop by name, such as SQL read from the database (SQLite triggers kept through a rebuild) or constraint names, is never taken from the form: the extension keeps it from what it read and merges it back (`withServerFields`).
 - Forms for destructive actions (Truncate, Drop) use the danger badge and the red `.button.danger`, and enable it only when the object's name is typed exactly; the extension compares the name again.
 - Long work (dump, run file, import) reports progress through the form's status, with Close turning into Cancel while it runs.
 - A form's main button may be the confirmation for a write (Run N Statements) when the form first shows what will happen; the extension re-reads and re-checks its input when the button is clicked.
