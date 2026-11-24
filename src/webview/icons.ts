@@ -36,6 +36,7 @@ const PATHS = {
   down: 'M8 3v10M4 9l4 4 4-4',
   trash: 'M2.5 4h11M6 4V2.5h4V4M4 4l.75 9.5h6.5L12 4M6.75 6.5v5M9.25 6.5v5',
   warning: 'M8 1.75L14.75 14H1.25zM8 6v3.75M8 12h.01',
+  refresh: 'M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3h-3',
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -471,6 +471,7 @@ export class MysqlDriver implements Driver {
         WHERE t.TABLE_SCHEMA = COALESCE(?, DATABASE()) AND t.TABLE_NAME = ? AND t.CONSTRAINT_TYPE = 'CHECK' ORDER BY 1`,
       where,
     );
+    const maria = await this.isMariaDb(conn);
     const group = <T>(rows: mysql.RowDataPacket[], make: (first: mysql.RowDataPacket, all: mysql.RowDataPacket[]) => T) => {
       const by = new Map<string, mysql.RowDataPacket[]>();
       for (const r of rows) by.set(String(r.name), [...(by.get(String(r.name)) ?? []), r]);
@@ -514,7 +515,7 @@ export class MysqlDriver implements Driver {
         onDelete: String(first.del),
         onUpdate: String(first.upd),
       })),
-      checks: checkRows.map((c) => ({ name: String(c.name), expression: String(c.expr).replace(/^\(([\s\S]*)\)$/, '$1') })),
+      checks: checkRows.map((c) => ({ name: String(c.name), expression: checkSql(String(c.expr), maria).replace(/^\(([\s\S]*)\)$/, '$1') })),
     };
   }
 
@@ -670,6 +671,22 @@ export class MysqlDriver implements Driver {
   }
 
   /** The connection's database, or every non-system one when it has none (as the tree shows them). */
+  async columnChoices(table: TableInfo): Promise<Record<string, string[]>> {
+    const conn = await this.getConnection();
+    const [rows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? AND DATA_TYPE IN ('enum', 'set')
+        ORDER BY ORDINAL_POSITION`,
+      [table.schema ?? null, table.name],
+    );
+    const out: Record<string, string[]> = {};
+    for (const r of rows) {
+      const members = enumMembers(String(r.type));
+      if (members.length) out[String(r.name)] = members;
+    }
+    return out;
+  }
+
   async listSchemas(): Promise<string[]> {
     if (this.config.database) return [this.config.database];
     return this.listDatabases();
@@ -819,3 +836,18 @@ const WRITE_DIALECT: WriteDialect = {
   literal: mysqlLiteral,
   asText: (column) => `CAST(${column} AS CHAR)`,
 };
+
+/** The members of a MySQL `enum('a','b')` / `set(…)` column type, as INFORMATION_SCHEMA writes it ('' doubles a quote). */
+export function enumMembers(type: string): string[] {
+  const body = /^(?:enum|set)\((.*)\)$/is.exec(type.trim())?.[1] ?? '';
+  return [...body.matchAll(/'((?:[^'\\]|''|\\.)*)'/g)].map((m) => m[1].replace(/''/g, "'").replace(/\\(.)/g, '$1'));
+}
+
+/**
+ * A CHECK clause from information_schema as SQL. MySQL stores it with one more layer of backslash escapes
+ * (`_utf8mb4\'new\'`), which doesn't parse; without that layer it's what SHOW CREATE TABLE prints. MariaDB stores
+ * the clause as SQL already.
+ */
+export function checkSql(clause: string, mariaDb: boolean): string {
+  return mariaDb ? clause : clause.replace(/\\(['\\])/g, '$1');
+}

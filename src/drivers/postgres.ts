@@ -780,6 +780,23 @@ export class PostgresDriver implements Driver {
     if (rows[0]?.ok !== 'true') throw new Error(`PostgreSQL didn’t ${how === 'cancel' ? 'cancel the query' : 'end the session'} (it may have finished, or you lack the privilege).`);
   }
 
+  async columnChoices(table: TableInfo): Promise<Record<string, string[]>> {
+    const client = await this.getClient();
+    // Enum columns, and domains over an enum.
+    const { rows } = await client.query<{ name: string; label: string }>(
+      `SELECT a.attname AS name, e.enumlabel AS label
+         FROM pg_attribute a
+         JOIN pg_type t ON t.oid = a.atttypid
+         JOIN pg_enum e ON e.enumtypid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END
+        WHERE a.attrelid = $1::regclass AND a.attnum > 0 AND NOT a.attisdropped
+        ORDER BY a.attnum, e.enumsortorder`,
+      [qualifiedName(table)],
+    );
+    const out: Record<string, string[]> = {};
+    for (const r of rows) (out[r.name] ??= []).push(r.label);
+    return out;
+  }
+
   async listSchemas(): Promise<string[]> {
     const client = await this.getClient();
     const { rows } = await client.query<{ name: string }>(
