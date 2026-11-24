@@ -22,6 +22,7 @@ import { Explainer } from './views/ExplainPanel';
 import { ServerPanels } from './views/ServerPanel';
 import { DumpForms } from './views/DumpForm';
 import { ImportForms } from './views/ImportForm';
+import { MockForms } from './views/MockForm';
 import { RunScriptForms } from './views/RunScriptForm';
 import { TableDesignForms } from './views/TableDesignForm';
 import { ResultsPanel } from './views/ResultsPanel';
@@ -44,6 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
   const forms = new ConnectionForms(context.extensionUri, manager, tree);
   const dumps = new DumpForms(context.extensionUri, manager);
   const imports = new ImportForms(context.extensionUri, manager);
+  const mocks = new MockForms(context.extensionUri, manager);
   // After DDL (a script, a new / renamed / dropped table): reload the tree and the editor's suggestions.
   const schemaChanged = (id: string) => {
     sqlEditor.clearSchema(id);
@@ -74,6 +76,7 @@ export function activate(context: vscode.ExtensionContext) {
     forms,
     dumps,
     imports,
+    mocks,
     designs,
     dangers,
     explainer,
@@ -128,6 +131,7 @@ export function activate(context: vscode.ExtensionContext) {
     command('dumpDatabase', (node?: ConnectionNode) => node && dumps.open(node.config.id)),
     command('dumpTable', (node?: TableNode) => node && dumps.open(node.connectionId, node.table)),
     command('importCsv', (node?: TableNode) => node && imports.openForTable(node.connectionId, node.table)),
+    command('generateMockData', (node?: TableNode) => node && mocks.open(node.connectionId, node.table)),
     command('importCsvFile', (uri?: unknown) => imports.openForFile(uri instanceof vscode.Uri ? uri : undefined)),
     command('runSqlFile', (uri?: unknown) => scripts.open(uri instanceof vscode.Uri ? uri : undefined)),
 

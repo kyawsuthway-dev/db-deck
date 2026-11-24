@@ -455,6 +455,11 @@ export class SqliteDriver implements Driver {
     return [];
   }
 
+  /** SQLite has no enum types; CHECK … IN lists are read by Generate Mock Data itself. */
+  async columnChoices(): Promise<Record<string, string[]>> {
+    return {};
+  }
+
   async schemaDiagram(): Promise<SchemaDiagram> {
     const db = await this.database();
     const all = (sql: string) => db.exec(sql)[0]?.values ?? [];

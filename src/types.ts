@@ -402,5 +402,10 @@ export interface Driver {
    * Empty when there's only the default, unnamed one (SQLite). Read-only.
    */
   listSchemas(): Promise<string[]>;
+  /**
+   * Allowed values per column from the column's own type, for Generate Mock Data: PostgreSQL enum labels,
+   * MySQL `enum(…)` / `set(…)` members. Columns without such a list are left out. Read-only.
+   */
+  columnChoices(table: TableInfo): Promise<Record<string, string[]>>;
   close(): Promise<void>;
 }

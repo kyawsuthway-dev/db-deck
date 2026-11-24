@@ -1345,3 +1345,80 @@ table.server-table td.row-actions {
     transform: rotate(90deg);
   }
 }
+
+/* Generate Mock Data: one row per column (name and type, generator, its options). */
+.mock-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mock-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(170px, 0.9fr) minmax(200px, 1.6fr);
+  gap: 10px;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.mock-name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.mock-column {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.mock-type {
+  color: var(--muted);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+.mock-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 100%;
+}
+.mock-generator {
+  height: 28px;
+  padding-left: 8px;
+}
+.mock-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+.mock-options > .hint {
+  margin: 0;
+}
+.mock-option {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.mock-option.wide {
+  flex: 1 1 220px;
+}
+.mock-option .input {
+  width: 110px;
+  height: 28px;
+  padding: 0 8px;
+}
+.mock-option.wide .input {
+  width: 100%;
+}
+.mock-option-label {
+  color: var(--muted);
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+@media (max-width: 700px) {
+  .mock-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
