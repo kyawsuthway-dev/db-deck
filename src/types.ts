@@ -397,5 +397,10 @@ export interface Driver {
    * unique keys and foreign keys, in a few catalog queries. Read-only.
    */
   schemaDiagram(schema?: string): Promise<SchemaDiagram>;
+  /**
+   * Schemas a structure compare can pick (empty ones too), by name; the default one is `defaultSchemaLabel()`.
+   * Empty when there's only the default, unnamed one (SQLite). Read-only.
+   */
+  listSchemas(): Promise<string[]>;
   close(): Promise<void>;
 }

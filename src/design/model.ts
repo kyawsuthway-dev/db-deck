@@ -16,6 +16,11 @@ export interface ColumnDesign {
   comment: string;
   /** A generated (computed) column of an existing table: shown, never changed. Set by the extension only. */
   generated?: boolean;
+  /**
+   * PostgreSQL `serial`: the default is nextval() of a sequence the column owns, shown as auto-increment (so
+   * it compares equal to an identity column, and turning it off drops the default). Set by the extension only.
+   */
+  ownedSequence?: boolean;
 }
 
 export interface IndexDesign {
@@ -165,11 +170,12 @@ export function parseDesign(raw: unknown): TableDesign | undefined {
 export function withServerFields(edited: TableDesign, original: TableDesign): TableDesign {
   const generated = new Map(original.columns.filter((c) => c.generated).map((c) => [c.key, c]));
   const constraints = new Set(original.indexes.filter((x) => x.constraint).map((x) => x.name));
+  const owned = new Set(original.columns.filter((c) => c.ownedSequence).map((c) => c.key));
   return {
     ...edited,
     // Generated columns can't be edited: the original definition is kept wherever the form put it.
     columns: [
-      ...edited.columns.filter((c) => !generated.has(c.key)).map((c) => ({ ...c, generated: undefined })),
+      ...edited.columns.filter((c) => !generated.has(c.key)).map((c) => ({ ...c, generated: undefined, ownedSequence: owned.has(c.key) || undefined })),
       ...[...generated.values()],
     ],
     indexes: edited.indexes.map((x) => ({ ...x, constraint: constraints.has(x.name) || undefined })),

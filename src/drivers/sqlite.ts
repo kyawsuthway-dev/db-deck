@@ -451,6 +451,10 @@ export class SqliteDriver implements Driver {
     throw new Error('SQLite has no server sessions.');
   }
 
+  async listSchemas(): Promise<string[]> {
+    return [];
+  }
+
   async schemaDiagram(): Promise<SchemaDiagram> {
     const db = await this.database();
     const all = (sql: string) => db.exec(sql)[0]?.values ?? [];
