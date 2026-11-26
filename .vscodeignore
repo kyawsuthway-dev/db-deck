@@ -19,3 +19,6 @@ AGENTS.md
 CLAUDE.md
 CONTRIBUTING.md
 media/**/*.md
+scripts/**
+media/icon.svg
+media/screenshots/**

@@ -19,6 +19,7 @@ Before adding a runtime dependency, check and report to the user:
 - It bundles with esbuild. If it lazily requires an optional native or platform module, mark that module `external` in `esbuild.mjs` with a comment saying why (as with `pg-native` and `cloudflare:sockets`).
 - Files it loads at runtime (like `sql-wasm.wasm`) are copied into `dist/` by `esbuild.mjs`; `.vscodeignore` excludes `node_modules/`.
 - License is MIT-compatible.
+- Run `task notices` so `THIRD_PARTY_NOTICES.md` lists it (and its dependencies) with their license texts.
 
 Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (MySQL/MariaDB). SSH tunnels: `ssh2`; its optional native parts (`sshcrypto.node`, `cpu-features`) are `external` in `esbuild.mjs`, so it uses its pure-JavaScript crypto. Compose files: `yaml` (pure JavaScript). ER diagram layout: `@dagrejs/dagre` (pure JavaScript, MIT), bundled into the diagram webview only, never the extension.
 

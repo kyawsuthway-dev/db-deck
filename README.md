@@ -1,129 +1,161 @@
 # DB Deck
 
-A free, open-source database explorer for VS Code. Browse local and remote databases and run SQL without leaving the editor.
+A free, open-source database client for VS Code. Browse local and remote databases, edit data, design tables and run SQL without leaving the editor.
 
-**SQLite · PostgreSQL · MySQL · MariaDB**
+**SQLite · PostgreSQL · MySQL · MariaDB** — no native modules, so it runs the same on Windows, macOS, Linux, WSL and remote hosts.
 
-> **Status:** early development. The first version (Phase 1) works; it isn't on the Marketplace yet.
+> **Preview:** DB Deck is new. It's used daily, but expect rough edges; please [report what you find](https://github.com/kyawsuthway-dev/db-deck/issues).
+
+![Browsing a table in DB Deck](media/screenshots/table-view.png)
 
 ## Features
 
-- **Connections sidebar** — a database icon in the activity bar lists your saved connections. Add, remove, refresh, and disconnect.
-- **Connection form** — **Add Connection** opens a form in an editor tab: database type, name and folder, then the **Connection** tab (host, port, user, password, database, SSL; or the file for SQLite), **SSH Tunnel** and **Options** (read-only). Paste a connection string such as `postgres://user@host:5432/db` to fill in the fields. **Save** tests the connection first; if that fails, the form shows why and offers **Save Anyway**. **Test Connection** only tests.
-- **Edit Connection…** — right-click a connection to change it in the same form. Saved passwords are never shown: leave a password field empty to keep it.
-- **SSH tunnel** — reach a PostgreSQL or MySQL server through an SSH host, with a password or a private key file (and its passphrase). The database host and port are then as seen from the SSH host (often `localhost`). The first time, DB Deck shows the SSH host's key fingerprint and asks you to trust it; after that it warns you if the key changes.
-- **This workspace only** — in the connection form, set **Available in** to **This workspace** to keep a connection with the current folder only. It's stored privately in VS Code's workspace storage, never in your project files.
-- **Connections from `.env`** — like DevDb, DB Deck reads the `.env` at the root of each workspace folder and shows its database in a **`<folder> · .env`** group, with no setup: Laravel's `DB_CONNECTION`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` (and `DB_URL`), and `DATABASE_URL` (`postgres://`, `mysql://`, `mariadb://`, or SQLite as `file:./dev.db` or `sqlite:///path`). They're read live: change `.env` and the connection follows. Right-click to **Open Source File**, **Save as Connection…** or **Toggle Read-only**. The setting `dbDeck.envFiles` picks which files to read (for example `.env.local`). **Docker projects** (such as Laravel Sail) work too: when `DB_HOST` is a service in the project's `compose.yaml` / `docker-compose.yml` (like `pgsql`), DB Deck connects to the port Docker publishes on your machine (for Sail, `localhost:${FORWARD_DB_PORT:-5432}`). Databases that only the compose file describes (a `postgres`, `mysql` or `mariadb` image, or a variant such as `pgvector`, with a published port) show up too, in a **`<folder> · docker-compose.yml`** group, with credentials from the service's `environment`. A compose database that a `.env` connection already reaches is shown once, from `.env`.
-- **Folders** — right-click a connection → **Move to Folder…** to group connections; right-click a folder to rename it. A folder disappears when its last connection leaves.
-- **Database logos** — the Connections view shows each connection's database logo (PostgreSQL, MySQL, SQLite), with a small green dot on the logo while it's connected.
-- **Read-only connections** — turn on **Read-only** to make the database session read-only and switch off table editing. The connection shows a 🔒.
-- **Browse your schema** — Connection → Tables, Views, Functions, Procedures and Sequences, with schema (PostgreSQL) or database (MySQL) folders when there's more than one. Tables expand to their columns (type and primary key marked), **Indexes** and **Triggers**.
-- **Show DDL** — right-click any object, or click a function, procedure, sequence, index or trigger, to see its definition in a new SQL editor. PostgreSQL table and sequence DDL is rebuilt from the catalog (PostgreSQL has no `SHOW CREATE TABLE`) and says what it leaves out.
-- **Generate SQL** — right-click a table → **Generate SQL** → SELECT, INSERT, UPDATE or DELETE opens starting SQL in an editor. It's never run for you, and run unedited it can't change existing rows: UPDATE and DELETE start with `WHERE <key> = NULL`, which matches nothing.
-- **Find Object…** — the 🔍 button in the Connections view searches tables, views, functions, procedures and sequences in your open connections, shows the one you pick in the tree and opens its rows or definition.
-- **Copy Name / Copy Qualified Name** on objects and columns, quoted only when needed.
-- **Switch Database…** — right-click a PostgreSQL or MySQL connection to reconnect it to another database on the same server.
-- **Click a table** to see its rows, 100 per page. Use **Previous** / **Next** to page through, and click a column header to sort (ascending, descending, then back to the default). Pages are ordered by primary key unless you sort.
-- **Filter a table** — type a SQL condition in the **WHERE** box above the rows, such as `(id = 1) AND (name = 'Hotel')` or `total > 100 OR status IS NULL`, and press **Enter**. **Escape** or **✕** clears it. Paging and sorting keep the filter. As you type, the box suggests column names (with their types) and, after a column, operators. Use **↑**/**↓** and **Tab** or **Enter** to insert one, and **Ctrl+Space** to open the list on demand.
-- **Run SQL** — **New Query** opens a SQL editor tied to a connection. Press **Ctrl+Enter** (**Cmd+Enter** on macOS) to run the selection, or the statement the cursor is in if nothing is selected. Click **▶ Run** above a statement to run just that one. **Run All** (**Ctrl+Shift+Enter** / **Cmd+Shift+Enter**, or ▶ in the editor title) runs the whole editor. Several `;`-separated statements each get their own result. Click a column header to sort the loaded rows; your SQL isn't run again.
-- **Autocomplete** — while you type, a SQL editor suggests table names, columns (after `table.` or an alias like `o.`, or from the tables in the statement), and keywords. Names are quoted when needed. Tables and columns are suggested once the connection is open; typing never connects.
-- **Format SQL** — **Format Document** (**Shift+Alt+F**) or **Format Selection** reformats SQL for the editor's database. Only spacing and line breaks change; keywords keep their case.
-- **Query history** — every query you run from a SQL editor is listed in the **Query History** view (per workspace, newest first, grouped by day) with its connection, time, duration and ✓ / ✗. Click one to open it in an editor; right-click to **Run Again**, **Copy SQL** or **Delete**. The view's toolbar searches and clears the history.
-- **Saved queries** — click **Save Query…** (bookmark icon) in a SQL editor's title bar, or right-click and choose it, to keep the query in the **Saved Queries** view under its connection. In a New Query editor, **Ctrl+S** (**Cmd+S**) does the same; **File → Save As…** still saves to a folder of your choice. Saved queries are ordinary `.sql` files: click to open, **Ctrl+S** to save changes, ▶ to run, right-click to rename or delete. They're available in every workspace and opening one doesn't connect.
-- **Pick the connection per editor** — the status bar shows which connection a SQL editor uses; click it to change. Saved `.sql` files remember their connection.
-- **Edit table data** — in a table with a primary key, double-click a cell (or press **Enter** / **F2**) to edit it. Use **Add Row** and **Delete Rows**, or right-click for **Set to NULL** (**Ctrl+0** / **Cmd+0**). Changes are marked in the grid until you click **Save…**, which shows a confirmation above the grid (**Review SQL** shows the statements there) and applies everything in one transaction when you click **Apply**. If someone else changed one of those rows in the meantime, nothing is saved.
-- **Value details** — click **Details** (or press **F4**) to open a pane beside the grid with the selected cell's full value. JSON objects and arrays can be shown indented (**JSON** / **Raw**); only spacing changes, so numbers and text stay exactly as stored. **Copy** copies the value as stored. In an editable table, edit long values there and **Apply** (**Ctrl+Enter**) them as pending changes, or **Set to NULL**.
-- **Hide columns** — right-click a column header → **Hide Column**, or use **Columns…** in the result's header. "N hidden · Show All" brings them back. Table views remember hidden columns per table; query results until the next run. Copy and Export leave hidden columns out.
-- **Count rows** — in a table view, **Count** next to the pager runs `SELECT COUNT(*)` with your WHERE filter and shows "Rows 1–100 of 12,345".
-- **New Table** — right-click a connection, a schema or the Tables folder → **New Table…** opens the Table Designer: name, schema and comment; columns (type with suggestions for your database, nullable, primary key, auto-increment, default, comment); indexes; foreign keys (referenced table and columns from lists, ON DELETE / ON UPDATE); check constraints. The exact SQL is shown as you edit, and **Create Table** runs it in one transaction.
-- **Design Table** — right-click a table → **Design Table…** opens the same designer with the table as it is: rename, add, drop or reorder columns (where the database can), change types, nullability, defaults and comments, the primary key, indexes, foreign keys and checks. Changed columns are marked, removed ones can be undone, **Reset** starts over. The SQL is shown, with warnings for what can lose data or fail (dropped columns, type changes, NOT NULL on a column that has NULLs). **Apply N Changes** checks the table hasn't changed meanwhile, then runs it in one transaction (MySQL: one ALTER TABLE, all or nothing). SQLite changes that ALTER TABLE can't make rebuild the table, keeping its rows, indexes and triggers.
-- **Rename, Truncate, Drop** — right-click a table → **Rename Table…**, **Truncate Table…** or **Drop…** (views too). Truncate and Drop open a form that says what will happen (row count, tables that reference it), shows the SQL, and asks you to type the table's name before the red button works. DB Deck never adds `CASCADE`.
-- **Dump to SQL File** — right-click a connection (or a table) → **Dump to SQL File…** opens a form: choose **Structure and data**, **Structure only** or **Data only**, tick the tables and views (with a filter and All / None), pick the file, and **Dump**. Progress and Cancel are in the form, and **Open File** when it's done. The file restores cleanly with Run SQL File: foreign keys, sequences and auto-increment counters are handled for each database, and binary columns are written in full.
-- **Import CSV** — right-click a table → **Import CSV…**, or a `.csv` / `.tsv` file in the Explorer → **Import CSV into Table…**. The form reads the file first (rows, broken lines), lets you pick the delimiter, header row and how empty fields are treated, shows the first rows with a dropdown per column to map it to a table column (matched by name), and imports everything in one transaction with progress and Cancel. If a row fails, it names the CSV line and nothing is kept. **Delete existing rows first** replaces the table's rows in the same transaction.
-- **Run SQL File** — right-click a `.sql` file in the Explorer (or in a SQL editor) → **Run SQL File…** opens a form: pick the connection, read what will happen (statement count, one transaction, warnings), then **Run N Statements**. It runs on its own connection with progress and Cancel: if a statement fails, nothing is kept, and **Show Line** takes you to it.
-- **ER Diagram** — right-click a connection, a schema or the Tables folder → **ER Diagram** to see a schema's tables as cards (columns with types, 🔑 primary keys, foreign-key marks) joined by lines from each foreign-key column to the column it references, with crow's-foot ends for one / many and optional / required. Tables are laid out automatically the first time; drag them (Shift+click to move several) and the layout is saved for that connection and schema. Pan by dragging the background or scrolling, zoom with Ctrl+scroll (Cmd on macOS) or the toolbar, **Fit** to see everything. Hover or click a table to color its relationship lines; double-click opens its rows, right-click offers **Design Table…** and **Show DDL**. Select tables and click **Color…** to give their headers a color (hovering a table then colors its lines with it), or **Group…** to put them in a named, colored group. **Re-arrange** lays everything out again (with Undo), and **Export** saves the whole diagram or the current view as SVG or PNG.
-- **Compare Structure** — right-click a connection or schema → **Compare Structure…** to compare its tables with another schema of the same kind of database (another server, database or schema). The form lists new tables, changed tables (each change with its own tick) and tables only in the target (unticked: dropping loses data). If a column was renamed, pair the old and new names so the data is kept. The SQL is shown as you tick; **Open in Editor** gives it to you to run yourself, or **Apply N Changes** runs it on the target after checking nothing changed there since you compared.
-- **Generate Mock Data** — right-click a table → **Generate Mock Data…**. Each column gets a generator picked from its name and type (names, emails, phones, addresses, URLs, UUIDs, lorem text, numbers and dates in a range, booleans, JSON, values of an enum or a `CHECK … IN` list, a fixed value, NULL, or the database's default), which you can change along with its range or length. Foreign keys take values from existing parent rows, unique columns stay unique (also against the rows already there), and the seed makes the rows repeatable. The preview shows the first rows exactly as they'll be inserted; **Insert N Rows** (up to 10,000) runs in one transaction with progress and Cancel.
-- **Explain** — right-click in a SQL editor → **Explain**, or click **Explain** above a statement, to see how the database would run it, without running it: a tree of steps with cost bars, estimated rows, details (conditions, keys) and hints such as a full scan of a large table. **Raw** shows the database's own output, with **Copy**. **Explain Analyze** (PostgreSQL, MySQL 8) also runs the statement to measure real times and rows; it's offered only for reading statements (SELECT, WITH, VALUES, TABLE) and runs in a read-only transaction on a separate connection that is rolled back.
-- **Server** — right-click a connection → **Server…** opens a panel with **Status** (version, uptime, size, connections, cache hit ratio and more), **Processes** (PostgreSQL, MySQL: who is connected and what they run, with Refresh and Auto-refresh; **Cancel Query** and **End Session** each ask first, and are off on read-only connections) and **Settings** (the server's settings, with a filter).
-- **Export** — click **Export…** on a result and choose CSV, JSON, or SQL INSERT statements (table views only). For a table you can export the current page or all rows matching the WHERE filter, with progress and Cancel.
-- **Copy** — click a cell, Shift+click or drag for a range, click row numbers for whole rows, or press **Ctrl+A** (**Cmd+A**) for everything. **Ctrl+C** (**Cmd+C**) copies tab-separated text that pastes into spreadsheets. Right-click for **Copy with Headers**, **Copy as CSV**, and **Copy as JSON**.
-- **Works everywhere VS Code does** — no native modules, so it runs the same on Windows, macOS, Linux, WSL, and remote hosts.
+### Connections
 
-## Install
+- **Connections sidebar** — the database icon in the activity bar lists your connections, with each database's logo and a green dot while connected. Group them in **folders** (Move to Folder…).
+- **Connection form** — database type, name and folder; host, port, user, password, database and SSL (or the file for SQLite). Paste a connection string such as `postgres://user@host:5432/db` to fill it in. **Save** tests the connection first and offers **Save Anyway** if that fails. Saved passwords are never shown: leave a password field empty to keep it.
+- **SSH tunnel** — reach PostgreSQL or MySQL through an SSH host, with a password or a private key file. The first time, DB Deck shows the host key's fingerprint and asks you to trust it, then warns if it changes.
+- **Read-only connections** — the database session is read-only and editing is off. The connection shows a 🔒.
+- **This workspace only** — set **Available in** to **This workspace** to keep a connection with the current folder, stored privately in VS Code (never in your project files).
+- **Connections from `.env`** — DB Deck reads the `.env` at the root of each workspace folder and shows its database with no setup: Laravel's `DB_CONNECTION`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` (and `DB_URL`), and `DATABASE_URL` (`postgres://`, `mysql://`, `mariadb://`, or SQLite as `file:./dev.db` / `sqlite:///path`). They follow the file live. Right-click for **Open Source File**, **Save as Connection…** or **Toggle Read-only**.
+- **Docker projects** (such as Laravel Sail) — when `DB_HOST` is a service in the project's `compose.yaml` / `docker-compose.yml`, DB Deck connects to the port Docker publishes on your machine. Database services that only the compose file describes (a `postgres`, `mysql` or `mariadb` image, or a variant such as `pgvector`, with a published port) show up too, with credentials from the service's `environment`.
 
-The extension isn't published yet. To try it, build a `.vsix` (see [CONTRIBUTING.md](CONTRIBUTING.md)) with `task package`, then in VS Code run **Extensions: Install from VSIX…** and choose the file.
+### Browsing
 
-## Usage
+- **Schema tree** — Tables, Views, Functions, Procedures and Sequences, in schema (PostgreSQL) or database (MySQL) folders when there's more than one. Tables expand to columns (type and 🔑 primary key), **Indexes** and **Triggers**.
+- **Show DDL** for any object, in a new SQL editor. PostgreSQL table and sequence DDL is rebuilt from the catalog and says what it leaves out.
+- **Generate SQL** — SELECT, INSERT, UPDATE or DELETE for a table, opened in an editor and never run for you. Run unedited it can't change rows: UPDATE and DELETE start with `WHERE <key> = NULL`.
+- **Find Object…** (🔍 in the Connections view) searches your open connections and reveals the object in the tree.
+- **Copy Name / Copy Qualified Name**, quoted only when needed. **Switch Database…** reconnects a PostgreSQL or MySQL connection to another database.
 
-1. Click the **database icon** in the activity bar, then **Add Connection**.
-2. Choose the database type and fill in the details. If the test fails you can edit the settings or save anyway.
-3. Expand the connection to browse tables, views, and columns. Click a table to see its rows.
-4. Click the **New Query** icon on a connection, write SQL, and press **Ctrl+Enter** / **Cmd+Enter**.
+### Table data
+
+![Editing rows with the value detail pane](media/screenshots/edit-data.png)
+
+- **Rows** — click a table to see 100 rows per page, ordered by primary key. **Previous** / **Next** page through; click a column header to sort.
+- **WHERE filter** — type a SQL condition such as `total > 100 OR status IS NULL` above the rows and press **Enter** (**Escape** clears it). Column names with their types and operators are suggested as you type.
+- **Count** runs `SELECT COUNT(*)` with your filter: "Rows 1–100 of 12,345".
+- **Edit** — in a table with a primary key, double-click a cell (or **Enter** / **F2**), **Add Row**, **Delete Rows**, **Set to NULL** (**Ctrl+0**). Changes stay marked until **Save…** shows a confirmation (with **Review SQL**) and **Apply** runs them in one transaction. If someone changed one of those rows meanwhile, nothing is saved.
+- **Value details** (**Details** or **F4**) — the selected cell's full value beside the grid. JSON can be shown indented without changing a single value; edit long values there in editable tables.
+- **Hide columns** from the header's right-click menu or **Columns…**; remembered per table.
+- **Copy** — select cells, ranges or rows (**Ctrl+A** for all) and **Ctrl+C** for tab-separated text, or right-click for **Copy with Headers**, **Copy as CSV**, **Copy as JSON**.
+- **Export…** a result as CSV, JSON or SQL INSERT statements; for tables, the current page or every row matching the filter.
+
+### SQL editor
+
+- **New Query** opens a SQL editor tied to a connection (shown in the status bar; click it to change). **Ctrl+Enter** (**Cmd+Enter**) runs the selection or the statement at the cursor, **▶ Run** above a statement runs that one, and **Run All** (**Ctrl+Shift+Enter**) runs everything. Each statement gets its own result.
+- **Autocomplete** for tables, columns (also after an alias like `o.`) and keywords, once the connection is open. Typing never connects.
+- **Format SQL** (**Shift+Alt+F**) in the editor's database dialect; only spacing and line breaks change.
+- **Query History** view — every run from a SQL editor, per workspace and grouped by day, with connection, time, duration and ✓ / ✗. Open, **Run Again**, **Copy SQL**, search or clear.
+- **Saved Queries** view — **Save Query…** (or **Ctrl+S** in a New Query editor) keeps a query as a `.sql` file under its connection, available in every workspace.
+
+### Table design
+
+![The Table Designer](media/screenshots/table-designer.png)
+
+- **New Table…** and **Design Table…** open the Table Designer: columns (types suggested for your database, nullable, primary key, auto-increment, default, comment), indexes, foreign keys and checks. The exact SQL is shown as you edit, with warnings for what can lose data. **Design Table** checks the table hasn't changed since you opened it, then applies everything in one transaction (SQLite rebuilds the table when ALTER TABLE can't, keeping its rows, indexes and triggers).
+- **Rename Table…**, **Truncate Table…** and **Drop…** — Truncate and Drop say what will happen and ask you to type the name first. DB Deck never adds `CASCADE`.
+
+### Data transfer
+
+- **Dump to SQL File…** — structure and/or data for the tables and views you tick, restorable with Run SQL File (foreign keys, sequences and auto-increment counters handled per database; binary data in full).
+- **Run SQL File…** — right-click a `.sql` file: the form shows what will happen, then runs it in one transaction on its own connection with progress and Cancel. If a statement fails nothing is kept, and **Show Line** takes you there.
+- **Import CSV…** — from a table, or a `.csv` / `.tsv` file in the Explorer. Pick the delimiter and header row, map columns (matched by name) in a preview, and import in one transaction. A failing row names its CSV line and nothing is kept. **Delete existing rows first** replaces the table's rows in the same transaction.
+
+### Tools
+
+![An ER diagram](media/screenshots/er-diagram.png)
+
+- **ER Diagram** — a schema's tables as cards joined by curved lines from each foreign-key column to the column it references, with crow's-foot ends. Laid out automatically, then drag to arrange: the layout is saved per connection and schema. Color table headers, group tables, highlight a table's relationships, and export as SVG or PNG.
+- **Compare Structure…** — compare a schema's tables with another schema of the same database type (another server, database or schema). Tick the changes to sync (drops start unticked), pair renamed columns so data is kept, see the SQL, then **Open in Editor** or **Apply** on the target after a re-check.
+- **Generate Mock Data…** — a generator per column, picked from its name and type (names, emails, addresses, UUIDs, numbers and dates in a range, enum and `CHECK … IN` values…). Foreign keys use existing parent rows, unique columns stay unique, and a seed makes rows repeatable. The preview shows the first rows exactly as they'll be inserted; up to 10,000 rows in one transaction.
+- **Explain** — right-click in a SQL editor, or **Explain** above a statement: the plan as a tree with cost bars, row estimates and hints, without running it. **Explain Analyze** (PostgreSQL, MySQL 8) measures real times for reading statements only, in a read-only transaction that is rolled back.
+- **Server…** — status (version, uptime, size, connections, cache hit ratio…), processes with **Cancel Query** / **End Session** (each asks first; off on read-only connections) and searchable server settings.
+
+## Getting started
+
+1. Install **DB Deck** from the Extensions view (search for "DB Deck"), or a `.vsix` with **Extensions: Install from VSIX…**.
+2. Click the **database icon** in the activity bar, then **Add Connection**.
+3. Choose the database type, fill in the details and **Save**.
+4. Expand the connection to browse; click a table to see its rows.
+5. Click **New Query** on a connection, write SQL, and press **Ctrl+Enter** (**Cmd+Enter** on macOS).
 
 | Command | Where |
 | --- | --- |
 | Add Connection | Connections view toolbar, Command Palette |
 | New Query | Connections toolbar, connection or table (inline / right-click) |
-| Show Rows | Click a table, or right-click it |
 | Run Query (selection or statement at cursor) | `Ctrl+Enter` / `Cmd+Enter` in a SQL editor, **▶ Run** above a statement |
 | Run All | `Ctrl+Shift+Enter` / `Cmd+Shift+Enter`, ▶ in the editor title |
 | Select Connection for This Editor | Status bar, Command Palette |
-| Save Query… | Bookmark icon in a SQL editor's title bar, right-click in a SQL editor, Saved Queries view toolbar, `Ctrl+S` / `Cmd+S` in a New Query editor |
-| Search / Clear Query History | Query History view toolbar, Command Palette |
-| Refresh / Disconnect / Switch Database… / Edit Connection… / Move to Folder… / Remove Connection | Right-click a connection |
-| Rename Folder… | Right-click a folder |
-| Show DDL / Generate SQL / Copy Name | Right-click a table, view or other object |
+| Save Query… | Bookmark icon in a SQL editor's title bar, right-click in a SQL editor, `Ctrl+S` / `Cmd+S` in a New Query editor |
 | Find Object… | Connections view toolbar, Command Palette |
+| Edit Connection… / Move to Folder… / Switch Database… / Server… / Remove Connection | Right-click a connection |
+| Design Table… / Import CSV… / Generate Mock Data… / Dump to SQL File… / Show DDL / Generate SQL | Right-click a table |
+| ER Diagram / Compare Structure… / New Table… | Right-click a connection or schema |
 
 All commands are in the Command Palette under **DB Deck**.
 
-## Security and privacy
+## Settings
 
-- Passwords, SSH passwords and key passphrases are stored only in VS Code's **SecretStorage** (`.env` passwords aren't stored at all) (your OS keychain), never in settings files. Private key files are read when connecting and never copied.
-- Browsing and table previews only read. The extension writes to a database only when you run SQL that does, or when you click **Apply** to save table edits.
-- No telemetry. The extension only talks to the databases you configure.
-- **Query history** stores the SQL you run exactly as typed, in VS Code's local workspace storage, so it can include values you typed into queries. It never leaves your machine. Turn it off with the `dbDeck.history.enabled` setting, and remove it with **Clear Query History**.
+| Setting | Default | |
+| --- | --- | --- |
+| `dbDeck.history.enabled` | `true` | Record queries run from SQL editors in the Query History view (per workspace, the 1,000 newest). Turning it off stops recording; **Clear Query History** removes what's there. |
+| `dbDeck.envFiles` | `[".env"]` | Files at the root of each workspace folder read for database connections, for example `[".env", ".env.local"]`. An empty list turns this off. |
 
-## Good to know
+## Privacy and security
+
+- **No telemetry.** DB Deck only talks to the databases (and SSH hosts) you configure.
+- **Passwords** — database passwords, SSH passwords and key passphrases are stored only in VS Code's SecretStorage (your OS keychain), never in settings files. `.env` and compose passwords are read when connecting and kept only in memory. Private key files are read when connecting and never copied.
+- **Writes happen only when you ask.** Browsing, previews and metadata only read. DB Deck writes when you run SQL that does, or when you confirm in a form: **Apply** for table edits and designs, **Run** for a SQL file, **Import**, **Insert** for mock data, **Create Table**, **Apply** in Compare Structure, or after typing a table's name for Truncate and Drop. Read-only connections refuse all of these.
+- **Query history** stores the SQL you run exactly as typed, in VS Code's local workspace storage, so it can include values you typed. It never leaves your machine; turn it off with `dbDeck.history.enabled`.
+- **Read-only** is a guard against mistakes, not a security boundary (see below). For a real guarantee, connect as a database user that can't write.
+
+## Known limitations
+
+### General
 
 - Results keep up to 10,000 rows per statement.
-- **SQLite** runs in WebAssembly on an in-memory copy of the file. The file is reloaded when it changes on disk, and written back after each run that might change it. A transaction left open at the end of a run is not kept open.
-- **PostgreSQL and MySQL** keep one connection open per saved connection, so `BEGIN` … `COMMIT` across several runs works.
-- Encrypted connections: choose **SSL** (verifies the certificate) or **SSL, allow self-signed** in the connection form.
-- **`.env` connections** read the file when they connect and keep the password only in memory; nothing from `.env` is saved. If an open `.env` connection's settings change, DB Deck disconnects it and tells you. Only the root of each workspace folder is read, and only in trusted workspaces (VS Code doesn't run DB Deck in Restricted Mode). SQLite paths are relative to the `.env` folder (for `file:` URLs, the `prisma/` folder first). `${VAR}` references are expanded; a bare `$` is kept as written. For Docker databases, the compose file must publish the database port (`ports:`); variables in it are filled from the same `.env`, not from your shell. DB Deck only reads the compose file, it never runs `docker`: if a container isn't running, connecting fails with a hint to start it. Passwords given as Docker secrets (`*_FILE`), `env_file:` directives and images with their own variable names (such as Bitnami's) aren't read.
-- **SSH tunnels** open one SSH session per connection and a channel per database connection; no local port is opened. SSL still works through the tunnel and checks the certificate against the database host you entered. SSH agents, jump hosts and `~/.ssh/config` aren't supported yet.
-- **Read-only** is a guard against mistakes, not a security boundary. PostgreSQL and MySQL start each session read-only, which rejects writes and schema changes, but SQL can turn that off again (`SET`, `BEGIN READ WRITE`, `START TRANSACTION READ WRITE`), and the database decides what functions with side effects may do. SQLite runs with `PRAGMA query_only` and never writes the file back. For a real guarantee, connect as a database user that can't write.
-- MySQL `DELIMITER` scripts aren't supported yet, for running or formatting (Run SQL File says so instead of running them).
-- **Dumps** are portable SQL for moving data, not a full backup: functions, procedures, triggers, users, permissions and server settings aren't included (the file says so). Restore into an empty database: tables are created with `CREATE TABLE`, which fails if they already exist. PostgreSQL views come from `pg_get_viewdef`, and MySQL views lose their `DEFINER` and source-database prefix so they work elsewhere. Views that depend on other views may need reordering.
-- **Table design** sends defaults, types and CHECK conditions as you typed them. PostgreSQL type changes use `USING column::type`, and PostgreSQL can't reorder columns (new ones go at the end). SQLite can't rebuild tables with generated columns yet. Indexes on expressions or partial indexes aren't shown in the designer and are left as they are (SQLite keeps them through a rebuild). (each must be one SQL fragment, no `;`). MySQL commits each CREATE / DROP / TRUNCATE on its own, so it can't be rolled back; PostgreSQL and SQLite run them in a transaction. SQLite has no TRUNCATE (DB Deck runs `DELETE FROM`) and doesn't enforce foreign keys unless the database turns them on. Not on read-only connections.
-- **Compare Structure** compares tables only (columns, primary keys, indexes, foreign keys, checks, comments), not views, functions, triggers, table options or data. Index, foreign key and check names generated by the server count as the same when the definitions match. Type spellings must match exactly (`int(11)` and `int` differ). Generated columns, expression or partial indexes and triggers aren't compared. MySQL commits each CREATE / ALTER / DROP on its own, so a failure part-way leaves the earlier statements applied; PostgreSQL and SQLite roll everything back. Apply isn't offered on read-only targets.
-- **ER diagram layouts** (positions, groups, zoom) are kept in VS Code's own storage per connection, database and schema, never in your project; removing a connection removes them. Views aren't drawn, and foreign keys to another schema end in a label instead of a line.
-- **Explain Analyze** runs on its own connection, so temporary tables and `SET` from your editor's session aren't there. It isn't available for SQLite (no EXPLAIN ANALYZE) or MariaDB (different syntax), and older MySQL / MariaDB show the tabular EXPLAIN as a flat list. Cancel Query and End Session need the database's permission (PostgreSQL: your own sessions or `pg_signal_backend`; MySQL: your own or `CONNECTION_ADMIN`).
-- **Import CSV** reads UTF-8 files only. Values are sent as text and the database converts them, so dates and numbers must be in formats it accepts. Rows with a different number of fields than the header stop the import before anything is written. Binary and generated columns can't be filled from a CSV. **Delete existing rows first** uses `DELETE`, so `ON DELETE CASCADE` foreign keys delete rows in other tables too. Not on read-only connections.
-- **Generate Mock Data** fills one table at a time (add parent rows first), in English only. Binary, array and spatial columns aren't generated, and CHECK constraints other than simple `IN` lists aren't evaluated: a row that fails one stops the insert and nothing is kept. Foreign keys pick from the first 10,000 parent rows; unique columns are checked against the first 100,000 existing values. Values are sent as text for the database to convert. Not on read-only connections.
-- **Run SQL File** runs the file as saved. A file with its own `BEGIN` / `COMMIT` runs as written, without DB Deck's transaction. **MySQL** commits at every `CREATE` / `ALTER` / `DROP`, so a failing script there keeps everything up to its last schema change; the confirmation says so. Not on read-only connections.
-- **Keyboard shortcuts** (**Ctrl+Enter**, **Ctrl+Shift+Enter**, and **Ctrl+S** in a New Query editor) apply only in SQL editors linked to a DB Deck connection, so other SQL extensions keep theirs in their own editors. If another extension also uses **Ctrl+Enter** in the same editor, VS Code picks one of them: change one in **Keyboard Shortcuts** (search for `dbDeck.runQuery`), or use DB Deck's ▶ buttons.
-- **PostgreSQL** objects need PostgreSQL 12 or newer. Functions that belong to an extension (such as `pgcrypto`) aren't listed.
-- **MySQL** function, procedure and trigger DDL contains `;` inside its body. DB Deck shows it for reading; running it needs a client that supports `DELIMITER`.
+- **SQLite** runs in WebAssembly on an in-memory copy of the file. The file is reloaded when it changes on disk and written back after each run that might change it. A transaction left open at the end of a run is not kept open.
+- **PostgreSQL and MySQL** keep one connection open per saved connection, so `BEGIN` … `COMMIT` across several runs works. **PostgreSQL** objects need PostgreSQL 12 or newer; functions that belong to an extension (such as `pgcrypto`) aren't listed.
+- **Read-only:** PostgreSQL and MySQL start each session read-only, but SQL can turn that off again (`SET`, `BEGIN READ WRITE`, `START TRANSACTION READ WRITE`), and the database decides what functions with side effects may do. SQLite runs with `PRAGMA query_only` and never writes the file back.
 - **Switch Database…** reconnects, so it asks first when the connection is open: an open transaction ends.
-- **Autocomplete** reads the tables in the current statement (`FROM`, `JOIN`, `UPDATE`, `INSERT INTO`) without running anything. After you change the schema outside DB Deck, use **Refresh** on the connection to update the suggestions.
-- The **WHERE** filter is plain SQL for your database, with its own rules. For example, `LIKE` is case-sensitive in PostgreSQL (use `ILIKE`), but usually not in MySQL. It must be a single condition: anything after a `;` is rejected, not run.
-- **Export and copy** write values exactly as shown. NULL is an empty field in CSV and copied text (an empty string is `""`), and `null` in JSON. JSON values stay text, so large numbers keep every digit. CSV files start with a UTF-8 byte order mark so Excel reads non-English text correctly.
-  - Binary columns export as the shortened hex the grid shows, not the original bytes.
-  - SQL INSERT statements for MySQL escape backslashes, which is wrong if the server runs with `NO_BACKSLASH_ESCAPES`.
-  - Values starting with `=`, `+`, `-` or `@` are kept as they are. Be careful opening exports of untrusted data in a spreadsheet, which may treat them as formulas.
-  - Exporting all rows of a table with no primary key and no sort may repeat or skip rows.
-  - Hidden columns aren't exported. SQL INSERT statements without some columns give those columns their default values when run, so the export asks first.
-- **Table edits** need a primary key; views and tables without one are read-only, and so are binary columns.
-  - Values are typed as text and the database converts them. An empty cell is an empty string; use **Set to NULL** for NULL.
-  - Saving uses its own short connection, so a transaction you left open in a query editor isn't affected. For SQLite, the save is written straight to the file.
-  - The conflict check compares the cells you edited with what was loaded, except `float`/`double`/`real` columns, whose text form may not match exactly. Those rows are still matched by primary key. `json` columns are compared by their text.
-  - MySQL normalises `JSON` when it stores it (for example `1.10` becomes `1.1`, and integers beyond 64 bits become floating-point numbers), so that's what DB Deck shows.
-  - MySQL tables using the MyISAM engine don't support transactions, so a failed save there may be partly applied.
-  - Unsaved edits are lost if you close the Results tab.
+
+### Connections
+
+- Encrypted connections: **SSL** verifies the certificate; **SSL, allow self-signed** doesn't.
+- **SSH tunnels** use one SSH session per connection and a channel per database connection; no local port is opened. SSL still checks the certificate against the database host you entered. SSH agents, jump hosts and `~/.ssh/config` aren't supported yet.
+- **`.env` connections** — only the root of each workspace folder is read, and only in trusted workspaces. If an open connection's settings change, DB Deck disconnects it and tells you. SQLite paths are relative to the `.env` folder (for `file:` URLs, the `prisma/` folder first). `${VAR}` references are expanded; a bare `$` is kept as written.
+- **Docker** — the compose file must publish the database port (`ports:`); its variables are filled from the same `.env`, not your shell. DB Deck only reads the compose file and never runs `docker`: if a container isn't running, connecting fails with a hint to start it. Docker secrets (`*_FILE`), `env_file:` and images with their own variable names (such as Bitnami's) aren't read.
+
+### SQL editor
+
+- MySQL `DELIMITER` scripts aren't supported yet, for running or formatting (Run SQL File says so instead of running them). MySQL function, procedure and trigger DDL is shown for reading; running it needs a client that supports `DELIMITER`.
+- **Keyboard shortcuts** (**Ctrl+Enter**, **Ctrl+Shift+Enter**, and **Ctrl+S** in a New Query editor) apply only in SQL editors linked to a DB Deck connection. If another extension also uses **Ctrl+Enter** in the same editor, change one in **Keyboard Shortcuts** (search for `dbDeck.runQuery`), or use the ▶ buttons.
+- **Autocomplete** reads the tables in the current statement without running anything. After changing the schema outside DB Deck, **Refresh** the connection to update the suggestions.
 - **Query history** keeps the 1,000 newest runs per workspace (fewer when queries are very long). SQL over 100,000 characters is kept shortened and can't be run again from history. Table views, paging and filters aren't recorded.
-- **Saved queries** live in DB Deck's own storage folder, not in your project, so they aren't committed with it or synced by Settings Sync. When you remove a connection, its saved queries and history are kept and marked as belonging to a removed connection.
+- **Saved queries** live in DB Deck's own storage folder, not in your project, so they aren't committed or synced by Settings Sync. Removing a connection keeps its saved queries and history, marked as belonging to a removed connection.
+
+### Table data
+
+- The **WHERE** filter is plain SQL for your database, with its rules (for example, `LIKE` is case-sensitive in PostgreSQL; use `ILIKE`). It must be a single condition: anything after a `;` is rejected, not run.
+- **Editing** needs a primary key; views, tables without one and binary columns are read-only. Values are typed as text and the database converts them; an empty cell is an empty string (use **Set to NULL** for NULL). Saving uses its own short connection, so a transaction left open in a query editor isn't affected. Unsaved edits are lost if you close the Results tab.
+- The save conflict check compares the cells you edited with what was loaded, except `float` / `double` / `real` columns (still matched by primary key); `json` columns are compared by their text. MySQL normalises `JSON` when storing it (`1.10` becomes `1.1`), so that's what DB Deck shows. MyISAM tables have no transactions, so a failed save there may be partly applied.
+- **Export and copy** write values exactly as shown. NULL is an empty field in CSV and copied text (an empty string is `""`), and `null` in JSON. JSON values stay text, so large numbers keep every digit. CSV files start with a UTF-8 byte order mark for Excel. Binary columns export as the shortened hex the grid shows. MySQL INSERT statements escape backslashes, which is wrong with `NO_BACKSLASH_ESCAPES`. Values starting with `=`, `+`, `-` or `@` are kept as they are: be careful opening exports of untrusted data in a spreadsheet. Exporting all rows of a table with no primary key and no sort may repeat or skip rows. Hidden columns aren't exported.
+
+### Table design and data transfer
+
+- **Table design** sends defaults, types and CHECK conditions as you typed them (each must be one SQL fragment, no `;`). PostgreSQL type changes use `USING column::type`, and PostgreSQL can't reorder columns (new ones go at the end). Indexes on expressions and partial indexes aren't shown in the designer and are left as they are (SQLite keeps them through a rebuild). SQLite can't rebuild tables with generated columns yet, has no TRUNCATE (DB Deck runs `DELETE FROM`) and doesn't enforce foreign keys unless the database turns them on.
+- **MySQL** commits each CREATE / ALTER / DROP / TRUNCATE on its own, so those can't be rolled back: a failing script or sync keeps everything up to its last schema change (the forms say so). PostgreSQL and SQLite roll everything back.
+- **Dumps** are portable SQL for moving data, not a full backup: functions, procedures, triggers, users, permissions and server settings aren't included (the file says so). Restore into an empty database. MySQL views lose their `DEFINER` and source-database prefix; views that depend on other views may need reordering.
+- **Run SQL File** runs the file as saved; a file with its own `BEGIN` / `COMMIT` runs as written, without DB Deck's transaction.
+- **Import CSV** reads UTF-8 files only. Values are sent as text for the database to convert, so dates and numbers must be in formats it accepts. Rows with a different number of fields than the header stop the import before anything is written. Binary and generated columns can't be filled. **Delete existing rows first** uses `DELETE`, so `ON DELETE CASCADE` foreign keys delete rows in other tables too.
+
+### Tools
+
+- **ER diagram** layouts are kept in VS Code's own storage per connection, database and schema, never in your project; removing a connection removes them. Views aren't drawn, and foreign keys to another schema end in a label.
+- **Compare Structure** compares tables only (columns, primary keys, indexes, foreign keys, checks, comments), not views, functions, triggers, table options or data. Server-generated index, foreign key and check names count as the same when the definitions match. Type spellings must match exactly (`int(11)` and `int` differ). Generated columns, expression or partial indexes and triggers aren't compared.
+- **Generate Mock Data** fills one table at a time (add parent rows first), in English only. Binary, array and spatial columns aren't generated, and CHECK constraints other than simple `IN` lists aren't evaluated. Foreign keys pick from the first 10,000 parent rows; unique columns are checked against the first 100,000 existing values.
+- **Explain Analyze** runs on its own connection, so temporary tables and `SET` from your editor's session aren't there. It isn't available for SQLite or MariaDB, and older MySQL / MariaDB show the tabular EXPLAIN as a flat list. Cancel Query and End Session need the database's permission (PostgreSQL: your own sessions or `pg_signal_backend`; MySQL: your own or `CONNECTION_ADMIN`).
 
 ## Contributing
 
@@ -131,4 +163,4 @@ Contributions are welcome. You only need Docker, [Task](https://taskfile.dev) an
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). DB Deck bundles open-source libraries listed with their licenses in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

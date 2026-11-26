@@ -88,6 +88,11 @@ tasks:
                 M._load = function (r, ...a) { return r === "vscode" ? {} : load.call(this, r, ...a); };
                 console.log(Object.keys(require("/app/dist/extension.js")));'
 
+    notices:
+        desc: Write THIRD_PARTY_NOTICES.md from the packages actually bundled (run after adding or upgrading a dependency)
+        cmds:
+            - '{{.EXEC}} sh -c "node esbuild.mjs --production --metafile=/tmp/db-deck-meta.json && node scripts/notices.mjs /tmp/db-deck-meta.json"'
+
     package:
         desc: 'Build a production .vsix — install it with "Extensions: Install from VSIX…"'
         cmds:

@@ -2,18 +2,29 @@
   "name": "db-deck",
   "displayName": "DB Deck",
   "description": "Free, open-source database explorer for VS Code. Browse local and remote databases and run SQL without leaving the editor.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "kyawsuthway-dev",
   "license": "MIT",
+  "icon": "media/icon.png",
+  "preview": true,
+  "galleryBanner": {
+    "color": "#1d2747",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/kyawsuthway-dev/db-deck"
   },
+  "bugs": {
+    "url": "https://github.com/kyawsuthway-dev/db-deck/issues"
+  },
+  "homepage": "https://github.com/kyawsuthway-dev/db-deck#readme",
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
     "Programming Languages",
+    "Data Science",
     "Other"
   ],
   "keywords": [
@@ -22,7 +33,14 @@
     "sqlite",
     "postgresql",
     "mysql",
-    "mariadb"
+    "mariadb",
+    "database client",
+    "sql editor",
+    "query",
+    "explorer",
+    "er diagram",
+    "mock data",
+    "ssh tunnel"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [],

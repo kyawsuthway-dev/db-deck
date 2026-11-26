@@ -1,8 +1,10 @@
 import * as esbuild from 'esbuild';
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+/** `--metafile=<path>`: build nothing, only write esbuild's list of bundled files there (for `task notices`). */
+const metafile = process.argv.find((a) => a.startsWith('--metafile='))?.slice('--metafile='.length);
 
 /** Prints build start/finish lines so VS Code's $esbuild-watch problem matcher knows when F5 can launch. */
 const problemMatcherPlugin = {
@@ -35,6 +37,7 @@ const shared = {
   minify: production,
   sourcemap: !production,
   logLevel: 'silent',
+  ...(metafile ? { metafile: true, write: false } : {}),
 };
 
 // The extension itself, run by VS Code's Node.
@@ -49,7 +52,7 @@ const extension = await esbuild.context({
   // ssh2 tries its optional native crypto (sshcrypto.node) and cpu-features inside try/catch: left out of the
   // bundle, those requires fail and ssh2 uses its pure-JavaScript crypto, on every platform (core.md rule 1).
   external: ['vscode', 'pg-native', 'cloudflare:sockets', 'cpu-features', '*.node'],
-  plugins: [copySqlWasmPlugin, problemMatcherPlugin],
+  plugins: metafile ? [] : [copySqlWasmPlugin, problemMatcherPlugin],
 });
 
 // The webview scripts, run inside webviews (a browser): the results grid and the forms (connection, dump, run file).
@@ -61,13 +64,17 @@ const webview = await esbuild.context({
   platform: 'browser',
   target: 'es2022',
   outdir: 'dist/webview',
-  plugins: [problemMatcherPlugin],
+  plugins: metafile ? [] : [problemMatcherPlugin],
 });
 
 const contexts = [extension, webview];
 if (watch) {
   await Promise.all(contexts.map((ctx) => ctx.watch()));
 } else {
-  await Promise.all(contexts.map((ctx) => ctx.rebuild()));
+  const results = await Promise.all(contexts.map((ctx) => ctx.rebuild()));
   await Promise.all(contexts.map((ctx) => ctx.dispose()));
+  if (metafile) {
+    const inputs = Object.assign({}, ...results.map((r) => r.metafile.inputs));
+    await writeFile(metafile, JSON.stringify({ inputs }));
+  }
 }
