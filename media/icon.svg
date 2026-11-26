@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Source of media/icon.png (render: convert -background none media/icon.svg media/icon.png). Plain paths, no
+       transforms or gradients, so ImageMagick's built-in renderer draws it correctly. -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#1d2747"/>
+  <!-- The deck: three cards fanned behind the database. -->
+  <g stroke="#1d2747" stroke-width="4">
+    <path d="M44.18 55.19L117.23 34.24A14 14 0 0 1 134.55 43.84L165.42 151.50A14 14 0 0 1 155.82 168.81L82.77 189.76A14 14 0 0 1 65.45 180.16L34.58 72.50A14 14 0 0 1 44.18 55.19Z" fill="#5b6b9a"/>
+    <path d="M86.39 36.08L162.28 32.11A14 14 0 0 1 177.00 45.36L182.86 157.20A14 14 0 0 1 169.61 171.92L93.72 175.89A14 14 0 0 1 79.00 162.64L73.14 50.80A14 14 0 0 1 86.39 36.08Z" fill="#8fa0cf"/>
+    <path d="M132.05 36.04L206.66 50.54A14 14 0 0 1 217.73 66.95L196.36 176.89A14 14 0 0 1 179.95 187.96L105.34 173.46A14 14 0 0 1 94.27 157.05L115.64 47.11A14 14 0 0 1 132.05 36.04Z" fill="#d9e1f5"/>
+  </g>
+  <!-- The database: a cylinder of two disks in front. -->
+  <g stroke="#1d2747" stroke-width="5">
+    <path d="M70 152v48c0 12 26 22 58 22s58-10 58-22v-48z" fill="#2bb3a3"/>
+    <path d="M70 176c0 12 26 22 58 22s58-10 58-22" fill="none"/>
+    <ellipse cx="128" cy="152" rx="58" ry="22" fill="#7ee6d9"/>
+  </g>
+</svg>

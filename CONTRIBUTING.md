@@ -40,7 +40,8 @@ Then open the folder in VS Code and press **F5**. A second window, the **Extensi
 | `task restart` | Restart the watcher — needed after editing `esbuild.mjs` |
 | `task psql` / `task mysql` | Open a SQL shell on a test database |
 | `task db:reset` | Delete and reseed the test databases |
-| `task package` | Build a `.vsix` to install locally |
+| `task package` | Build a production `.vsix`; try it with **Extensions: Install from VSIX…** in a normal VS Code window |
+| `task notices` | Rewrite `THIRD_PARTY_NOTICES.md` from the packages actually bundled — run after adding or upgrading a runtime dependency, and commit the file |
 
 The watcher rebuilds on save. Press `Ctrl+R` (`Cmd+R`) in the Extension Development Host to reload it. If you change `contributes` in `package.json`, stop and restart the debug session (F5).
 

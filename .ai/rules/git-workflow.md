@@ -54,6 +54,13 @@ The commit type describes the change itself, not the branch prefix.
 
 Version bumps (`package.json` `version`, `CHANGELOG.md` heading) follow semver and happen in their own `chore: release vX.Y.Z` commit. Tagging, `vsce publish`, and GitHub releases happen only when the maintainer asks. Coding agents never push, tag, or publish on their own.
 
+Before a release:
+
+- `task notices` if dependencies changed since the last release, and commit `THIRD_PARTY_NOTICES.md`.
+- `npx vsce ls` (in the container) lists only runtime files: `package.json`, `README.md`, `CHANGELOG.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md`, `dist/**` without maps, `media/icon.png`, `media/database.svg`, `media/logos/*.svg`. If `vsce` fails with a missing module, reinstall with `task npm -- ci`.
+- `task package` builds the `.vsix` without warnings, and it's installed and tried in a normal VS Code window (connect, browse, run a query, open a form and the ER diagram).
+- README images are PNG in `media/screenshots/` (the Marketplace rejects SVG in READMEs; `vsce` rewrites relative links to the GitHub repository).
+
 ## Related rules
 
 - `verification.md` — what to run before committing
