@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0 — 2026-11-26
+
 The first public version: a database client for SQLite, PostgreSQL, MySQL and MariaDB (`sql.js`, `pg`, `mysql2`; no native modules).
 
 ### Connections
