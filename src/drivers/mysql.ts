@@ -1,5 +1,5 @@
 import type { Connection as CoreConnection } from 'mysql2';
-import mysql from 'mysql2/promise';
+import type mysql from 'mysql2/promise';
 import type { TableDesign } from '../design/model';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
 import type { DesignChange } from '../design/diff';
@@ -764,7 +764,9 @@ export class MysqlDriver implements Driver {
     const c = this.config;
     // Through a tunnel, mysql2 still gets the real host: TLS checks the certificate against it.
     const stream = this.opener ? await this.opener(c.host ?? 'localhost', c.port ?? 3306) : undefined;
-    const conn = await mysql.createConnection({ ...this.options(), stream, flags });
+    // Loaded on first use, like every database library (faster activation).
+    const { createConnection } = await import('mysql2/promise');
+    const conn = await createConnection({ ...this.options(), stream, flags });
     if (c.readOnly) {
       // Before anything else runs, on every connection (also the edit one). Not a security boundary:
       // the session can turn it off again (README).

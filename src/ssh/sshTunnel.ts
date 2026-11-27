@@ -6,7 +6,7 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import type { Duplex } from 'stream';
-import { Client, type ClientChannel, type ConnectConfig } from 'ssh2';
+import type { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import type { SshConfig } from '../types';
 
 /** OpenSSH-style fingerprint of a raw host key: `SHA256:` + unpadded base64. */
@@ -81,7 +81,9 @@ export class SshTunnel {
     // The TCP connection gets the usual 10 s timeout. The SSH handshake can't have one: it may be waiting
     // for the user to look at an unknown host key.
     const sock = await connectTcp(host, port);
-    const client = new Client();
+    // Loaded on first use (faster activation; most connections have no tunnel).
+    const ssh2 = await import('ssh2');
+    const client = new ssh2.Client();
     let rejectedKey: string | undefined;
     let asking = false;
     let timedOut = false;

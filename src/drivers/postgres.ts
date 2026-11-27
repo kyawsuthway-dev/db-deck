@@ -1,4 +1,4 @@
-import { Client, Query, type CustomTypesConfig, type QueryArrayConfig, type QueryResult } from 'pg';
+import type { Client, CustomTypesConfig, QueryArrayConfig, QueryResult } from 'pg';
 import type { TableDesign } from '../design/model';
 import { splitSql } from '../query/splitSql';
 import type { DesignChange } from '../design/diff';
@@ -875,7 +875,9 @@ export class PostgresDriver implements Driver {
   private async newClient(applicationName: string): Promise<Client> {
     const c = this.config;
     const stream = this.opener ? await this.opener(c.host ?? 'localhost', c.port ?? 5432) : undefined;
-    return new Client({
+    // Loaded on first use, like every database library (faster activation).
+    const pg = await import('pg');
+    return new pg.Client({
       // Through a tunnel, pg still gets the real host: TLS checks the certificate against it.
       stream: stream && (() => stream),
       host: c.host,
@@ -914,7 +916,8 @@ function qualifiedName(table: { name: string; schema?: string }): string {
  * Runs one statement of user SQL, keeping only the rows a result shows (`RowCollector`). With a `row` listener and
  * no callback, pg doesn't collect the rows itself; the server still sends them all.
  */
-function queryKeepingRows(client: Client, text: string): Promise<RawResult> {
+async function queryKeepingRows(client: Client, text: string): Promise<RawResult> {
+  const { Query } = await import('pg');
   return new Promise((resolve, reject) => {
     const config: QueryArrayConfig = { text, rowMode: 'array' };
     const query = new Query<unknown[]>(config);

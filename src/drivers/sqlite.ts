@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
+import type { Database, SqlJsStatic } from 'sql.js';
 import type { TableDesign } from '../design/model';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
 import type { DesignChange } from '../design/diff';
@@ -109,10 +109,13 @@ let sqlJs: Promise<SqlJsStatic> | undefined;
 
 /** sql.js is SQLite compiled to WebAssembly; esbuild.mjs copies sql-wasm.wasm next to the bundle. */
 function loadSqlJs(): Promise<SqlJsStatic> {
-  sqlJs ??= initSqlJs({
-    locateFile: (file) => path.join(__dirname, file),
-    useOldExtensionFunctions: true, // sql.js's default; @types/sql.js wrongly marks it required
-  });
+  // Loaded on first use, like every database library (faster activation).
+  sqlJs ??= import('sql.js').then(({ default: initSqlJs }) =>
+    initSqlJs({
+      locateFile: (file) => path.join(__dirname, file),
+      useOldExtensionFunctions: true, // sql.js's default; @types/sql.js wrongly marks it required
+    }),
+  );
   return sqlJs;
 }
 
