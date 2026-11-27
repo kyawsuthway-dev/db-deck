@@ -20,6 +20,7 @@ import {
   type MockTable,
 } from '../mock/plan';
 import type { Cell, DumpCell, Driver, ImportRow, TableInfo } from '../types';
+import { tableLabel } from '../tree/ConnectionsTree';
 import { FormPanel, FormTabs } from './FormPanel';
 
 /** One column in the Generate Mock Data form. */
@@ -276,8 +277,4 @@ function textRows(rows: DumpCell[][]): Cell[][] {
 
 async function* asImportRows(rows: Cell[][]): AsyncGenerator<ImportRow> {
   for (const [i, values] of rows.entries()) yield { line: i + 1, values };
-}
-
-function tableLabel(t: TableInfo): string {
-  return t.schema ? `${t.schema}.${t.name}` : t.name;
 }

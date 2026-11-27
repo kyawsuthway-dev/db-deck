@@ -3,7 +3,6 @@ import { ConnectionManager } from './connectionManager';
 import type { TableInfo } from './types';
 import { EnvConnections } from './env/envConnections';
 import { askFolderName, pickFolder } from './connectionFolders';
-import { errorMessage } from './drivers/common';
 import { TableEditor } from './edit/applyEdits';
 import { ResultsExporter } from './export/exportResults';
 import { QueryHistory } from './history/queryHistory';

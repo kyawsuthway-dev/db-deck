@@ -638,7 +638,7 @@ export class PostgresDriver implements Driver {
     };
   }
 
-  alterTableSql(before: TableDesign, after: TableDesign, changes: DesignChange[]): { statements: string[]; rebuild: boolean } {
+  alterTableSql(before: TableDesign, _after: TableDesign, changes: DesignChange[]): { statements: string[]; rebuild: boolean } {
     const table = qualifiedName({ schema: before.schema, name: before.name });
     const q = (n: string) => quoteIdent(n.trim(), '"');
     const statements: string[] = [];
