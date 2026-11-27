@@ -1,3 +1,4 @@
+import type { Connection as CoreConnection } from 'mysql2';
 import mysql from 'mysql2/promise';
 import type { TableDesign } from '../design/model';
 import { splitSql, stripLeadingComments } from '../query/splitSql';
@@ -49,11 +50,13 @@ import {
   importRowsWith,
   insertStatements,
   quoteIdent,
+  RowCollector,
   runEach,
   runScriptStatements,
   toDumpCell,
   type WriteDialect,
   assembleDiagram,
+  type RawResult,
 } from './common';
 
 const SYSTEM_SCHEMAS = ['mysql', 'information_schema', 'performance_schema', 'sys'];
@@ -238,18 +241,7 @@ export class MysqlDriver implements Driver {
 
   async query(sql: string): Promise<StatementResult[]> {
     const conn = await this.getConnection();
-    return runEach(splitSql(sql, 'mysql'), async (statement) => {
-      const [result, fields] = await conn.query({ sql: statement, rowsAsArray: true });
-      if (!Array.isArray(result)) {
-        return { columns: [], rows: [], affectedRows: (result as mysql.ResultSetHeader).affectedRows };
-      }
-      // CALL returns several result sets; show the first.
-      if (Array.isArray(fields?.[0])) {
-        const sets = fields as unknown as mysql.FieldPacket[][];
-        return { columns: sets[0].map((f) => f.name), rows: result[0] as unknown[][] };
-      }
-      return { columns: (fields ?? []).map((f) => f.name), rows: result as unknown[][] };
-    });
+    return runEach(splitSql(sql, 'mysql'), (statement) => queryKeepingRows(conn, statement));
   }
 
   previewSql(table: TableInfo, page: TablePage): string {
@@ -813,6 +805,35 @@ export class MysqlDriver implements Driver {
     this.conn = conn;
     return conn;
   }
+}
+
+/**
+ * Runs one statement of user SQL, keeping only the rows a result shows (`RowCollector`). It uses the core
+ * connection's events because the promise API collects every row; the server still sends them all.
+ */
+function queryKeepingRows(conn: mysql.Connection, sql: string): Promise<RawResult> {
+  return new Promise((resolve, reject) => {
+    const rows = new RowCollector();
+    let columns: string[] | undefined;
+    let affectedRows: number | undefined;
+    // The promise wrapper keeps its core connection in `connection` (typed only on PoolConnection).
+    const core = (conn as unknown as { connection: CoreConnection }).connection;
+    const query = core.query({ sql, rowsAsArray: true });
+    query.on('fields', (fields?: mysql.FieldPacket[]) => {
+      if (fields && !columns) columns = fields.map((f) => f.name);
+    });
+    query.on('result', (row: unknown, index?: number) => {
+      // CALL returns several result sets (then an OK packet); show the first, as before.
+      if (Array.isArray(row)) {
+        if (index === 0) rows.add(row);
+      } else {
+        affectedRows ??= (row as mysql.ResultSetHeader).affectedRows;
+      }
+    });
+    // mysql2 emits 'end' after 'error' too; a settled promise ignores it.
+    query.on('error', reject);
+    query.on('end', () => resolve(columns ? { columns, rows: rows.rows } : { columns: [], rows: [], affectedRows }));
+  });
 }
 
 function qualifiedName(table: { name: string; schema?: string }): string {
