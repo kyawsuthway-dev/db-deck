@@ -24,6 +24,6 @@ A free, open-source (MIT) VS Code extension for browsing SQLite, PostgreSQL, MyS
 - Database-specific code lives in `src/drivers/`. Don't branch on database type elsewhere.
 - Ask before adding a dependency, changing the build, or introducing a framework.
 - Never run destructive SQL or delete Docker volumes without explicit approval.
-- Never push, open pull requests, tag, or publish unless asked.
+- Never push, open pull requests, tag, create a GitHub release, or publish unless asked. Publishing a GitHub release also publishes to the Marketplace.
 - Before finishing: `task check` passes, `CHANGELOG.md` (`## Unreleased`) lists user-visible changes, and anything you verified or couldn't verify is stated plainly.
 - If a rule in `.ai/rules/` turns out to be missing or wrong, point it out and propose the exact change rather than silently working around it.
