@@ -14,7 +14,7 @@ These are the project's hard constraints. A change that breaks one is not merged
 5. **Show values faithfully.** Don't convert database values in ways that lose precision or change them (big integers, decimals, timestamps). Drivers return text as the database sends it.
 6. **No telemetry, no network calls** other than to the databases the user configured.
 7. **Dependencies must be MIT-compatible** (MIT, BSD, ISC, Apache-2.0), and new ones are discussed in the issue or pull request first.
-8. **Don't run Node on the host.** All `npm`/`node`/`tsc` commands run in the Docker `node` service (`task npm -- …`). Installing on the host would put host-platform files into the shared `node_modules`.
+8. **Don't run Node on the host.** All `npm`/`node`/`tsc` commands run in the Docker `node` service (`task npm -- …`). Installing on the host would put host-platform files into the shared `node_modules`. CI is the exception: `.github/workflows/` runs npm on GitHub's runners.
 9. **Never run destructive commands against databases without the maintainer's approval** — `DROP`, `TRUNCATE`, mass `DELETE`/`UPDATE`, `task db:reset`, `docker compose down -v` — not even against the Docker test databases.
 
 ## Design for extension

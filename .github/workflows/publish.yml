@@ -1,0 +1,68 @@
+# Publishes DB Deck to the VS Code Marketplace with trusted publishing (OIDC):
+# no personal access token is stored anywhere. The Marketplace accepts the
+# GitHub token only from this repository, this file and the `marketplace`
+# environment (policy on the publisher's Trusted Publishing tab).
+#
+# Runs when a GitHub release is published, after the maintainer approves the
+# `marketplace` environment. "Run workflow" re-runs it for an existing tag.
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (e.g. v0.2.0)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: marketplace
+    permissions:
+      contents: write # attach the .vsix to the release
+      id-token: write # trusted publishing (OIDC)
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check the tag matches package.json
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Tag $TAG doesn't match package.json version $version"
+            exit 1
+          fi
+          echo "VSIX=db-deck-$version.vsix" >> "$GITHUB_ENV"
+
+      - run: npm ci
+
+      # vscode:prepublish runs the typecheck and the production build.
+      - name: Package
+        run: npx vsce package --out "$VSIX"
+
+      - name: Publish to the Marketplace
+        run: npx vsce publish --oidc --packagePath "$VSIX"
+
+      - name: Attach the .vsix to the GitHub release
+        run: gh release upload "$TAG" "$VSIX" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
