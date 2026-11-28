@@ -22,7 +22,7 @@ Before adding a runtime dependency, check and report to the user:
 - Run `task notices` so `THIRD_PARTY_NOTICES.md` lists it (and its dependencies) with their license texts.
 - Libraries load on first use: import only types at the top (`import type`) and `await import('…')` where the library is first needed, so activation doesn't run them (the six together cost about 75 ms of a 90 ms start). For an ESM library with named imports (sql-formatter), lazily import the small module that imports it instead (`query/formatSql.ts`), so its unused parts are still left out of the bundle.
 
-Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (MySQL/MariaDB). SSH tunnels: `ssh2`; its optional native parts (`sshcrypto.node`, `cpu-features`) are `external` in `esbuild.mjs`, so it uses its pure-JavaScript crypto. Compose files: `yaml` (pure JavaScript). ER diagram layout: `@dagrejs/dagre` (pure JavaScript, MIT), bundled into the diagram webview only, never the extension.
+Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (MySQL/MariaDB), `tedious` (SQL Server, Azure SQL; pinned exactly, 19.x because 20 needs Node 22, and bundled as its own `dist/sqlserver.js`, `architecture.md`). SSH tunnels: `ssh2`; its optional native parts (`sshcrypto.node`, `cpu-features`) are `external` in `esbuild.mjs`, so it uses its pure-JavaScript crypto. Compose files: `yaml` (pure JavaScript). ER diagram layout: `@dagrejs/dagre` (pure JavaScript, MIT), bundled into the diagram webview only, never the extension.
 
 ## The `Driver` contract (`src/types.ts`)
 
@@ -49,6 +49,10 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 - `explain(sql, analyze)` returns a `PlanNode` tree (parsed in `tools/plan.ts`) and the raw output. Plain Explain runs on the editor's connection and never executes the statement; Analyze runs on its own short-lived connection inside `BEGIN READ ONLY` / `START TRANSACTION READ ONLY`, always rolled back, and throws where the database has none (SQLite, MariaDB). `serverStatus`, `serverSettings` and `listProcesses` are read-only; `listProcesses` marks DB Deck's own sessions (`own`). `endProcess` checks the id is digits and uses the database's own cancel / kill (`pg_cancel_backend` / `pg_terminate_backend`, `KILL QUERY` / `KILL`).
 - Errors: let them throw; callers format them with `errorMessage()`. Never put a password into an error.
 
+- SQL Server: tedious internals are wrapped once in `sqlserverLib.ts`: the value parser returns exact text (`sqlserverValues.ts`: decimal, money, date / time types, datetimeoffset in its own offset), and the done handlers keep each statement's TDS command for "rows affected". They're checked against the pinned version; upgrading tedious means rerunning the `value_types` smoke test.
+- SQL Server `query()` sends one request per `GO` batch (`splitBatches`; `GO n` repeats it), shows every result set and PRINT message (`StatementResult.messages`), and counts rows only for INSERT / UPDATE / DELETE / MERGE / SELECT INTO. tedious runs one request at a time per connection, so the driver queues them.
+- SQL Server has no read-only session: a read-only connection checks every statement with `readingStatement` (`tools/plan.ts`) before sending anything, and `applyChanges` refuses.
+
 ## Connections
 
 - One long-lived connection per saved connection (not a pool), so `BEGIN`…`COMMIT`, `SET`, and temp tables carry across runs.
@@ -56,7 +60,7 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 - Reconnect lazily: on the client's `error`/`end` event, drop the reference so the next call opens a new one. Concurrent callers share one connect attempt (`connecting` promise).
 - Connect timeout 10 s. SSL from `config.ssl` (`off` / `require` / `no-verify`).
 - SSH tunnel: when `createDriver` gets a `StreamOpener`, every connection the driver opens (including the edit connection) uses it instead of TCP. Pass the real `host` anyway, so TLS checks the certificate against it.
-- `config.readOnly`: PostgreSQL startup option `-c default_transaction_read_only=on`; MySQL `SET SESSION TRANSACTION READ ONLY` right after connecting; SQLite `PRAGMA query_only = ON`, no write-back, and `applyChanges` refuses. Applies to every connection, including the edit one. A guard against mistakes, not a security boundary (README).
+- `config.readOnly`: PostgreSQL startup option `-c default_transaction_read_only=on`; MySQL `SET SESSION TRANSACTION READ ONLY` right after connecting; SQLite `PRAGMA query_only = ON`, no write-back, and `applyChanges` refuses; SQL Server checks each statement (above) and `applyChanges` refuses. Applies to every connection, including the edit one. A guard against mistakes, not a security boundary (README).
 
 ## SQL safety
 
@@ -64,7 +68,7 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 - Identifiers that must be in SQL text (previews) go through `quoteIdent()` with the dialect's quote character.
 - Metadata and preview queries are read-only (`core.md` rule 4).
 - The table-view filter (`where`) is SQL the user typed. Pass it through `filterCondition()` (rejects a second statement) and `buildPageQuery()` (wraps it in `(\n…\n)` so a `--` comment can't remove ORDER BY/LIMIT). Never add it to SQL any other way.
-- Table edits are parameterized statements from `buildChangeStatements()`. UPDATE and DELETE match the primary key (`=`) and the original values of the edited cells (null-safe); any statement not affecting exactly one row rolls back the whole save. Columns of a type with no equality against text (`json`; see `isTextComparedType`) are checked by their text through `WriteDialect.asText()`. A statement's `display` text has literals for Review SQL only and is never executed.
+- Table edits are parameterized statements from `buildChangeStatements()`. UPDATE and DELETE match the primary key (`=`) and the original values of the edited cells (null-safe, `WriteDialect.nullSafeEquals(column, value)`: a function, so SQL Server can repeat the value in `(c = @p OR (c IS NULL AND @p IS NULL))`); any statement not affecting exactly one row rolls back the whole save. Columns of a type with no equality against text (`json`; see `isTextComparedType`) are checked by their text through `WriteDialect.asText()`. A statement's `display` text has literals for Review SQL only and is never executed.
 - MySQL: run parameterized SQL with `conn.execute()`, not `conn.query(sql, values)` — the latter substitutes `?` on the client and doesn't skip quoted identifiers.
 
 ## Values

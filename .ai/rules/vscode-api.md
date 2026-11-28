@@ -16,6 +16,8 @@ paths:
 - Every command in `contributes.commands` is registered in `extension.ts`, and vice versa.
 - Commands that need a tree node argument are hidden from the Command Palette (`commandPalette` with `"when": "false"`) unless they fall back to a quick pick when called without one.
 - `activationEvents` stays empty: VS Code derives activation from contributed views and commands.
+- Database kinds still being built (`DbKind.hidden`) are offered only when `context.extensionMode` is Development (`offerHiddenKinds` in `activate`).
+- Microsoft Entra ID tokens come from `vscode.authentication.getSession('microsoft', …)` in `ConnectionManager` only, passed to the driver as a function that's asked again on every new connection.
 - Language features (completion, CodeLens, formatting) are registered for `{ language: 'sql' }` in `query/sqlEditor.ts`. Table and column suggestions never open a connection. CodeLens commands (▶ Run, Explain) take the document URI and an offset, and re-read the text when clicked.
 
 ## Menus and `when` clauses
