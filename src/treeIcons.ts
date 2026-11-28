@@ -10,6 +10,7 @@ export type TreeIconName =
   | 'function'
   | 'procedure'
   | 'sequence'
+  | 'package'
   | 'index'
   | 'trigger'
   | 'column'

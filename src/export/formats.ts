@@ -57,7 +57,8 @@ export function toJson(columns: string[], rows: Cell[][]): string {
 
 /** Column types whose values reach the grid as truncated hex, so they can't be exported faithfully. */
 export function isBinaryType(type: string): boolean {
-  return /\b(bytea|(tiny|medium|long)?blob|(var)?binary)\b/i.test(type);
+  // Oracle: RAW and LONG RAW (bytes), BFILE (a file's bytes); BLOB is matched above.
+  return /\b(bytea|(tiny|medium|long)?blob|(var)?binary|raw|bfile)\b/i.test(type);
 }
 
 export type ExportFormat = 'csv' | 'json' | 'sql';

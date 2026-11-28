@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
 import { defaultServerName } from '../connectionForm/fields';
 import { buildTemplate, errorMessage, type TemplateKind } from '../drivers/common';
-import { DATABASE_SCOPE } from '../drivers';
+import { DATABASE_SCOPE, SQL_DIALECTS } from '../drivers';
 import type { QueryController } from '../query/runQuery';
 import type { DbObject, Driver } from '../types';
 import { type ConnectionNode, type ConnectionsTree, ObjectNode, TableNode, tableLabel, type TreeNode } from './ConnectionsTree';
@@ -13,6 +13,7 @@ const KIND_LABEL: Record<DbObject['kind'], string> = {
   function: 'function',
   procedure: 'procedure',
   sequence: 'sequence',
+  package: 'package',
   index: 'index',
   trigger: 'trigger',
 };
@@ -54,7 +55,8 @@ export class ObjectCommands {
       const columns = await driver.listColumns(node.table);
       // Tables in the default schema are written without it, as people usually do.
       const name = node.table.schema ? this.qualified(driver, node.object) : driver.filterIdentifier(node.table.name);
-      const sql = buildTemplate(kind, name, columns, (c) => driver.filterIdentifier(c));
+      const type = this.manager.get(node.connectionId)?.type;
+      const sql = buildTemplate(kind, name, columns, (c) => driver.filterIdentifier(c), type ? SQL_DIALECTS[type].rowLimit : 'limit');
       await this.queries.newQuery(node.connectionId, sql);
     } catch (err) {
       void vscode.window.showErrorMessage(`Couldn’t generate SQL for ${node.table.name}: ${errorMessage(err)}`);
@@ -185,6 +187,11 @@ export class ObjectCommands {
       void vscode.window.showErrorMessage(`Couldn’t list databases: ${errorMessage(err)}`);
       return;
     }
+    // Oracle: a connection goes to one service; another one is another connection (Edit Connection…).
+    if (!databases.length) {
+      void vscode.window.showInformationMessage(`${config.name} has no other databases to switch to. To use another one, edit the connection or add a new one.`);
+      return;
+    }
     const items: (vscode.QuickPickItem & { value: string | undefined })[] = databases.map((d) => ({
       label: d,
       description: d === config.database ? 'current' : undefined,
@@ -220,7 +227,19 @@ export class ObjectCommands {
   }
 }
 
+/** Codicons for Find Object… (a Record, so a new kind can't be missed). */
+const FIND_ICONS: Record<DbObject['kind'], string> = {
+  table: 'table',
+  view: 'eye',
+  function: 'symbol-method',
+  procedure: 'symbol-event',
+  sequence: 'symbol-number',
+  package: 'package',
+  index: 'list-ordered',
+  trigger: 'zap',
+};
+
 function iconFor(object: DbObject): string {
-  return { table: 'table', view: 'eye', function: 'symbol-method', procedure: 'symbol-event', sequence: 'symbol-number', index: 'list-ordered', trigger: 'zap' }[object.kind];
+  return FIND_ICONS[object.kind];
 }
 

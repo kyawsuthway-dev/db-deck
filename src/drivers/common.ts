@@ -1,4 +1,5 @@
 import { splitSql } from '../query/splitSql';
+import type { RowLimit } from './index';
 import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, DiagramForeignKey, DiagramTable, DumpCell, FilterOperator, ImportOptions, ImportResult, ImportRow, RowChange, SchemaDiagram, SchemaEntry, ScriptOptions, ScriptResult, StatementResult, TablePage } from '../types';
 
 /** Rows kept per statement; the grid shows a "truncated" note beyond this. */
@@ -312,7 +313,13 @@ export type TemplateKind = 'select' | 'insert' | 'update' | 'delete';
  * key), so a forgotten edit can't change existing rows. `name` is the table as it should be written;
  * `ident` writes a column name (quoted only when needed).
  */
-export function buildTemplate(kind: TemplateKind, name: string, columns: ColumnInfo[], ident: (name: string) => string): string {
+export function buildTemplate(
+  kind: TemplateKind,
+  name: string,
+  columns: ColumnInfo[],
+  ident: (name: string) => string,
+  rowLimit: RowLimit = 'limit',
+): string {
   // Column names and types go into `--` comments; a line break in a quoted name must not end the comment.
   const note = (c: ColumnInfo) => `${c.name} ${c.type}${c.nullable ? '' : ' NOT NULL'}`.replace(/[\r\n]+/g, ' ');
   const key = columns.filter((c) => c.primaryKey);
@@ -322,8 +329,12 @@ export function buildTemplate(kind: TemplateKind, name: string, columns: ColumnI
   const list = (items: string[], comments: string[]) =>
     items.map((item, i) => `  ${item}${i < items.length - 1 ? ',' : ''} -- ${comments[i]}`).join('\n');
   switch (kind) {
-    case 'select':
-      return `SELECT\n${columns.map((c, i) => `  ${ident(c.name)}${i < columns.length - 1 ? ',' : ''}`).join('\n')}\nFROM ${name}\nLIMIT 100;\n`;
+    case 'select': {
+      const list = columns.map((c, i) => `  ${ident(c.name)}${i < columns.length - 1 ? ',' : ''}`).join('\n');
+      const head = rowLimit === 'top' ? 'SELECT TOP (100)' : 'SELECT';
+      const tail = rowLimit === 'top' ? '' : rowLimit === 'fetch' ? '\nFETCH FIRST 100 ROWS ONLY' : '\nLIMIT 100';
+      return `${head}\n${list}\nFROM ${name}${tail};\n`;
+    }
     case 'insert':
       return `INSERT INTO ${name} (\n${columns.map((c, i) => `  ${ident(c.name)}${i < columns.length - 1 ? ',' : ''}`).join('\n')}\n) VALUES (\n${list(
         columns.map(() => 'NULL'),

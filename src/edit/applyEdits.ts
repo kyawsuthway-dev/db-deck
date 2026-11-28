@@ -2,7 +2,6 @@ import { randomUUID } from 'crypto';
 import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
 import { ChangeConflict, errorMessage } from '../drivers/common';
-import { isBinaryType } from '../export/formats';
 import type { QueryController } from '../query/runQuery';
 import type { ChangeStatement, Driver } from '../types';
 import type { ResultsPanel, ResultsRequest } from '../views/ResultsPanel';
@@ -74,7 +73,7 @@ export class TableEditor implements vscode.Disposable {
         columns: page.columns,
         rows: page.rows,
         key: view.key,
-        readOnly: new Set(view.columns.filter((c) => isBinaryType(c.type)).map((c) => c.name)),
+        readOnly: new Set(view.fixed),
         approximate: new Set(view.columns.filter((c) => isApproximateType(c.type)).map((c) => c.name)),
         asText: new Set(view.columns.filter((c) => isTextComparedType(c.type)).map((c) => c.name)),
       });

@@ -235,6 +235,8 @@ export class MysqlDriver implements Driver {
       const unique = String(rows[0].nonUnique) === '0' ? 'UNIQUE ' : '';
       return `CREATE ${unique}INDEX ${quoteIdent(object.name, '`')} ON ${on} (${columns});\n`;
     }
+    // MySQL has no packages (Oracle only); the tree never lists one here.
+    if (object.kind === 'package') return `-- No definition found for ${object.name}.\n`;
     const what = { table: 'TABLE', view: 'VIEW', function: 'FUNCTION', procedure: 'PROCEDURE', trigger: 'TRIGGER', sequence: 'SEQUENCE' }[object.kind];
     const conn = await this.getConnection();
     const [rows] = await conn.query<mysql.RowDataPacket[]>(`SHOW CREATE ${what} ${name}`);

@@ -81,7 +81,7 @@ export function composeDatabases(composeText: string, fileName: string, vars: Ma
       logins.find((l) => (l.userVar ? env.has(l.userVar) : env.has(l.passwordVar))) ?? [...logins].reverse().find((l) => l.user);
     const user = (login?.userVar && env.get(login.userVar)) || login?.user || kind.defaultUser || '';
     const databaseVar = databaseVars.find((v) => env.get(v));
-    const database = (databaseVar && env.get(databaseVar)) || (defaultDatabase === 'user' ? user : undefined);
+    const database = (databaseVar && env.get(databaseVar)) || (defaultDatabase === 'user' ? user : kind.docker.databaseByImage?.[image]);
     found.push({
       service,
       config: {

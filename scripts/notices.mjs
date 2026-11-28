@@ -26,8 +26,9 @@ for (const dir of packageDirs) {
   const license =
     typeof pkg.license === 'string' ? pkg.license : pkg.license?.type ?? (Array.isArray(pkg.licenses) ? pkg.licenses.map((l) => l.type).join(' OR ') : '(none given)');
   const text = licenseText(dir);
-  const ids = license.replace(/[()]/g, '').split(/\s+OR\s+|\s+AND\s+/);
-  if (!ids.every((id) => ALLOWED.test(id))) problems.push(`${key}: ${license}`);
+  // `A OR B` lets DB Deck take either license, so one allowed alternative is enough; `A AND B` needs both.
+  const alternatives = license.replace(/[()]/g, '').split(/\s+OR\s+/).map((alt) => alt.split(/\s+AND\s+/));
+  if (!alternatives.some((ids) => ids.every((id) => ALLOWED.test(id)))) problems.push(`${key}: ${license}`);
   if (!text) problems.push(`${key}: no license file in the package (license field: ${license})`);
   packages.set(key, { name: pkg.name, version: pkg.version, license, text, homepage: pkg.homepage ?? pkg.repository?.url ?? pkg.repository });
 }
@@ -77,8 +78,8 @@ const out = [
   'The database logos in `media/logos` are from [Simple Icons](https://simpleicons.org) (CC0 1.0); the',
   'brands belong to their owners.',
   '',
-  'The Connections tree icons in `media/icons` and the SQL Server / Azure SQL icons in `media/logos` are from',
-  '[Tabler Icons](https://tabler.io/icons) 3.51.0 (MIT, license below), recolored.',
+  'The Connections tree icons in `media/icons` and the SQL Server / Azure SQL / Oracle icons in `media/logos` are',
+  'from [Tabler Icons](https://tabler.io/icons) 3.51.0 (MIT, license below), recolored.',
   '',
 ];
 for (const p of sorted) {

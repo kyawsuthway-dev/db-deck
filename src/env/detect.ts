@@ -58,10 +58,13 @@ export function detectConnections(env: Map<string, string>, opts: DetectOptions)
       const host = get('DB_HOST') ?? LARAVEL_HOST;
       const port = portOf(get('DB_PORT')) ?? laravelKind.defaultPort;
       const user = get('DB_USERNAME') ?? LARAVEL_USER;
-      const database = get('DB_DATABASE') ?? LARAVEL_DATABASE;
+      // yajra/laravel-oci8 (Oracle): DB_SERVICE_NAME when set, otherwise DB_DATABASE is a SID.
+      const service = laravelKind.sid ? get('DB_SERVICE_NAME') : undefined;
+      const sid = !!laravelKind.sid && !service && !!get('DB_DATABASE');
+      const database = service ?? get('DB_DATABASE') ?? laravelKind.defaultDatabase ?? LARAVEL_DATABASE;
       found.push({
         source: 'DB_*',
-        keys: ['DB_CONNECTION', 'DB_HOST', 'DB_PORT', 'DB_DATABASE', 'DB_USERNAME', 'DB_PASSWORD'].filter((k) => env.has(k)),
+        keys: ['DB_CONNECTION', 'DB_HOST', 'DB_PORT', 'DB_DATABASE', 'DB_SERVICE_NAME', 'DB_USERNAME', 'DB_PASSWORD'].filter((k) => env.has(k)),
         config: {
           name: defaultServerName(user, host, database),
           type: laravelKind.type,
@@ -70,6 +73,7 @@ export function detectConnections(env: Map<string, string>, opts: DetectOptions)
           user,
           database,
           ssl: sslFrom(get('DB_SSLMODE')) ?? encryptFrom(get('DB_ENCRYPT'), get('DB_TRUST_SERVER_CERTIFICATE')) ?? laravelKind.defaultSsl ?? 'off',
+          ...(sid ? { sid: true } : {}),
         },
         password: get('DB_PASSWORD'),
       });

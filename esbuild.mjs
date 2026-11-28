@@ -46,6 +46,9 @@ const LIBRARY_BUNDLES = {
   // The module, not sql-formatter itself: it imports only the dialects DB Deck uses.
   './formatSql': ['format', 'src/query/formatSql.ts'],
   './sqlserverLib': ['sqlserver', 'src/drivers/sqlserverLib.ts'],
+  // node-oracledb's Thin mode; its Thick-mode binaries (build/Release/*.node) are only required by
+  // initOracleClient(), through computed paths, so nothing native is bundled or loaded.
+  './oracleLib': ['oracle', 'src/drivers/oracleLib.ts'],
 };
 
 /** In the extension bundle, `import('pg')` becomes `require('./pg.js')` of the separate file (and so on). */

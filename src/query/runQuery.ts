@@ -35,6 +35,8 @@ interface TableView {
   total?: string;
   /** In a system schema (`Driver.isSystemSchema`): never editable, however the table was opened. */
   system: boolean;
+  /** Columns never edited in the grid: binary (shortened hex) and `ColumnInfo.shortened` (Oracle LOBs, XMLTYPE…). */
+  fixed: string[];
 }
 
 /** What the export and edit services need to know about the open table view. */
@@ -51,6 +53,8 @@ export interface TableViewSource {
   key: string[];
   /** In a system schema: the edit service refuses to save. */
   system: boolean;
+  /** Columns the edit service refuses to change (TableView.fixed). */
+  fixed: string[];
 }
 
 /** A finished run from a SQL editor (Run Query, Run All, ▶ Run, Run Again). */
@@ -261,6 +265,7 @@ export class QueryController implements vscode.Disposable {
       hints,
       hidden: [],
       system,
+      fixed: columns.filter((c) => isBinaryType(c.type) || c.shortened).map((c) => c.name),
     };
     const remembered = this.context.workspaceState.get<Record<string, string[]>>(HIDDEN_COLUMNS_KEY, {})[hiddenKey(this.tableView)];
     // Columns that no longer exist are dropped.
@@ -281,6 +286,7 @@ export class QueryController implements vscode.Disposable {
       columns: view.hints.columns.map((c) => ({ name: c.name, type: c.type })),
       key: view.keyOrder.map((k) => k.column),
       system: view.system,
+      fixed: view.fixed,
     };
   }
 
@@ -526,7 +532,10 @@ function hiddenKey(view: TableView): string {
   return `${view.connectionId}\u0000${view.table.schema ?? ''}\u0000${view.table.name}`;
 }
 
-/** Only tables with a primary key are editable, so every change targets exactly one row. Binary columns stay read-only. */
+/**
+ * Only tables with a primary key are editable, so every change targets exactly one row. Binary and shortened columns
+ * (`TableView.fixed`) stay read-only.
+ */
 function editability(view: TableView, readOnly: boolean): TableViewState['edit'] {
   if (readOnly) return { reason: 'Read-only connection.' };
   if (view.system) return { reason: 'System schema: read-only.' };
@@ -534,6 +543,6 @@ function editability(view: TableView, readOnly: boolean): TableViewState['edit']
   if (!view.keyOrder.length) return { reason: 'Read-only: this table has no primary key.' };
   return {
     key: view.keyOrder.map((k) => k.column),
-    readOnly: view.hints.columns.filter((c) => isBinaryType(c.type)).map((c) => c.name),
+    readOnly: view.fixed,
   };
 }

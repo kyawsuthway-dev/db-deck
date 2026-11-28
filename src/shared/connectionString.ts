@@ -3,7 +3,7 @@
 // The result only fills in settings; the extension checks them like anything else.
 
 export interface ParsedConnectionString {
-  /** A DbKind label: SQLite, PostgreSQL, MySQL, MariaDB, SQL Server or Azure SQL. */
+  /** A DbKind label: SQLite, PostgreSQL, MySQL, MariaDB, SQL Server, Azure SQL or Oracle. */
   kind: string;
   /** SQLite: the path as written (may be relative; the caller decides what it's relative to). */
   filePath?: string;
@@ -17,6 +17,8 @@ export interface ParsedConnectionString {
   instance?: string;
   /** SQL Server: Microsoft Entra ID sign-in from `Authentication=…` (ConnectionConfig.signIn). */
   signIn?: 'password' | 'entra-account' | 'entra-default';
+  /** Oracle: `database` is a SID (from a descriptor's `(SID=…)`), not a service name. */
+  sid?: boolean;
 }
 
 const SCHEMES: Record<string, string> = {
@@ -28,6 +30,10 @@ const SCHEMES: Record<string, string> = {
   mssql: 'SQL Server',
   // Laravel's DB_URL for its sqlsrv driver.
   sqlsrv: 'SQL Server',
+  oracle: 'Oracle',
+  // Oracle Easy Connect with a protocol: tcps://host:2484/service.
+  tcp: 'Oracle',
+  tcps: 'Oracle',
 };
 
 /**
@@ -40,9 +46,15 @@ export function parseConnectionString(text: string): ParsedConnectionString | st
   const sqlite = sqlitePath(t);
   if (sqlite !== undefined) return sqlite ? { kind: 'SQLite', filePath: sqlite } : 'The SQLite URL has no file path.';
   if (ADO_NET.test(t)) return parseAdoNet(t);
+  if (/^\(\s*DESCRIPTION\s*=/i.test(t)) return parseDescriptor(t);
+  const easy = EASY_CONNECT.exec(t);
+  if (easy) {
+    const [, user, password, host, port, service] = easy;
+    return { kind: 'Oracle', host: host.replace(/^\[(.*)\]$/, '$1'), ...(port ? { port } : {}), ...(user ? { user } : {}), ...(password ? { password } : {}), database: service };
+  }
   const scheme = /^([a-z]+):\/\//i.exec(t)?.[1]?.toLowerCase();
   const kind = scheme ? SCHEMES[scheme] : undefined;
-  if (!kind) return 'Use a postgres://, mysql://, mariadb://, sqlserver:// or SQLite (file:) URL, or a SQL Server connection string (Server=…;Database=…).';
+  if (!kind) return 'Use a postgres://, mysql://, mariadb://, sqlserver://, oracle:// or SQLite (file:) URL, a SQL Server connection string (Server=…;Database=…), or Oracle’s host:1521/service.';
   let url: URL;
   try {
     url = new URL(t);
@@ -72,6 +84,38 @@ export function parseConnectionString(text: string): ParsedConnectionString | st
       : sslFrom(params.get('sslmode') ?? params.get('ssl-mode') ?? params.get('ssl'));
   if (ssl) result.ssl = ssl;
   if (kind === 'SQL Server' && result.host?.endsWith('.database.windows.net')) result.kind = 'Azure SQL';
+  if (scheme === 'tcps') result.ssl = 'require';
+  else if (scheme === 'tcp') result.ssl = 'off';
+  return result;
+}
+
+/**
+ * Oracle Easy Connect, as SQL*Plus takes it: `[user[/password]@]host[:port]/service`. Only a host, a port and one
+ * service name (Easy Connect's `:server` and `/instance` parts and `?options` aren't settings DB Deck has).
+ */
+const EASY_CONNECT = /^(?:([^/@\s:]+)(?:\/([^@\s]*))?@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(?::(\d+))?\/([A-Za-z0-9_.$#-]+)$/;
+
+/**
+ * An Oracle connect descriptor (tnsnames.ora style): the first address's HOST, PORT and PROTOCOL (TCPS = SSL), and
+ * CONNECT_DATA's SERVICE_NAME or SID. Keys are case-insensitive; values are taken as written.
+ */
+function parseDescriptor(text: string): ParsedConnectionString | string {
+  const value = (key: string) => new RegExp(`\\(\\s*${key}\\s*=\\s*([^()]*?)\\s*\\)`, 'i').exec(text)?.[1];
+  const host = value('HOST');
+  if (!host) return 'The descriptor has no HOST.';
+  const result: ParsedConnectionString = { kind: 'Oracle', host };
+  const port = value('PORT');
+  if (port && /^\d+$/.test(port)) result.port = port;
+  const protocol = value('PROTOCOL')?.toUpperCase();
+  if (protocol === 'TCPS') result.ssl = 'require';
+  else if (protocol === 'TCP') result.ssl = 'off';
+  const service = value('SERVICE_NAME');
+  const sid = value('SID');
+  if (service) result.database = service;
+  else if (sid) {
+    result.database = sid;
+    result.sid = true;
+  }
   return result;
 }
 

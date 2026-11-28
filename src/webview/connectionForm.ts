@@ -47,6 +47,19 @@ const SIGN_IN_OPTIONS = [
   { value: 'entra-account', label: 'Microsoft Entra ID (VS Code account)' },
   { value: 'entra-default', label: 'Microsoft Entra ID (Azure CLI, environment, managed identity)' },
 ];
+/** Oracle's Database field: a service name or a SID (KindInfo.sid). */
+const TARGET_OPTIONS = [
+  { value: 'service', label: 'Service name' },
+  { value: 'sid', label: 'SID' },
+];
+/** Every "Connect as" choice; each kind offers some (KindInfo.privileges). */
+const PRIVILEGE_OPTIONS = [
+  { value: '', label: 'Normal session' },
+  ...['SYSDBA', 'SYSOPER', 'SYSBACKUP', 'SYSDG', 'SYSKM', 'SYSRAC'].map((p) => ({ value: p, label: p })),
+];
+const SSH_NOTE = 'One SSH session per connection, no local port opened. The first time, DB Deck asks you to trust the SSH host’s key.';
+const SSH_LOCAL_PORT_NOTE =
+  'One SSH session per connection. This database’s library opens its own sockets, so DB Deck listens on a random 127.0.0.1 port for it while connected (only this computer can reach it). The first time, DB Deck asks you to trust the SSH host’s key.';
 const READ_ONLY_NOTE =
   'The database session is read-only and table editing is off. A guard against mistakes, not a security boundary: for a real guarantee, connect as a user that can’t write.';
 /** Which tab shows each field, so an error can bring its tab forward. */
@@ -207,13 +220,15 @@ function build(msg: Init) {
   const password = textField('password', 'Password', { icon: 'key', type: 'password', span: 3 });
   const database = textField('database', 'Database', { icon: 'database', span: 3 });
   const ssl = selectField('ssl', 'Encryption', SSL_OPTIONS, { icon: 'lock', span: 3 });
+  const target = selectField('target', 'Database is a', TARGET_OPTIONS, { icon: 'database', span: 3 });
+  const privilege = selectField('privilege', 'Connect as', PRIVILEGE_OPTIONS, { icon: 'shield', span: 3 });
   const tunnelNote = note('tunnel', 'SSH tunnel on: enter the host and port as seen from the SSH host (often localhost).');
   tunnelNote.classList.add('span-6');
-  server.append(urlField, divider, host.field, port.field, instance.field, signIn.field, user.field, password.field, database.field, ssl.field, tunnelNote);
+  server.append(urlField, divider, host.field, port.field, instance.field, signIn.field, user.field, password.field, database.field, ssl.field, target.field, privilege.field, tunnelNote);
   tabs.panels.main.append(sqlite, server);
 
   // SSH tunnel.
-  const sshToggle = switchField('sshEnabled', 'Connect through an SSH tunnel', 'One SSH session per connection, no local port opened. The first time, DB Deck asks you to trust the SSH host’s key.');
+  const sshToggle = switchField('sshEnabled', 'Connect through an SSH tunnel', SSH_NOTE);
   const sshFields = el('fieldset', 'fields');
   sshFields.append(el('legend', 'visually-hidden', 'SSH settings'));
   const sshHost = textField('sshHost', 'SSH host', { icon: 'globe', required: true, span: 4 });
@@ -259,6 +274,8 @@ function build(msg: Init) {
     database,
     instance,
     signIn,
+    target,
+    privilege,
     user,
     port,
     readOnly,
@@ -369,6 +386,16 @@ function update(): void {
   ui.port.input.disabled = !!values.instance.trim() && k.instances;
   const readOnlyNote = document.getElementById('d-f-readOnly');
   if (readOnlyNote) readOnlyNote.textContent = k.readOnlyNote ?? READ_ONLY_NOTE;
+  const sshNote = document.getElementById('d-f-sshEnabled');
+  if (sshNote) sshNote.textContent = k.sshLocalPort ? SSH_LOCAL_PORT_NOTE : SSH_NOTE;
+  // Oracle: service name or SID, "Connect as", and no "allow self-signed" (Thin mode always checks certificates).
+  ui.target.field.hidden = !k.sid;
+  ui.privilege.field.hidden = !k.privileges.length;
+  const privileges = inputs.get('privilege') as HTMLSelectElement;
+  for (const option of Array.from(privileges.options)) option.hidden = option.disabled = option.value !== '' && !k.privileges.includes(option.value as never);
+  const ssl = inputs.get('ssl') as HTMLSelectElement;
+  for (const option of Array.from(ssl.options)) option.hidden = option.disabled = !k.sslModes.includes(option.value as never);
+  ui.database.text.textContent = k.sid && values.target === 'sid' ? 'SID' : k.databaseLabel;
 
   const editing = init.mode === 'edit';
   ui.password.input.placeholder = init.fromEnv
@@ -417,6 +444,9 @@ function changeKind(next: KindInfo): void {
   if (values.ssl === prev.defaultSsl) setValue('ssl', next.defaultSsl);
   if (!next.signIns.includes(values.signIn as never)) setValue('signIn', next.signIns[0] ?? 'password');
   if (!next.instances) setValue('instance', '');
+  if (!next.sslModes.includes(values.ssl as never)) setValue('ssl', next.defaultSsl);
+  if (values.privilege && !next.privileges.includes(values.privilege as never)) setValue('privilege', '');
+  if (!next.sid) setValue('target', 'service');
   if (next.network && !values.host) setValue('host', 'localhost');
   values.kind = next.label;
   showErrors({});
@@ -439,7 +469,7 @@ function applyConnectionString(input: HTMLInputElement, hint: HTMLElement, expli
     return;
   }
   // Wait for a complete URL (or a SQL Server `Server=…;` string) while typing; Enter always tries.
-  if (!explicit && !/^[a-z]+:\/\/.+/i.test(text) && !/(^|;)\s*(server|data source)\s*=[^;]+;/i.test(text)) return;
+  if (!explicit && !/^[a-z]+:\/\/.+/i.test(text) && !/(^|;)\s*(server|data source)\s*=[^;]+;/i.test(text) && !/^\(\s*DESCRIPTION\s*=.*\)\s*$/is.test(text)) return;
   const parsed = parseConnectionString(text);
   if (typeof parsed === 'string') {
     if (explicit) {
@@ -466,6 +496,7 @@ function applyConnectionString(input: HTMLInputElement, hint: HTMLElement, expli
   setValue('database', parsed.database ?? '');
   if (parsed.ssl) setValue('ssl', parsed.ssl);
   setValue('instance', parsed.instance ?? '');
+  if (target.sid) setValue('target', parsed.sid ? 'sid' : 'service');
   if (parsed.signIn && target.signIns.includes(parsed.signIn)) setValue('signIn', parsed.signIn);
   // The URL may hold a password: clear it once the fields have it.
   input.value = '';

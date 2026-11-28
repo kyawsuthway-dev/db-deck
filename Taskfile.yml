@@ -39,6 +39,11 @@ tasks:
         cmds:
             - docker compose --profile sqlserver up -d sqlserver
 
+    up:oracle:
+        desc: Start the Oracle test database too (opt-in, about 2.5 GB of RAM, a 6.5 GB image)
+        cmds:
+            - docker compose --profile oracle up -d oracle
+
     down:
         desc: Stop all containers (database volumes are kept)
         cmds:
@@ -120,6 +125,12 @@ tasks:
         interactive: true
         cmds:
             - docker compose exec sqlserver /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P DbDeck-sa-2026 -d sample
+
+    sqlplus:
+        desc: Open SQL*Plus on the Oracle test database as sample (start it with task up:oracle)
+        interactive: true
+        cmds:
+            - docker compose exec oracle sqlplus sample/sample@localhost/FREEPDB1
 
     db:reset:
         desc: Delete the test database volumes and reseed them from docker/seed/
