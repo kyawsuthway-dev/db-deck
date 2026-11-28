@@ -4,7 +4,7 @@ Instructions for coding agents (Claude Code, Codex, Cursor, Copilot, …) workin
 
 ## What this is
 
-A free, open-source (MIT) VS Code extension for browsing SQLite, PostgreSQL, MySQL and MariaDB databases and running SQL inside VS Code. TypeScript (strict), bundled with esbuild. Drivers: `sql.js` (WebAssembly), `pg`, `mysql2`. The results grid is a plain TypeScript webview.
+A free, open-source (MIT) VS Code extension for browsing SQLite, PostgreSQL, MySQL, MariaDB and SQL Server / Azure SQL databases (Oracle in progress) and running SQL inside VS Code. TypeScript (strict), bundled with esbuild. Drivers: `sql.js` (WebAssembly), `pg`, `mysql2`, `tedious`, `oracledb` (Thin mode). The results grid is a plain TypeScript webview.
 
 ## Read first
 
