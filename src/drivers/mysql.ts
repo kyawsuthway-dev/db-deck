@@ -11,6 +11,7 @@ import type {
   ColumnInfo,
   ConnectionConfig,
   DbObject,
+  ObjectKind,
   Driver,
   DumpCell,
   DumpPlan,
@@ -23,6 +24,7 @@ import type {
   IndexInfo,
   RowChange,
   SchemaDiagram,
+  SchemaEntry,
   ScriptOptions,
   ScriptResult,
   ServerItem,
@@ -56,6 +58,7 @@ import {
   toDumpCell,
   type WriteDialect,
   assembleDiagram,
+  treeSchemas,
   type RawResult,
 } from './common';
 
@@ -128,11 +131,25 @@ export class MysqlDriver implements Driver {
   }
 
   async listObjects(): Promise<DbObject[]> {
+    return this.readObjects();
+  }
+
+  async listSchemaObjects(schema: string): Promise<DbObject[]> {
+    return this.readObjects(schema);
+  }
+
+  /**
+   * One database's objects, or (no `only`) the connection's database, or every non-system one when it has none.
+   * Objects in the connection's database have no `schema`; others carry it and are qualified.
+   */
+  private async readObjects(only?: string): Promise<DbObject[]> {
     const conn = await this.getConnection();
-    const db = this.config.database;
-    const where = (column: string) => (db ? `${column} = ?` : `${column} NOT IN (?)`);
-    const param = db ? db : SYSTEM_SCHEMAS;
-    const schemaOf = (s: unknown) => (db ? undefined : String(s));
+    const db = this.config.database || undefined;
+    const target = only ?? db;
+    const where = (column: string) => (target !== undefined ? `${column} = ?` : `${column} NOT IN (?)`);
+    const param = target ?? SYSTEM_SCHEMAS;
+    // With a target every row is in it; the name typed in the connection is kept as is.
+    const schemaOf = (s: unknown) => (target === undefined ? String(s) : target === db ? undefined : target);
     const [relations] = await conn.query<mysql.RowDataPacket[]>(
       `SELECT TABLE_SCHEMA AS s, TABLE_NAME AS n, TABLE_TYPE AS t FROM information_schema.TABLES
         WHERE ${where('TABLE_SCHEMA')} ORDER BY TABLE_SCHEMA, TABLE_NAME`,
@@ -145,8 +162,8 @@ export class MysqlDriver implements Driver {
     );
     return [
       ...relations.map((r): DbObject => ({
-        // MariaDB lists sequences as tables of type SEQUENCE.
-        kind: r.t === 'VIEW' ? 'view' : r.t === 'SEQUENCE' ? 'sequence' : 'table',
+        // MariaDB lists sequences as tables of type SEQUENCE; information_schema's own tables are SYSTEM VIEW.
+        kind: r.t === 'VIEW' || r.t === 'SYSTEM VIEW' ? 'view' : r.t === 'SEQUENCE' ? 'sequence' : 'table',
         name: String(r.n),
         schema: schemaOf(r.s),
       })),
@@ -156,6 +173,23 @@ export class MysqlDriver implements Driver {
         schema: schemaOf(r.s),
       })),
     ];
+  }
+
+  async listTreeSchemas(): Promise<SchemaEntry[]> {
+    const conn = await this.getConnection();
+    const [rows] = await conn.query<mysql.RowDataPacket[]>('SHOW DATABASES');
+    const names = rows.map((r) => String(Object.values(r)[0]));
+    return treeSchemas(names, this.config.database || undefined, (name) => this.isSystemSchema(name));
+  }
+
+  isSystemSchema(schema: string | undefined): boolean {
+    const name = schema ?? this.config.database;
+    return !!name && SYSTEM_SCHEMAS.includes(name.toLowerCase());
+  }
+
+  async objectKinds(): Promise<ObjectKind[]> {
+    const kinds: ObjectKind[] = ['table', 'view', 'function', 'procedure'];
+    return (await this.isMariaDb(await this.getConnection())) ? [...kinds, 'sequence'] : kinds;
   }
 
   async listIndexes(table: TableInfo): Promise<IndexInfo[]> {

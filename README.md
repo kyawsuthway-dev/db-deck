@@ -22,7 +22,7 @@ A free, open-source database client for VS Code. Browse local and remote databas
 
 ### Browsing
 
-- **Schema tree** — Tables, Views, Functions, Procedures and Sequences, in schema (PostgreSQL) or database (MySQL) folders when there's more than one. Tables expand to columns (type and 🔑 primary key), **Indexes** and **Triggers**.
+- **Schema tree** — PostgreSQL: database → **Schemas** → each schema; MySQL / MariaDB: each database on the server. Every schema has Tables, Views, Functions, Procedures and Sequences (where the database has them). System schemas (`pg_catalog`, `information_schema`, `mysql`, …) are listed last and are read-only. Tables expand to columns (type and 🔑 primary key), **Indexes** and **Triggers**.
 - **Show DDL** for any object, in a new SQL editor. PostgreSQL table and sequence DDL is rebuilt from the catalog and says what it leaves out.
 - **Generate SQL** — SELECT, INSERT, UPDATE or DELETE for a table, opened in an editor and never run for you. Run unedited it can't change rows: UPDATE and DELETE start with `WHERE <key> = NULL`.
 - **Find Object…** (🔍 in the Connections view) searches your open connections and reveals the object in the tree.

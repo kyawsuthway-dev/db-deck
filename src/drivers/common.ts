@@ -1,5 +1,5 @@
 import { splitSql } from '../query/splitSql';
-import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, DiagramForeignKey, DiagramTable, DumpCell, FilterOperator, ImportOptions, ImportResult, ImportRow, RowChange, SchemaDiagram, ScriptOptions, ScriptResult, StatementResult, TablePage } from '../types';
+import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, DiagramForeignKey, DiagramTable, DumpCell, FilterOperator, ImportOptions, ImportResult, ImportRow, RowChange, SchemaDiagram, SchemaEntry, ScriptOptions, ScriptResult, StatementResult, TablePage } from '../types';
 
 /** Rows kept per statement; the grid shows a "truncated" note beyond this. */
 export const MAX_ROWS = 10_000;
@@ -552,4 +552,11 @@ export function assembleDiagram(
     byFk.set(id, entry);
   }
   return { tables: [...tables.values()].sort((a, b) => a.name.localeCompare(b.name)), foreignKeys: [...byFk.values()] };
+}
+
+/** Schemas in tree order: the default one first, then user ones, then system ones, each by name. */
+export function treeSchemas(names: string[], defaultName: string | undefined, isSystem: (name: string) => boolean): SchemaEntry[] {
+  const entries = names.map((name): SchemaEntry => ({ name, isDefault: name === defaultName, system: isSystem(name) }));
+  const rank = (e: SchemaEntry) => (e.isDefault ? 0 : e.system ? 2 : 1);
+  return entries.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }

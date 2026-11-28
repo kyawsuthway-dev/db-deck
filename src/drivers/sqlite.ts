@@ -21,8 +21,10 @@ import type {
   ImportResult,
   ImportRow,
   IndexInfo,
+  ObjectKind,
   RowChange,
   SchemaDiagram,
+  SchemaEntry,
   ScriptOptions,
   ScriptResult,
   ServerItem,
@@ -169,6 +171,23 @@ export class SqliteDriver implements Driver {
 
   async listObjects(): Promise<DbObject[]> {
     return this.listTables();
+  }
+
+  /** One file, one unnamed schema: the tree shows the object folders directly (TREE_LAYOUT). */
+  async listTreeSchemas(): Promise<SchemaEntry[]> {
+    return [];
+  }
+
+  async listSchemaObjects(): Promise<DbObject[]> {
+    return this.listTables();
+  }
+
+  isSystemSchema(): boolean {
+    return false;
+  }
+
+  async objectKinds(): Promise<ObjectKind[]> {
+    return ['table', 'view'];
   }
 
   async listIndexes(table: TableInfo): Promise<IndexInfo[]> {

@@ -137,6 +137,17 @@ export const DATABASE_SCOPE: Record<DbType, 'none' | 'required' | 'optional'> = 
   mysql: 'optional',
 };
 
+/**
+ * What the Connections tree shows under a connection: `objects` the object folders directly (SQLite),
+ * `schemas` the schema list (MySQL: each database is a schema), `database` the connection's database, then a
+ * Schemas folder with the schema list (PostgreSQL).
+ */
+export const TREE_LAYOUT: Record<DbType, 'objects' | 'schemas' | 'database'> = {
+  sqlite: 'objects',
+  postgres: 'database',
+  mysql: 'schemas',
+};
+
 /** Whether the database is reached over the network, so it can go through an SSH tunnel (SQLite is a local file). */
 export const USES_NETWORK: Record<DbType, boolean> = {
   sqlite: false,
