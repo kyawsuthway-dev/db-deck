@@ -12,6 +12,7 @@
 - **Open Query…** picks one of the connection's saved queries and opens it. New Query from a MySQL database other than the connection's default starts with a comment naming it; DB Deck doesn't switch the session's database.
 - When a connection fails because the server's certificate can't be verified (often a local server's self-signed one), the connection form offers **Trust Server Certificate**, which switches Encryption to "SSL, allow self-signed" and tries again.
 - Explain Analyze also refuses statements that contain EXEC, USE, GRANT, DBCC and similar keywords, not only INSERT / UPDATE / DELETE and schema changes.
+- DB Deck starts faster: each database library (and the SSH, YAML and SQL formatting libraries) is now its own file, read only the first time it's needed, so VS Code loads about 0.3 MB at startup instead of about 2 MB (about 14 ms instead of 42 ms in our measurements).
 
 ## 0.1.1 — 2026-11-28
 

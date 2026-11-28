@@ -1,7 +1,7 @@
 /**
- * tedious, loaded on the first SQL Server connection (`drivers.md`: libraries load on first use) through
- * `await import('./sqlserverLib')`. `require` (not `import * as`) is what hands back tedious's own value-parser
- * exports: esbuild's `import *` gives a copy, and wrapping `readValue` on a copy would change nothing.
+ * tedious, loaded on the first SQL Server connection (`sqlServerLib()` in sqlserver.ts) from its own file,
+ * dist/sqlserver.js (esbuild.mjs LIBRARY_BUNDLES). `require` (not `import * as`) is what hands back tedious's own
+ * value-parser exports: esbuild's `import *` gives a copy, and wrapping `readValue` on a copy would change nothing.
  */
 import tedious = require('tedious');
 import valueParser = require('tedious/lib/value-parser');

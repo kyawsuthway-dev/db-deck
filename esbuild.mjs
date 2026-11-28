@@ -33,16 +33,26 @@ const copySqlWasmPlugin = {
 };
 
 /**
- * Database libraries bundled as their own files next to dist/extension.js, read only on the first connection of
- * that type: users who never connect to it never load or parse it (drivers.md). Source module → output name.
+ * Libraries bundled as their own files next to dist/extension.js, each read only when the code that lazily imports
+ * it first runs (architecture.md): VS Code never parses a database library you don't use. Flat in dist/, so sql.js
+ * still finds sql-wasm.wasm beside it. Import specifier → [output name, entry point].
  */
-const DRIVER_BUNDLES = { './sqlserverLib': 'sqlserver' };
+const LIBRARY_BUNDLES = {
+  pg: ['pg', 'pg'],
+  'mysql2/promise': ['mysql2', 'mysql2/promise'],
+  ssh2: ['ssh2', 'ssh2'],
+  'sql.js': ['sqljs', 'sql.js'],
+  yaml: ['yaml', 'yaml'],
+  // The module, not sql-formatter itself: it imports only the dialects DB Deck uses.
+  './formatSql': ['format', 'src/query/formatSql.ts'],
+  './sqlserverLib': ['sqlserver', 'src/drivers/sqlserverLib.ts'],
+};
 
-/** In the extension bundle, `import('./sqlserverLib')` becomes `require('./sqlserver.js')` of the separate file. */
-const separateDriversPlugin = {
-  name: 'separate-drivers',
+/** In the extension bundle, `import('pg')` becomes `require('./pg.js')` of the separate file (and so on). */
+const separateLibrariesPlugin = {
+  name: 'separate-libraries',
   setup(build) {
-    for (const [module, name] of Object.entries(DRIVER_BUNDLES)) {
+    for (const [module, [name]] of Object.entries(LIBRARY_BUNDLES)) {
       const filter = new RegExp(`^${module.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`);
       build.onResolve({ filter }, () => ({ path: `./${name}.js`, external: true }));
     }
@@ -71,13 +81,16 @@ const extension = await esbuild.context({
   target: 'node20',
   outfile: 'dist/extension.js',
   external: NODE_EXTERNALS,
-  plugins: metafile ? [separateDriversPlugin] : [separateDriversPlugin, copySqlWasmPlugin, problemMatcherPlugin],
+  // Lazy `await import('pg')` of a separate file becomes a plain `require('./pg.js')` where it runs, the form
+  // VS Code's extension host loads most safely; nothing is required before the code that needs it.
+  supported: { 'dynamic-import': false },
+  plugins: metafile ? [separateLibrariesPlugin] : [separateLibrariesPlugin, copySqlWasmPlugin, problemMatcherPlugin],
 });
 
-// Database libraries in their own files (DRIVER_BUNDLES): dist/sqlserver.js (tedious).
-const drivers = await esbuild.context({
+// The libraries in their own files (LIBRARY_BUNDLES): dist/pg.js, dist/mysql2.js, dist/sqlserver.js, …
+const libraries = await esbuild.context({
   ...shared,
-  entryPoints: Object.fromEntries(Object.entries(DRIVER_BUNDLES).map(([module, name]) => [name, `src/drivers/${module.slice(2)}.ts`])),
+  entryPoints: Object.fromEntries(Object.values(LIBRARY_BUNDLES)),
   format: 'cjs',
   platform: 'node',
   target: 'node20',
@@ -98,7 +111,7 @@ const webview = await esbuild.context({
   plugins: metafile ? [] : [problemMatcherPlugin],
 });
 
-const contexts = [extension, drivers, webview];
+const contexts = [extension, libraries, webview];
 if (watch) {
   await Promise.all(contexts.map((ctx) => ctx.watch()));
 } else {
