@@ -74,6 +74,16 @@ export interface DbObject {
   detail?: string;
 }
 
+/** A schema (PostgreSQL) or database (MySQL) as the Connections tree lists it. */
+export interface SchemaEntry {
+  /** The real name. */
+  name: string;
+  /** The connection's default schema/database: its objects have no `schema` (as `DbObject`). */
+  isDefault: boolean;
+  /** A system schema (pg_catalog, information_schema, mysql…): browse and query only. */
+  system: boolean;
+}
+
 export interface IndexInfo {
   name: string;
   /** The indexed columns or expressions, as the database shows them. */
@@ -308,8 +318,19 @@ export interface Driver {
   connect(): Promise<void>;
   listTables(): Promise<TableInfo[]>;
   listColumns(table: TableInfo): Promise<ColumnInfo[]>;
-  /** Tables, views, functions, procedures and sequences, for the tree and Find Object. Read-only. */
+  /** Tables, views, functions, procedures and sequences of the user schemas (no system ones), for Find Object. Read-only. */
   listObjects(): Promise<DbObject[]>;
+  /**
+   * Every schema the tree shows, system ones included: the default first, then user ones, then system ones,
+   * each by name. Empty when there's only the default, unnamed one (SQLite). Read-only.
+   */
+  listTreeSchemas(): Promise<SchemaEntry[]>;
+  /** The objects of one schema by its real name (system schemas too); `schema` as in `DbObject`. Read-only. */
+  listSchemaObjects(schema: string): Promise<DbObject[]>;
+  /** Whether a `TableInfo` / `DbObject` schema (undefined: the default one) is a system schema. No query. */
+  isSystemSchema(schema: string | undefined): boolean;
+  /** The object folders the tree shows under a schema, in order (MariaDB adds sequences). */
+  objectKinds(): Promise<ObjectKind[]>;
   listIndexes(table: TableInfo): Promise<IndexInfo[]>;
   /** Triggers on a table or view (`kind: 'trigger'`, `table` set). */
   listTriggers(table: TableInfo): Promise<DbObject[]>;

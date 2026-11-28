@@ -215,13 +215,16 @@ export function activate(context: vscode.ExtensionContext) {
     // ER diagram: from a connection (asks for the schema when there are several), a schema, or a Tables folder.
     command('erDiagram', (node?: ConnectionNode | SchemaNode | FolderNode) => {
       if (node instanceof ConnectionNode) return diagrams.open(node.config.id, undefined, true);
-      if (node instanceof SchemaNode) return diagrams.open(node.connectionId, node.objects[0]?.schema, false);
-      if (node instanceof FolderNode) return diagrams.open(node.connectionId, node.objects[0]?.schema, node.objects.length === 0);
+      if (node instanceof SchemaNode) return diagrams.open(node.connectionId, node.schema, false);
+      if (node instanceof FolderNode) {
+        if (node.parent instanceof SchemaNode) return diagrams.open(node.connectionId, node.parent.schema, false);
+        return diagrams.open(node.connectionId, node.objects[0]?.schema, node.objects.length === 0);
+      }
     }),
     // Compare Structure: from a connection (its default schema) or a schema.
     command('compareStructure', (node?: ConnectionNode | SchemaNode) => {
       if (node instanceof ConnectionNode) compares.open(node.config.id);
-      else if (node instanceof SchemaNode) compares.open(node.connectionId, node.objects[0]?.schema);
+      else if (node instanceof SchemaNode) compares.open(node.connectionId, node.schema);
     }),
     command('diagramOpenRows', (ctx?: unknown) => diagrams.run(ctx, 'rows')),
     command('diagramDesignTable', (ctx?: unknown) => diagrams.run(ctx, 'design')),

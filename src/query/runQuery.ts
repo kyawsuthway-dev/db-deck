@@ -33,6 +33,8 @@ interface TableView {
   hidden: string[];
   /** The Count button's result for the current filter; cleared when the filter changes or after a save. */
   total?: string;
+  /** In a system schema (`Driver.isSystemSchema`): never editable, however the table was opened. */
+  system: boolean;
 }
 
 /** What the export and edit services need to know about the open table view. */
@@ -47,6 +49,8 @@ export interface TableViewSource {
   columns: { name: string; type: string }[];
   /** Primary key column names; empty when there is none. */
   key: string[];
+  /** In a system schema: the edit service refuses to save. */
+  system: boolean;
 }
 
 /** A finished run from a SQL editor (Run Query, Run All, ▶ Run, Run Again). */
@@ -234,8 +238,10 @@ export class QueryController implements vscode.Disposable {
     if (!(await this.confirmDiscard())) return;
     let columns: ColumnInfo[];
     let hints: FilterHints;
+    let system: boolean;
     try {
       const driver = await this.manager.getDriver(connectionId);
+      system = driver.isSystemSchema(table.schema);
       columns = await driver.listColumns(table);
       hints = {
         columns: columns.map((c) => ({ name: c.name, type: c.type, insert: driver.filterIdentifier(c.name) })),
@@ -254,6 +260,7 @@ export class QueryController implements vscode.Disposable {
       offset: 0,
       hints,
       hidden: [],
+      system,
     };
     const remembered = this.context.workspaceState.get<Record<string, string[]>>(HIDDEN_COLUMNS_KEY, {})[hiddenKey(this.tableView)];
     // Columns that no longer exist are dropped.
@@ -273,6 +280,7 @@ export class QueryController implements vscode.Disposable {
       orderBy: view.sort ? [view.sort] : view.keyOrder,
       columns: view.hints.columns.map((c) => ({ name: c.name, type: c.type })),
       key: view.keyOrder.map((k) => k.column),
+      system: view.system,
     };
   }
 
@@ -521,6 +529,7 @@ function hiddenKey(view: TableView): string {
 /** Only tables with a primary key are editable, so every change targets exactly one row. Binary columns stay read-only. */
 function editability(view: TableView, readOnly: boolean): TableViewState['edit'] {
   if (readOnly) return { reason: 'Read-only connection.' };
+  if (view.system) return { reason: 'System schema: read-only.' };
   if (view.table.kind !== 'table') return { reason: 'Views are read-only.' };
   if (!view.keyOrder.length) return { reason: 'Read-only: this table has no primary key.' };
   return {

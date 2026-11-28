@@ -59,6 +59,10 @@ export class TableEditor implements vscode.Disposable {
       void vscode.window.showErrorMessage('This connection is read-only, so its tables can’t be edited.');
       return;
     }
+    if (view.system) {
+      void vscode.window.showErrorMessage('Tables in system schemas can’t be edited in DB Deck.');
+      return;
+    }
     if (view.table.kind !== 'table' || !view.key.length) {
       void vscode.window.showErrorMessage('This table can’t be edited: it needs a primary key.');
       return;

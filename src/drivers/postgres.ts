@@ -10,6 +10,7 @@ import type {
   ColumnInfo,
   ConnectionConfig,
   DbObject,
+  ObjectKind,
   Driver,
   DumpCell,
   DumpPlan,
@@ -22,6 +23,7 @@ import type {
   IndexInfo,
   RowChange,
   SchemaDiagram,
+  SchemaEntry,
   ScriptOptions,
   ScriptResult,
   ServerItem,
@@ -56,6 +58,7 @@ import {
   type RawResult,
   type WriteDialect,
   assembleDiagram,
+  treeSchemas,
 } from './common';
 
 /** What tableParts reads from the catalog. */
@@ -155,29 +158,44 @@ export class PostgresDriver implements Driver {
   }
 
   async listObjects(): Promise<DbObject[]> {
+    return this.readObjects();
+  }
+
+  async listSchemaObjects(schema: string): Promise<DbObject[]> {
+    return this.readObjects(schema);
+  }
+
+  /** One schema's objects, or (no `only`) those of every user schema. One builder, so the two lists can't drift. */
+  private async readObjects(only?: string): Promise<DbObject[]> {
     const client = await this.getClient();
     const schemaOf = (s: string) => (s === 'public' ? undefined : s);
+    const filter = (column: string) =>
+      only === undefined ? `${column} NOT IN ('pg_catalog', 'information_schema') AND ${column} NOT LIKE 'pg\\_toast%'` : `${column} = $1`;
+    const params = only === undefined ? [] : [only];
     const { rows: relations } = await client.query<{ schema: string; name: string; type: string }>(
       `SELECT table_schema AS schema, table_name AS name, table_type AS type
          FROM information_schema.tables
-        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+        WHERE ${filter('table_schema')}
        UNION ALL
-       SELECT schemaname, matviewname, 'MATVIEW' FROM pg_matviews`,
+       SELECT schemaname, matviewname, 'MATVIEW' FROM pg_matviews WHERE ${filter('schemaname')}`,
+      params,
     );
     // Functions and procedures that belong to an extension (e.g. pgcrypto) are left out, like PostgreSQL's \df does with \dx members.
     const { rows: routines } = await client.query<{ id: string; schema: string; name: string; kind: string; args: string }>(
       `SELECT p.oid::text AS id, n.nspname AS schema, p.proname AS name, p.prokind AS kind,
               pg_get_function_identity_arguments(p.oid) AS args
          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_toast%'
+        WHERE ${filter('n.nspname')}
           AND p.prokind IN ('f', 'p')
           AND NOT EXISTS (SELECT 1 FROM pg_depend d
                            WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
         ORDER BY n.nspname, p.proname, args`,
+      params,
     );
     const { rows: sequences } = await client.query<{ schema: string; name: string }>(
       `SELECT schemaname AS schema, sequencename AS name FROM pg_sequences
-        WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY 1, 2`,
+        WHERE ${filter('schemaname')} ORDER BY 1, 2`,
+      params,
     );
     const objects: DbObject[] = [
       ...relations.map((r): DbObject => ({
@@ -196,6 +214,24 @@ export class PostgresDriver implements Driver {
       ...sequences.map((r): DbObject => ({ kind: 'sequence', name: r.name, schema: schemaOf(r.schema) })),
     ];
     return objects.sort((a, b) => (a.schema ?? '').localeCompare(b.schema ?? '') || a.name.localeCompare(b.name));
+  }
+
+  /** TOAST and temporary-table schemas are PostgreSQL's own storage, not something to browse. */
+  async listTreeSchemas(): Promise<SchemaEntry[]> {
+    const client = await this.getClient();
+    const { rows } = await client.query<{ name: string }>(
+      `SELECT nspname AS name FROM pg_namespace
+        WHERE nspname NOT LIKE 'pg\\_toast%' AND nspname NOT LIKE 'pg\\_temp\\_%'`,
+    );
+    return treeSchemas(rows.map((r) => r.name), 'public', (name) => this.isSystemSchema(name));
+  }
+
+  isSystemSchema(schema: string | undefined): boolean {
+    return schema !== undefined && (schema === 'information_schema' || schema.startsWith('pg_'));
+  }
+
+  async objectKinds(): Promise<ObjectKind[]> {
+    return ['table', 'view', 'function', 'procedure', 'sequence'];
   }
 
   async listIndexes(table: TableInfo): Promise<IndexInfo[]> {

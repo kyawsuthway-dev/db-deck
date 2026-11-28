@@ -44,6 +44,30 @@ function licenseText(dir) {
 }
 
 const sorted = [...packages.values()].sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
+const TABLER_LICENSE = [
+  "MIT License",
+  "",
+  "Copyright (c) 2020-2026 Paweł Kuna",
+  "",
+  "Permission is hereby granted, free of charge, to any person obtaining a copy",
+  "of this software and associated documentation files (the \"Software\"), to deal",
+  "in the Software without restriction, including without limitation the rights",
+  "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell",
+  "copies of the Software, and to permit persons to whom the Software is",
+  "furnished to do so, subject to the following conditions:",
+  "",
+  "The above copyright notice and this permission notice shall be included in all",
+  "copies or substantial portions of the Software.",
+  "",
+  "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR",
+  "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,",
+  "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE",
+  "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER",
+  "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,",
+  "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE",
+  "SOFTWARE.",
+].join('\n');
+
 const out = [
   '# Third-party notices',
   '',
@@ -53,11 +77,16 @@ const out = [
   'The database logos in `media/logos` are from [Simple Icons](https://simpleicons.org) (CC0 1.0); the',
   'brands belong to their owners.',
   '',
+  'The Connections tree icons in `media/icons` are from [Tabler Icons](https://tabler.io/icons) 3.51.0',
+  '(MIT, license below), recolored.',
+  '',
 ];
 for (const p of sorted) {
   out.push(`## ${p.name} ${p.version}`, '', `License: ${p.license}${typeof p.homepage === 'string' ? ` · ${p.homepage.replace(/^git\+/, '').replace(/\.git$/, '')}` : ''}`, '');
   if (p.text) out.push('```text', p.text, '```', '');
 }
+// Not an npm package (the SVGs are copied into media/icons, recolored), so its license is kept here.
+out.push('## Tabler Icons 3.51.0 (media/icons)', '', 'License: MIT · https://github.com/tabler/tabler-icons', '', '```text', TABLER_LICENSE, '```', '');
 writeFileSync('THIRD_PARTY_NOTICES.md', out.join('\n'));
 console.log(`THIRD_PARTY_NOTICES.md: ${sorted.length} packages.`);
 for (const p of problems) console.warn(`check: ${p}`);
