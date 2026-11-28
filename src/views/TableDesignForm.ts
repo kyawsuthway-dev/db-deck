@@ -20,7 +20,7 @@ export type DesignMessage =
       title: string;
       detail: string;
       logo?: { light: string; dark: string };
-      features: { types: string[]; comments: boolean; autoIncrement: string; referentialActions: string[]; reorder: 'alter' | 'rebuild' | 'none' };
+      features: { types: string[]; comments: boolean; autoIncrement: string; referentialActions: string[]; updateActions?: string[]; reorder: 'alter' | 'rebuild' | 'none' };
       /** Schemas to choose from; empty when there's only one. */
       schemas: string[];
       /** Tables a foreign key can reference (`key` is an index into the extension's list). */
@@ -206,7 +206,7 @@ class TableDesignPanel extends FormPanel<DesignMessage> {
   }
 
   private featuresFor(f: (typeof TABLE_FEATURES)[keyof typeof TABLE_FEATURES]): Init['features'] {
-    return { types: f.types, comments: f.comments, autoIncrement: f.autoIncrement, referentialActions: f.referentialActions, reorder: f.reorder };
+    return { types: f.types, comments: f.comments, autoIncrement: f.autoIncrement, referentialActions: f.referentialActions, updateActions: f.updateActions, reorder: f.reorder };
   }
 
   private tableList(): Init['tables'] {

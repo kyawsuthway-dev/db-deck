@@ -479,6 +479,7 @@ function renderForeignKeys(): void {
     return;
   }
   const actions = init.features.referentialActions.map((a) => ({ value: a, label: a }));
+  const updateActions = (init.features.updateActions ?? init.features.referentialActions).map((a) => ({ value: a, label: a }));
   ui.foreignKeys.replaceChildren(
     ...design.foreignKeys.map((f: ForeignKeyDesign, i) => {
       const top = el('div', 'design-item-row');
@@ -522,7 +523,7 @@ function renderForeignKeys(): void {
       const rules = el('div', 'design-item-row');
       rules.append(
         labelled('On delete', selectOf(`foreignKeys.${i}.onDelete`, actions, f.onDelete, (v) => (f.onDelete = v), 'On delete')),
-        labelled('On update', selectOf(`foreignKeys.${i}.onUpdate`, actions, f.onUpdate, (v) => (f.onUpdate = v), 'On update')),
+        labelled('On update', selectOf(`foreignKeys.${i}.onUpdate`, updateActions, f.onUpdate, (v) => (f.onUpdate = v), 'On update')),
       );
       return itemBox(
         top,

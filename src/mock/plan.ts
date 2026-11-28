@@ -140,7 +140,7 @@ const INT_RANGES: [RegExp, number][] = [
   [/^(int|integer|int4|serial|serial4)\b/, 32],
 ];
 
-/** What kind of value a column takes, from its type as the database reports it (all three dialects). */
+/** What kind of value a column takes, from its type as the database reports it (every supported database). */
 export function typeInfo(type: string): TypeInfo {
   const t = type.trim().toLowerCase();
   if (/\[\]$/.test(t) || /^_/.test(t)) return { kind: 'other' };
@@ -152,6 +152,16 @@ export function typeInfo(type: string): TypeInfo {
     const half = 1n << BigInt(bits - 1);
     return unsigned ? { kind: 'integer', min: 0n, max: (half << 1n) - 1n } : { kind: 'integer', min: -half, max: half - 1n };
   }
+  // Oracle NUMBER(p) / NUMBER(p,0): an integer of at most p digits; NUMBER(p,s) and plain NUMBER: a decimal.
+  const ora = /^number\s*\(\s*(\d+)\s*(?:,\s*(-?\d+)\s*)?\)/.exec(t);
+  if (ora && Number(ora[2] ?? 0) === 0) {
+    const max = 10n ** BigInt(ora[1]) - 1n;
+    return { kind: 'integer', min: -max, max };
+  }
+  if (ora) return { kind: 'decimal', precision: Number(ora[1]), scale: Math.max(0, Number(ora[2])) };
+  if (t === 'number') return { kind: 'decimal' };
+  if (/^binary_(float|double)$/.test(t)) return { kind: 'float' };
+  if (/^(raw|long raw)\b/.test(t)) return { kind: 'binary' };
   const dec = /^(decimal|numeric|dec|fixed)\b\s*(?:\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\))?/.exec(t);
   if (dec) return { kind: 'decimal', precision: dec[2] ? Number(dec[2]) : undefined, scale: dec[2] ? Number(dec[3] ?? 0) : undefined };
   if (/^(real|float|double|float4|float8|money)\b/.test(t)) return { kind: 'float' };
@@ -163,7 +173,7 @@ export function typeInfo(type: string): TypeInfo {
   if (t === 'json' || t === 'jsonb') return { kind: 'json' };
   if (/^(bytea|blob|tinyblob|mediumblob|longblob|binary|varbinary|image)\b/.test(t)) return { kind: 'binary' };
   if (/^(enum|set)\s*\(/.test(t)) return { kind: 'text' };
-  const text = /^(character varying|varchar|nvarchar|national character varying|character|char|nchar|bpchar|text|tinytext|mediumtext|longtext|citext|string|clob|name|varchar2)\b/.exec(t);
+  const text = /^(character varying|varchar|nvarchar|national character varying|character|char|nchar|bpchar|text|tinytext|mediumtext|longtext|citext|string|clob|nclob|name|varchar2|nvarchar2)\b/.exec(t);
   if (text) {
     const length = /\(\s*(\d+)\s*\)/.exec(t);
     return { kind: 'text', length: length ? Number(length[1]) : undefined };

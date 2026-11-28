@@ -71,6 +71,8 @@ export interface TableInfo {
   /** Set only when the table is outside the connection's default schema/database. */
   schema?: string;
   kind: 'table' | 'view';
+  /** A materialized view (PostgreSQL, Oracle): dropped with DROP MATERIALIZED VIEW. Set from the tree's object. */
+  materialized?: boolean;
 }
 
 /** Kinds of database objects the tree shows. */

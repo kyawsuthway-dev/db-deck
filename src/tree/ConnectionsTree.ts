@@ -118,6 +118,8 @@ export class TableNode implements Base {
     readonly system = false,
   ) {
     this.table = { name: object.name, schema: object.schema, kind: object.kind === 'view' ? 'view' : 'table' };
+    // Drivers mark materialized views in the detail ("materialized", Oracle "materialized, invalid").
+    if (object.kind === 'view' && object.detail?.split(', ').includes('materialized')) this.table.materialized = true;
   }
 }
 

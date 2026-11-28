@@ -1,6 +1,6 @@
 import type * as net from 'net';
 import type oracledbType from 'oracledb';
-import { splitSql } from '../query/splitSql';
+import { execAsBlock, splitSql, sqlPlusCommand } from '../query/splitSql';
 import { readingStatement } from '../tools/plan';
 import type {
   Cell,
@@ -11,14 +11,18 @@ import type {
   Driver,
   DumpCell,
   DumpPlan,
+  DumpTable,
   ExplainResult,
   FilterOperator,
+  ImportOptions,
   ImportResult,
+  ImportRow,
   IndexInfo,
   ObjectKind,
   RowChange,
   SchemaDiagram,
   SchemaEntry,
+  ScriptOptions,
   ScriptResult,
   ServerItem,
   ServerProcess,
@@ -27,7 +31,9 @@ import type {
   TableInfo,
   TablePage,
 } from '../types';
-import type { TableDesign } from '../design/model';
+import type { ForeignKeyDesign, IndexDesign, TableDesign } from '../design/model';
+import type { DesignChange } from '../design/diff';
+import { checkClause, columnDefinition, createIndexStatement, createTableStatements, foreignKeyClause, type DdlDialect } from './ddl';
 import {
   buildChangeStatements,
   ChangeConflict,
@@ -35,13 +41,16 @@ import {
   FILTER_OPERATORS,
   filterCondition,
   identifierFor,
+  importRowsWith,
   insertStatements,
   MAX_ROWS,
   PartialResults,
   quoteIdent,
   RowCollector,
   runEach,
+  runScriptStatements,
   standardLiteral,
+  toDumpCell,
   treeSchemas,
   type RawResult,
   type WriteDialect,
@@ -103,19 +112,20 @@ export class OracleDriver implements Driver {
   }
 
   async listColumns(table: TableInfo): Promise<ColumnInfo[]> {
-    const owner = this.ownerOf(table.schema);
+    const owner = await this.ownerOf(table.schema);
     const rows = await this.rows(
       `SELECT c.column_name, c.data_type, c.data_length, c.char_length, c.char_used, c.data_precision, c.data_scale, c.nullable,
-              CASE WHEN c.data_default IS NULL THEN 0 ELSE 1 END, c.identity_column, c.virtual_column,
+              CASE WHEN c.data_default IS NULL THEN 0 ELSE 1 END, c.identity_column, c.virtual_column, i.generation_type,
               CASE WHEN EXISTS (SELECT 1 FROM all_constraints k JOIN all_cons_columns kc ON kc.owner = k.owner AND kc.constraint_name = k.constraint_name
                                  WHERE k.owner = c.owner AND k.table_name = c.table_name AND k.constraint_type = 'P' AND kc.column_name = c.column_name)
                    THEN 1 ELSE 0 END
          FROM all_tab_cols c
+         LEFT JOIN all_tab_identity_cols i ON i.owner = c.owner AND i.table_name = c.table_name AND i.column_name = c.column_name
         WHERE c.owner = :1 AND c.table_name = :2 AND c.hidden_column = 'NO'
         ORDER BY c.column_id`,
       [owner, table.name],
     );
-    return rows.map(([name, type, length, charLength, charUsed, precision, scale, nullable, hasDefault, identity, virtual, pk]) => {
+    return rows.map(([name, type, length, charLength, charUsed, precision, scale, nullable, hasDefault, identity, virtual, generation, pk]) => {
       const t = typeText(String(type), num(length), num(charLength), charUsed === 'C', numOrNull(precision), numOrNull(scale));
       return {
         name: String(name),
@@ -124,7 +134,8 @@ export class OracleDriver implements Driver {
         primaryKey: num(pk) === 1,
         hasDefault: identity === 'YES' || num(hasDefault) === 1,
         identity: identity === 'YES',
-        generated: virtual === 'YES',
+        // A GENERATED ALWAYS identity column refuses values, like a virtual one (Import CSV and mock data skip it).
+        generated: isComputed(virtual, type) || generation === 'ALWAYS',
         shortened: isShortenedType(String(type)),
       };
     });
@@ -194,7 +205,7 @@ export class OracleDriver implements Driver {
          LEFT JOIN all_ind_expressions ie ON ie.index_owner = ic.index_owner AND ie.index_name = ic.index_name AND ie.column_position = ic.column_position
         WHERE i.table_owner = :1 AND i.table_name = :2 AND i.index_type <> 'LOB'
         ORDER BY i.index_name, ic.column_position`,
-      [this.ownerOf(table.schema), table.name],
+      [await this.ownerOf(table.schema), table.name],
     );
     const byName = new Map<string, IndexInfo & { parts: string[] }>();
     for (const [name, uniqueness, column, expression, primary] of rows) {
@@ -211,7 +222,7 @@ export class OracleDriver implements Driver {
     const rows = await this.rows(
       `SELECT trigger_name, trigger_type, triggering_event, status FROM all_triggers
         WHERE table_owner = :1 AND table_name = :2 ORDER BY trigger_name`,
-      [this.ownerOf(table.schema), table.name],
+      [await this.ownerOf(table.schema), table.name],
     );
     return rows.map(([name, type, event, status]) => ({
       kind: 'trigger',
@@ -228,7 +239,7 @@ export class OracleDriver implements Driver {
    * its specification and then its body. Never run by DB Deck.
    */
   async objectDdl(object: DbObject): Promise<string> {
-    const owner = this.ownerOf(object.schema);
+    const owner = await this.ownerOf(object.schema);
     const types: string[] =
       object.kind === 'package'
         ? ['PACKAGE_SPEC', 'PACKAGE_BODY']
@@ -272,12 +283,21 @@ export class OracleDriver implements Driver {
   async query(sql: string): Promise<StatementResult[]> {
     const statements = splitSql(sql, 'oracle');
     if (this.config.readOnly) {
-      for (const statement of statements) {
+      // SQL*Plus commands aren't sent (below); EXEC is a PL/SQL block and is checked like one.
+      for (const statement of statements.filter((st) => !sqlPlusCommand(st) || /^EXEC/.test(sqlPlusCommand(st)!))) {
         const check = readingStatement(statement, 'oracle', READING_STATEMENTS);
         if (!check.ok) return [{ sql: statement, columns: [], rows: [], durationMs: 0, error: check.reason }];
       }
     }
-    return runEach(statements, (statement) => this.run((conn) => this.execute(conn, statement)));
+    return runEach(statements, (statement) => {
+      const command = sqlPlusCommand(statement);
+      const block = command === 'EXEC' || command === 'EXECUTE' ? execAsBlock(statement) : undefined;
+      if (command && !block) {
+        const output = command === 'SET' && /\bSERVEROUT/i.test(statement) ? ' DB Deck shows DBMS_OUTPUT lines anyway.' : '';
+        return Promise.resolve<RawResult>({ columns: [], rows: [], messages: [`Skipped: ${command} is a SQL*Plus command, which Oracle doesn’t run.${output}`] });
+      }
+      return this.run((conn) => this.execute(conn, block ?? statement));
+    });
   }
 
   previewSql(table: TableInfo, page: TablePage): string {
@@ -356,40 +376,355 @@ export class OracleDriver implements Driver {
     if (forward) (await forward.catch(() => undefined))?.server.close();
   }
 
-  // Phase 14b-2 (transfer and design) and 14b-3 (tools). Oracle isn't offered outside development until then.
-  async dumpPlan(): Promise<DumpPlan> {
-    throw new Error(NOT_YET);
+  /**
+   * A script DB Deck's Run SQL File and SQL*Plus both run (`;` after SQL, `/` after PL/SQL): tables, comments,
+   * indexes, foreign keys, sequences and views as Oracle writes them (DBMS_METADATA, without schema names or storage
+   * clauses, decisions B and C), and rows as one INSERT each with literals by column type. Values too long for a SQL
+   * literal are written in pieces. GENERATED ALWAYS identity columns take the rows as BY DEFAULT and go back after,
+   * continuing past the restored rows (decision D). Read-only.
+   */
+  async dumpPlan(tables: TableInfo[], views: TableInfo[]): Promise<DumpPlan> {
+    const planned: DumpTable[] = [];
+    let afterData = '';
+    let sequenceValues = '';
+    const sequences = new Map<string, { owner: string; name: string }>();
+    for (const table of tables) {
+      const owner = await this.ownerOf(table.schema);
+      const columns = await this.dumpColumns(owner, table.name);
+      if (!columns.length) continue;
+      // Decision B: no schema names, so the dump restores into the user who runs it.
+      const target = quoteIdent(table.name, '"');
+      const create = [await this.metadata('TABLE', { SCHEMA: owner, NAME: table.name }), await this.metadata('COMMENT', { BASE_OBJECT_SCHEMA: owner, BASE_OBJECT_NAME: table.name })]
+        .filter(Boolean)
+        .join('');
+      const indexNames = await this.rows(
+        `SELECT i.owner, i.index_name FROM all_indexes i
+          WHERE i.table_owner = :1 AND i.table_name = :2 AND i.index_type NOT IN ('LOB', 'IOT - TOP') AND i.generated = 'N'
+            AND NOT EXISTS (SELECT 1 FROM all_constraints k WHERE k.owner = i.table_owner AND k.table_name = i.table_name AND k.index_name = i.index_name)
+          ORDER BY i.index_name`,
+        [owner, table.name],
+      );
+      for (const [ixOwner, ixName] of indexNames) afterData += await this.metadata('INDEX', { SCHEMA: String(ixOwner), NAME: String(ixName) });
+      afterData += await this.metadata('REF_CONSTRAINT', { BASE_OBJECT_SCHEMA: owner, BASE_OBJECT_NAME: table.name });
+      const writable = columns.filter((c) => c.writable);
+      const always = columns.filter((c) => c.identity === 'ALWAYS');
+      for (const c of columns.filter((x) => x.identity)) {
+        const kind = c.identity === 'ALWAYS' ? 'ALWAYS' : c.onNull ? 'BY DEFAULT ON NULL' : 'BY DEFAULT';
+        sequenceValues += `ALTER TABLE ${target} MODIFY (${quoteIdent(c.name, '"')} GENERATED ${kind} AS IDENTITY (START WITH LIMIT VALUE));\n`;
+      }
+      for (const c of columns) for (const seq of c.sequences) sequences.set(`${seq.owner}.${seq.name}`, seq);
+      const keys = (await this.listColumns(table)).filter((c) => c.primaryKey).map((c) => ({ column: c.name, direction: 'asc' as const }));
+      const unlock = always.map((c) => `ALTER TABLE ${target} MODIFY (${quoteIdent(c.name, '"')} GENERATED BY DEFAULT AS IDENTITY);\n`).join('');
+      planned.push({
+        table,
+        create,
+        columns: writable.map((c) => c.name),
+        orderBy: keys,
+        insert: (rows) => (rows.length ? unlock + rows.map((row) => insertRow(target, writable, row)).join('') : ''),
+      });
+    }
+    let structure = '';
+    for (const seq of sequences.values()) structure += await this.metadata('SEQUENCE', { SCHEMA: seq.owner, NAME: seq.name });
+    return {
+      // SQL*Plus would read & in the data as a substitution variable; DB Deck's Run SQL File skips the line (decision A).
+      start: 'SET DEFINE OFF\n',
+      structure,
+      tables: planned,
+      afterData,
+      sequenceValues,
+      views: await this.viewsInOrder(views),
+      end: '',
+    };
   }
-  async dumpRows(): Promise<DumpCell[][]> {
-    throw new Error(NOT_YET);
+
+  /**
+   * One page of a table for a dump: whole values (no 1 MB cap), JSON as Oracle's own text (JSON_SERIALIZE keeps every
+   * digit), LOCAL TIME ZONE values in UTC with their offset written, binary as complete hex. Read-only.
+   */
+  async dumpRows(table: TableInfo, columns: string[], page: TablePage): Promise<DumpCell[][]> {
+    const types = new Map((await this.dumpColumns(await this.ownerOf(table.schema), table.name)).map((c) => [c.name, c.type]));
+    const list = columns
+      .map((c) => {
+        const q = quoteIdent(c, '"');
+        return types.get(c) === 'JSON' ? `JSON_SERIALIZE(${q} RETURNING CLOB) ${q}` : q;
+      })
+      .join(', ');
+    const sql = pageQuery(this.qualified(table), page).replace(/^SELECT \* FROM /, `SELECT ${list} FROM `);
+    return this.run(async (conn) => {
+      const { oracledb } = oracleLib();
+      let result: oracledbType.Result;
+      try {
+        result = await conn.execute(sql, [], { outFormat: oracledb.OUT_FORMAT_ARRAY, fetchTypeHandler: (m) => fetchAs(oracledb, m) });
+      } catch (err) {
+        throw oracleError(err, sql);
+      }
+      const meta = result.metaData ?? [];
+      return (result.rows ?? []).map((row) => row.map((v, i) => toDumpCell(this.dumpValue(v, meta[i]))));
+    });
   }
-  async runScript(): Promise<ScriptResult> {
-    throw new Error(NOT_YET);
+
+  /**
+   * Run SQL File's statements on their own connection, with autocommit off: everything since the last schema change
+   * is rolled back on an error or Cancel (Oracle commits at every CREATE / ALTER / DROP, which the form says). A
+   * script with its own COMMIT / ROLLBACK runs the same way, and what it leaves open is committed at the end, as
+   * SQL*Plus does when it exits. SQL*Plus commands were left out by `analyzeScript` (decision A).
+   */
+  async runScript(statements: string[], options: ScriptOptions): Promise<ScriptResult> {
+    if (this.config.readOnly) throw new Error('This connection is read-only, so DB Deck doesn’t run SQL files on it.');
+    const conn = await this.createConnection();
+    try {
+      return await runScriptStatements(
+        statements,
+        { ...options, transaction: true },
+        async (sql) => {
+          try {
+            return (await conn.execute(sql, [], { autoCommit: false })).rowsAffected;
+          } catch (err) {
+            throw oracleError(err, sql);
+          }
+        },
+        { begin: async () => undefined, commit: () => conn.commit(), rollback: () => conn.rollback() },
+      );
+    } finally {
+      await conn.close().catch(() => {});
+    }
   }
-  async importRows(): Promise<ImportResult> {
-    throw new Error(NOT_YET);
+
+  /**
+   * Import CSV through `importRowsWith` on its own connection: array binds per batch (`executeMany`; INSERT ALL would
+   * give every row the same identity value), a SAVEPOINT per batch (Oracle has no RELEASE). Values go in as text and
+   * convert with the session formats; long text binds as CLOB.
+   */
+  async importRows(table: TableInfo, columns: string[], rows: AsyncIterable<ImportRow>, options: ImportOptions): Promise<ImportResult> {
+    if (this.config.readOnly) throw new Error('This connection is read-only, so DB Deck doesn’t import into it.');
+    const name = this.qualified(table);
+    const types = new Map((await this.listColumns(table)).map((c) => [c.name, c.type]));
+    const { oracledb } = oracleLib();
+    const lob = columns.map((c) => /^(N?CLOB|LONG|XMLTYPE|JSON)$/.test(types.get(c) ?? ''));
+    const sql = `INSERT INTO ${name} (${columns.map((c) => quoteIdent(c, '"')).join(', ')}) VALUES (${columns.map((_, i) => `:${i + 1}`).join(', ')})`;
+    const conn = await this.createConnection();
+    const exec = async (text: string) => {
+      try {
+        return await conn.execute(text, [], { autoCommit: false });
+      } catch (err) {
+        throw oracleError(err, text);
+      }
+    };
+    try {
+      return await importRowsWith(rows, options, {
+        begin: async () => undefined,
+        commit: () => conn.commit(),
+        rollback: () => conn.rollback(),
+        savepoint: async () => void (await exec('SAVEPOINT dbdeck_batch')),
+        rollbackToSavepoint: async () => void (await exec('ROLLBACK TO SAVEPOINT dbdeck_batch')),
+        // Oracle has no RELEASE SAVEPOINT: a savepoint simply ends with the transaction.
+        releaseSavepoint: async () => undefined,
+        deleteAll: async () => (await exec(`DELETE FROM ${name}`)).rowsAffected ?? 0,
+        insert: async (batch) => {
+          const bindDefs = columns.map((_, i) =>
+            lob[i]
+              ? { type: oracledb.DB_TYPE_CLOB }
+              : { type: oracledb.STRING, maxSize: Math.max(1, ...batch.map((r) => Buffer.byteLength(r.values[i] ?? ''))) },
+          );
+          try {
+            await conn.executeMany(sql, batch.map((r) => r.values), { autoCommit: false, bindDefs });
+          } catch (err) {
+            throw oracleError(err);
+          }
+        },
+        batchRows: 500,
+      });
+    } finally {
+      await conn.close().catch(() => {});
+    }
   }
-  createTableSql(): string[] {
-    throw new Error(NOT_YET);
+
+  createTableSql(design: TableDesign): string[] {
+    return createTableStatements(design, DDL);
   }
-  renameTableSql(): string {
-    throw new Error(NOT_YET);
+
+  renameTableSql(table: TableInfo, newName: string): string {
+    return `ALTER TABLE ${qualifiedName(table)} RENAME TO ${quoteIdent(newName.trim(), '"')};`;
   }
-  truncateTableSql(): string {
-    throw new Error(NOT_YET);
+
+  /** Oracle commits TRUNCATE and refuses it while enabled foreign keys reference the table; never CASCADE. */
+  truncateTableSql(table: TableInfo): string {
+    return `TRUNCATE TABLE ${qualifiedName(table)};`;
   }
-  dropSql(): string {
-    throw new Error(NOT_YET);
+
+  /** DROP TABLE goes to the recycle bin where that's on; never CASCADE CONSTRAINTS or PURGE. */
+  dropSql(object: TableInfo): string {
+    return `DROP ${object.materialized ? 'MATERIALIZED VIEW' : object.kind === 'view' ? 'VIEW' : 'TABLE'} ${qualifiedName(object)};`;
   }
-  async readDesign(): Promise<TableDesign> {
-    throw new Error(NOT_YET);
+
+  async referencingTables(table: TableInfo): Promise<string[]> {
+    const rows = await this.rows(
+      `SELECT DISTINCT c.owner, c.table_name
+         FROM all_constraints c JOIN all_constraints p ON p.owner = c.r_owner AND p.constraint_name = c.r_constraint_name
+        WHERE c.constraint_type = 'R' AND p.owner = :1 AND p.table_name = :2 AND NOT (c.owner = p.owner AND c.table_name = p.table_name)
+        ORDER BY 1, 2`,
+      [await this.ownerOf(table.schema), table.name],
+    );
+    return rows.map(([owner, name]) => (String(owner) === this.currentSchema ? String(name) : `${String(owner)}.${String(name)}`));
   }
-  alterTableSql(): { statements: string[]; rebuild: boolean } {
-    throw new Error(NOT_YET);
+
+  /**
+   * The table as the designer edits it, read the same way every time (Apply compares two reads). Defaults lose the
+   * whitespace Oracle keeps around them, and a default of NULL reads as none (Oracle can't remove a default, only set
+   * it to NULL). Oracle's own NOT NULL checks aren't checks here. Indexes the designer can't show (function-based,
+   * bitmap, descending) are left out, so a design change never touches them.
+   */
+  async readDesign(table: TableInfo): Promise<TableDesign> {
+    const owner = await this.ownerOf(table.schema);
+    const cols = await this.rows(
+      `SELECT c.column_name, c.data_type, c.data_length, c.char_length, c.char_used, c.data_precision, c.data_scale, c.nullable,
+              c.data_default, c.identity_column, c.virtual_column, cc.comments
+         FROM all_tab_cols c
+         LEFT JOIN all_col_comments cc ON cc.owner = c.owner AND cc.table_name = c.table_name AND cc.column_name = c.column_name
+        WHERE c.owner = :1 AND c.table_name = :2 AND c.hidden_column = 'NO'
+        ORDER BY c.column_id`,
+      [owner, table.name],
+    );
+    if (!cols.length) throw new Error(`Table ${tableText(table)} wasn't found.`);
+    const constraints = await this.rows(
+      `SELECT k.constraint_name, k.constraint_type, k.search_condition, k.generated, k.delete_rule, r.owner, r.table_name, kc.column_name, rc.column_name
+         FROM all_constraints k
+         LEFT JOIN all_cons_columns kc ON kc.owner = k.owner AND kc.constraint_name = k.constraint_name
+         LEFT JOIN all_constraints r ON r.owner = k.r_owner AND r.constraint_name = k.r_constraint_name
+         LEFT JOIN all_cons_columns rc ON rc.owner = r.owner AND rc.constraint_name = r.constraint_name AND rc.position = kc.position
+        WHERE k.owner = :1 AND k.table_name = :2 AND k.constraint_type IN ('P', 'U', 'R', 'C')
+        ORDER BY k.constraint_name, kc.position`,
+      [owner, table.name],
+    );
+    const pkColumns = new Set<string>();
+    let primaryKeyName: string | undefined;
+    const uniques = new Map<string, IndexDesign>();
+    const fks = new Map<string, ForeignKeyDesign>();
+    const checks = new Map<string, string>();
+    for (const [name, type, condition, generated, deleteRule, refOwner, refTable, column, refColumn] of constraints) {
+      const key = String(name);
+      if (type === 'P') {
+        primaryKeyName = key;
+        if (column) pkColumns.add(String(column));
+      } else if (type === 'U') {
+        const ix = uniques.get(key) ?? { name: key, columns: [], unique: true, constraint: true };
+        if (column) ix.columns.push(String(column));
+        uniques.set(key, ix);
+      } else if (type === 'R') {
+        const fk = fks.get(key) ?? {
+          name: key,
+          columns: [],
+          // Left out only for the connection's own schema (drivers.md).
+          ...(String(refOwner) === this.currentSchema ? {} : { refSchema: String(refOwner) }),
+          refTable: String(refTable),
+          refColumns: [],
+          onDelete: deleteRule === 'CASCADE' || deleteRule === 'SET NULL' ? String(deleteRule) : 'NO ACTION',
+          onUpdate: 'NO ACTION',
+        };
+        if (column) fk.columns.push(String(column));
+        if (refColumn) fk.refColumns.push(String(refColumn));
+        fks.set(key, fk);
+      } else if (type === 'C') {
+        const text = String(condition ?? '').trim();
+        // NOT NULL columns are also checks in Oracle's catalog; the designer shows them as Not null.
+        if (generated === 'GENERATED NAME' && /^"[^"]+" IS NOT NULL$/.test(text)) continue;
+        checks.set(key, text);
+      }
+    }
+    const indexRows = await this.rows(
+      `SELECT i.index_name, i.uniqueness, ic.column_name
+         FROM all_indexes i JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name
+        WHERE i.table_owner = :1 AND i.table_name = :2 AND i.index_type = 'NORMAL' AND i.generated = 'N'
+          AND NOT EXISTS (SELECT 1 FROM all_constraints k WHERE k.owner = i.table_owner AND k.table_name = i.table_name AND k.index_name = i.index_name)
+          AND NOT EXISTS (SELECT 1 FROM all_ind_columns d WHERE d.index_owner = i.owner AND d.index_name = i.index_name AND d.descend = 'DESC')
+        ORDER BY i.index_name, ic.column_position`,
+      [owner, table.name],
+    );
+    const indexes = new Map<string, IndexDesign>();
+    for (const [name, uniqueness, column] of indexRows) {
+      const ix = indexes.get(String(name)) ?? { name: String(name), columns: [], unique: uniqueness === 'UNIQUE' };
+      ix.columns.push(String(column));
+      indexes.set(String(name), ix);
+    }
+    const [[tableComment] = []] = await this.rows('SELECT comments FROM all_tab_comments WHERE owner = :1 AND table_name = :2', [owner, table.name]);
+    return {
+      ...(table.schema ? { schema: table.schema } : {}),
+      name: table.name,
+      comment: tableComment ? String(tableComment) : '',
+      columns: cols.map(([name, type, length, charLength, charUsed, precision, scale, nullable, dataDefault, identity, virtual, comment], i) => ({
+        key: `c${i}`,
+        name: String(name),
+        type: typeText(String(type), num(length), num(charLength), charUsed === 'C', numOrNull(precision), numOrNull(scale)),
+        nullable: nullable === 'Y',
+        default: identity === 'YES' || isComputed(virtual, type) ? '' : designDefault(dataDefault),
+        primaryKey: pkColumns.has(String(name)),
+        autoIncrement: identity === 'YES',
+        comment: comment ? String(comment) : '',
+        ...(isComputed(virtual, type) ? { generated: true } : {}),
+      })),
+      indexes: [...[...uniques.values()].sort((a, b) => a.name.localeCompare(b.name)), ...indexes.values()],
+      foreignKeys: [...fks.values()],
+      checks: [...checks].map(([name, expression]) => ({ name, expression })),
+      ...(primaryKeyName ? { primaryKeyName } : {}),
+    };
   }
-  async referencingTables(): Promise<string[]> {
-    throw new Error(NOT_YET);
+
+  /**
+   * One statement per change, in an order Oracle accepts: column renames, then drops (indexes, constraints, the primary
+   * key, columns), column changes (`MODIFY`, with only what changed: Oracle refuses a nullability it already has),
+   * new columns, the new primary key, foreign keys, checks, indexes and comments. IDENTITY can be turned off
+   * (`DROP IDENTITY`) but not on for an existing column, so that's refused with the reason. Pure: the designer calls
+   * it on an unconnected driver.
+   */
+  alterTableSql(before: TableDesign, _after: TableDesign, changes: DesignChange[]): { statements: string[]; rebuild: boolean } {
+    const table = qualifiedName({ schema: before.schema, name: before.name });
+    const q = (n: string) => quoteIdent(n.trim(), '"');
+    const out: string[] = [];
+    const alter = (action: string) => out.push(`ALTER TABLE ${table} ${action};`);
+    const comment = (target: string, text: string) => out.push(`COMMENT ON ${target} IS ${standardLiteral(text.trim())};`);
+    const turnedOn = changes.find((c) => c.kind === 'alterColumn' && c.autoIncrement && c.after.autoIncrement);
+    if (turnedOn?.kind === 'alterColumn') {
+      throw new Error(
+        `Oracle can’t make an existing column an identity column (${turnedOn.after.name.trim()}). Add a new column with Auto-increment, or create a new table and copy the rows over.`,
+      );
+    }
+    for (const c of changes) if (c.kind === 'renameColumn') alter(`RENAME COLUMN ${q(c.from)} TO ${q(c.to)}`);
+    for (const c of changes) {
+      if (c.kind === 'dropIndex') {
+        if (c.index.constraint) alter(`DROP CONSTRAINT ${q(c.index.name)}`);
+        else out.push(`DROP INDEX ${before.schema ? `${q(before.schema)}.` : ''}${q(c.index.name)};`);
+      } else if (c.kind === 'dropForeignKey') alter(`DROP CONSTRAINT ${q(c.foreignKey.name)}`);
+      else if (c.kind === 'dropCheck') alter(`DROP CONSTRAINT ${q(c.check.name)}`);
+    }
+    const pkChange = changes.find((c) => c.kind === 'primaryKey');
+    if (pkChange && before.primaryKeyName) alter(`DROP CONSTRAINT ${q(before.primaryKeyName)}`);
+    for (const c of changes) if (c.kind === 'dropColumn') alter(`DROP COLUMN ${q(c.column.name)}`);
+    for (const c of changes) {
+      if (c.kind !== 'alterColumn') continue;
+      const col = q(c.after.name);
+      if (c.autoIncrement && !c.after.autoIncrement) alter(`MODIFY (${col} DROP IDENTITY)`);
+      const parts = [
+        c.type ? c.after.type.trim() : '',
+        c.default ? `DEFAULT ${c.after.default.trim() || 'NULL'}` : '',
+        c.nullable ? (c.after.nullable ? 'NULL' : 'NOT NULL') : '',
+      ].filter(Boolean);
+      if (parts.length) alter(`MODIFY (${col} ${parts.join(' ')})`);
+    }
+    for (const c of changes) if (c.kind === 'addColumn') alter(`ADD (${columnDefinition({ ...c.column, primaryKey: false }, DDL)})`);
+    if (pkChange?.after.length) alter(`ADD PRIMARY KEY (${pkChange.after.map(q).join(', ')})`);
+    for (const c of changes) {
+      if (c.kind === 'addForeignKey') alter(`ADD ${foreignKeyClause(c.foreignKey, DDL)}`);
+      else if (c.kind === 'addCheck') alter(`ADD ${checkClause(c.check, DDL)}`);
+    }
+    for (const c of changes) if (c.kind === 'addIndex') out.push(createIndexStatement(c.index, table, DDL));
+    for (const c of changes) {
+      if (c.kind === 'tableComment') comment(`TABLE ${table}`, c.comment);
+      else if (c.kind === 'alterColumn' && c.comment) comment(`COLUMN ${table}.${q(c.after.name)}`, c.after.comment);
+      else if (c.kind === 'addColumn' && c.column.comment.trim()) comment(`COLUMN ${table}.${q(c.column.name)}`, c.column.comment);
+    }
+    return { statements: out, rebuild: false };
   }
+
   async explain(): Promise<ExplainResult> {
     throw new Error(NOT_YET);
   }
@@ -414,8 +749,11 @@ export class OracleDriver implements Driver {
     return owner === this.currentSchema ? undefined : owner;
   }
 
-  private ownerOf(schema: string | undefined): string {
-    return schema ?? this.currentSchema ?? '';
+  /** The owner of an object without `schema`: the connected user's schema, known once connected. */
+  private async ownerOf(schema: string | undefined): Promise<string> {
+    if (schema) return schema;
+    if (!this.currentSchema) await this.connect();
+    return this.currentSchema ?? '';
   }
 
   private qualified(table: { name: string; schema?: string }): string {
@@ -542,6 +880,130 @@ export class OracleDriver implements Driver {
         throw oracleError(err);
       }
     });
+  }
+
+  /**
+   * DDL from DBMS_METADATA through its handle API, so the transforms (no schema names or storage clauses, `;` and `/`)
+   * apply to this call only, not the session. Several objects (an object's foreign keys or comments) come back one
+   * after another. '' when there's none.
+   */
+  private async metadata(type: string, filters: Record<string, string>): Promise<string> {
+    const { oracledb } = oracleLib();
+    const params = [
+      ['SQLTERMINATOR', 'TRUE'],
+      ['PRETTY', 'TRUE'],
+      ['EMIT_SCHEMA', 'FALSE'],
+      ...(type === 'TABLE' || type === 'INDEX' ? [['SEGMENT_ATTRIBUTES', 'FALSE']] : []),
+      ...(type === 'TABLE' ? [['REF_CONSTRAINTS', 'FALSE']] : []),
+    ];
+    const names = Object.keys(filters);
+    const plsql = `DECLARE
+  h NUMBER; t NUMBER; doc CLOB; result CLOB;
+BEGIN
+  DBMS_LOB.CREATETEMPORARY(result, TRUE);
+  h := DBMS_METADATA.OPEN(:type);
+  ${names.map((_, i) => `DBMS_METADATA.SET_FILTER(h, :f${i}, :v${i});`).join('\n  ')}
+  t := DBMS_METADATA.ADD_TRANSFORM(h, 'DDL');
+  ${params.map(([p, v]) => `DBMS_METADATA.SET_TRANSFORM_PARAM(t, '${p}', ${v});`).join('\n  ')}
+  LOOP
+    doc := DBMS_METADATA.FETCH_CLOB(h);
+    EXIT WHEN doc IS NULL;
+    DBMS_LOB.APPEND(result, doc);
+  END LOOP;
+  DBMS_METADATA.CLOSE(h);
+  :ddl := result;
+END;`;
+    const binds: Record<string, unknown> = { type, ddl: { dir: oracledb.BIND_OUT, type: oracledb.DB_TYPE_CLOB } };
+    names.forEach((n, i) => {
+      binds[`f${i}`] = n;
+      binds[`v${i}`] = filters[n];
+    });
+    return this.run(async (conn) => {
+      let result: oracledbType.Result;
+      try {
+        result = await conn.execute(plsql, binds);
+      } catch (err) {
+        throw oracleError(err);
+      }
+      const lob = result.outBinds?.ddl as oracledbType.Lob | null | undefined;
+      const text = lob ? String((await lob.getData()) ?? '') : '';
+      lob?.destroy();
+      // Each object comes with leading blank lines (PRETTY); one blank line between them.
+      return text
+        .split(/\n\s*\n(?=\s*(?:CREATE|ALTER|COMMENT)\b)/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => `${part}\n`)
+        .join('\n');
+    });
+  }
+
+  /** A table's columns for a dump: type, whether rows can include it, identity kind, sequences its default uses. */
+  private async dumpColumns(owner: string, table: string): Promise<DumpColumn[]> {
+    const rows = await this.rows(
+      `SELECT c.column_name, c.data_type, c.data_type_owner, c.virtual_column, i.generation_type, c.default_on_null, c.data_default
+         FROM all_tab_cols c
+         LEFT JOIN all_tab_identity_cols i ON i.owner = c.owner AND i.table_name = c.table_name AND i.column_name = c.column_name
+        WHERE c.owner = :1 AND c.table_name = :2 AND c.hidden_column = 'NO'
+        ORDER BY c.column_id`,
+      [owner, table],
+    );
+    return rows.map(([name, type, typeOwner, virtual, generation, onNull, dataDefault]) => {
+      const t = String(type);
+      const sequences: { owner: string; name: string }[] = [];
+      for (const m of String(dataDefault ?? '').matchAll(/"([^"]+)"\."([^"]+)"\."?NEXTVAL"?/gi)) {
+        if (!m[2].startsWith('ISEQ$$')) sequences.push({ owner: m[1], name: m[2] });
+      }
+      return {
+        name: String(name),
+        type: t,
+        // Virtual columns can't take values; BFILE (a file pointer) and object types Thin can't read are left out.
+        writable: !isComputed(virtual, t) && t !== 'BFILE' && (typeOwner === null || typeOwner === undefined || t === 'XMLTYPE'),
+        identity: generation === 'ALWAYS' ? 'ALWAYS' : generation ? 'BY DEFAULT' : undefined,
+        onNull: onNull === 'YES',
+        sequences,
+      };
+    });
+  }
+
+  /** View DDL in an order that restores: a view after the views it reads (ALL_DEPENDENCIES). */
+  private async viewsInOrder(views: TableInfo[]): Promise<string> {
+    if (!views.length) return '';
+    const key = (owner: string, name: string) => `${owner}\u0000${name}`;
+    const wanted = new Map<string, TableInfo>();
+    for (const v of views) wanted.set(key(await this.ownerOf(v.schema), v.name), v);
+    const deps = await this.rows(
+      `SELECT owner, name, referenced_owner, referenced_name FROM all_dependencies
+        WHERE type IN ('VIEW', 'MATERIALIZED VIEW') AND referenced_type IN ('VIEW', 'MATERIALIZED VIEW')`,
+    );
+    const needs = new Map<string, string[]>();
+    for (const [owner, name, refOwner, refName] of deps) {
+      const from = key(String(owner), String(name));
+      const to = key(String(refOwner), String(refName));
+      if (wanted.has(from) && wanted.has(to)) needs.set(from, [...(needs.get(from) ?? []), to]);
+    }
+    const done = new Set<string>();
+    const order: TableInfo[] = [];
+    const visit = (k: string, path: Set<string>) => {
+      if (done.has(k) || path.has(k)) return;
+      path.add(k);
+      for (const dep of needs.get(k) ?? []) visit(dep, path);
+      done.add(k);
+      order.push(wanted.get(k)!);
+    };
+    for (const k of wanted.keys()) visit(k, new Set());
+    let out = '';
+    for (const v of order) out += await this.metadata(v.materialized ? 'MATERIALIZED_VIEW' : 'VIEW', { SCHEMA: await this.ownerOf(v.schema), NAME: v.name });
+    return out;
+  }
+
+  /** A value for a dump: as `cellValue`, but whole, and LOCAL TIME ZONE as UTC with its offset written. */
+  private dumpValue(value: unknown, meta: Metadata): unknown {
+    if (value === null || value === undefined) return null;
+    const { oracledb } = oracleLib();
+    if (isOracleDateTime(value) && meta.dbType === oracledb.DB_TYPE_TIMESTAMP_LTZ) return `${dateTimeText(value, 'ltz', 9, () => 0)} +00:00`;
+    if (typeof value === 'string' && value.length > MAX_TEXT) return value;
+    return this.cellValue(value, meta);
   }
 
   /** Runs `work` on the shared connection when it's this caller's turn. */
@@ -756,6 +1218,159 @@ function connectError(err: unknown, c: ConnectionConfig): Error {
     return new Error(`${m} DB Deck verifies the server’s certificate with your system’s trusted certificates; a self-signed one can’t be trusted from the form yet.`);
   }
   return e;
+}
+
+/**
+ * A virtual (computed) column. An XMLTYPE column stored as binary XML is reported as virtual too (its data sits in a
+ * hidden column), but it takes values like any other.
+ */
+function isComputed(virtual: unknown, type: unknown): boolean {
+  return virtual === 'YES' && type !== 'XMLTYPE';
+}
+
+function qualifiedName(table: { name: string; schema?: string }): string {
+  const name = quoteIdent(table.name, '"');
+  return table.schema ? `${quoteIdent(table.schema, '"')}.${name}` : name;
+}
+
+function tableText(table: { name: string; schema?: string }): string {
+  return table.schema ? `${table.schema}.${table.name}` : table.name;
+}
+
+/** A default as the designer shows it: Oracle keeps the typed whitespace, and `DEFAULT NULL` is how a default is removed. */
+function designDefault(value: unknown): string {
+  const text = value === null || value === undefined ? '' : String(value).trim();
+  return /^null$/i.test(text) ? '' : text;
+}
+
+/** How Oracle writes table DDL (drivers/ddl.ts): DEFAULT before NOT NULL, no ON UPDATE, comments as COMMENT ON. */
+const DDL: DdlDialect = {
+  quote: '"',
+  table: (schema, name) => qualifiedName({ schema, name }),
+  literal: standardLiteral,
+  autoIncrement: { clause: 'GENERATED BY DEFAULT AS IDENTITY', position: 'afterType' },
+  comments: 'statements',
+  defaultFirst: true,
+  referentialActions: (onDelete) => (onDelete === 'CASCADE' || onDelete === 'SET NULL' ? ` ON DELETE ${onDelete}` : ''),
+};
+
+/** A column in a dump (`dumpColumns`). */
+interface DumpColumn {
+  name: string;
+  /** ALL_TAB_COLS.DATA_TYPE: `NUMBER`, `TIMESTAMP(6) WITH TIME ZONE`, `INTERVAL DAY(2) TO SECOND(6)`… */
+  type: string;
+  writable: boolean;
+  identity?: 'ALWAYS' | 'BY DEFAULT';
+  onNull: boolean;
+  sequences: { owner: string; name: string }[];
+}
+
+/** Longest piece of text or hex on one line: SQL*Plus refuses lines over 2,499 characters. */
+const PIECE = 1000;
+
+/**
+ * One row as an INSERT, values one per line. A BLOB over 2,000 bytes or a CLOB over 32,767 characters is too long for
+ * a literal: the row is inserted with an empty LOB, which a PL/SQL block then fills in pieces (`DBMS_LOB.WRITEAPPEND`).
+ */
+function insertRow(table: string, columns: DumpColumn[], row: DumpCell[]): string {
+  const big = columns.map((c, i) => {
+    const v = row[i];
+    if (v === null || v === undefined) return false;
+    if (typeof v === 'object') return c.type === 'BLOB' && v.hex.length > 4000;
+    return /^N?CLOB$/.test(c.type) && v.length > 32767;
+  });
+  const names = columns.map((c) => quoteIdent(c.name, '"')).join(', ');
+  const values = columns.map((c, i) => (big[i] ? (c.type === 'BLOB' ? 'EMPTY_BLOB()' : 'EMPTY_CLOB()') : dumpLiteral(c.type, row[i])));
+  const insert = `INSERT INTO ${table} (${names}) VALUES (\n  ${values.join(',\n  ')}\n)`;
+  if (!big.some(Boolean)) return `${insert};\n`;
+  const lobs = columns.map((c, i) => ({ c, i })).filter(({ i }) => big[i]);
+  const vars = lobs.map((_, k) => `l${k + 1}`);
+  const lines = [`DECLARE`, ...lobs.map(({ c }, k) => `  ${vars[k]} ${c.type};`), 'BEGIN', `${insert}\n  RETURNING ${lobs.map(({ c }) => quoteIdent(c.name, '"')).join(', ')} INTO ${vars.join(', ')};`];
+  lobs.forEach(({ c, i }, k) => {
+    const v = row[i]!;
+    if (typeof v === 'object') {
+      for (let at = 0; at < v.hex.length; at += PIECE * 2) {
+        const hex = v.hex.slice(at, at + PIECE * 2);
+        lines.push(`  DBMS_LOB.WRITEAPPEND(${vars[k]}, ${hex.length / 2}, HEXTORAW('${hex}'));`);
+      }
+    } else {
+      for (const piece of pieces(v)) lines.push(`  DBMS_LOB.WRITEAPPEND(${vars[k]}, ${piece.length}, ${c.type === 'NCLOB' ? 'N' : ''}${quote(piece)});`);
+    }
+  });
+  lines.push('END;', '/');
+  return `${lines.join('\n')}\n`;
+}
+
+/** A value as an Oracle literal of its column's type, independent of the session's NLS settings. */
+function dumpLiteral(type: string, v: DumpCell): string {
+  if (v === null) return 'NULL';
+  if (typeof v === 'object') {
+    if (!v.hex) return type === 'BLOB' ? 'EMPTY_BLOB()' : 'NULL';
+    const hex = [];
+    for (let at = 0; at < v.hex.length; at += PIECE * 2) hex.push(`'${v.hex.slice(at, at + PIECE * 2)}'`);
+    return `HEXTORAW(${hex.join('\n    || ')})`;
+  }
+  const base = type.replace(/\(.*?\)/g, '').trim();
+  switch (base) {
+    case 'NUMBER':
+    case 'FLOAT':
+      return /^-?\d*\.?\d+(E[+-]?\d+)?$/i.test(v) ? v : quote(v);
+    case 'BINARY_FLOAT':
+    case 'BINARY_DOUBLE': {
+      const prefix = base === 'BINARY_FLOAT' ? 'BINARY_FLOAT' : 'BINARY_DOUBLE';
+      if (v === 'NaN') return `${prefix}_NAN`;
+      if (v === 'Infinity') return `${prefix}_INFINITY`;
+      if (v === '-Infinity') return `-${prefix}_INFINITY`;
+      return `${v}${base === 'BINARY_FLOAT' ? 'f' : 'd'}`;
+    }
+    case 'DATE':
+      return `TO_DATE(${quote(v)}, 'SYYYY-MM-DD HH24:MI:SS')`;
+    case 'TIMESTAMP':
+      return `TO_TIMESTAMP(${quote(v)}, ${v.includes('.') ? "'SYYYY-MM-DD HH24:MI:SS.FF9'" : "'SYYYY-MM-DD HH24:MI:SS'"})`;
+    case 'TIMESTAMP WITH TIME ZONE':
+    case 'TIMESTAMP WITH LOCAL TIME ZONE': {
+      // Region-named values were shown as UTC (decision 11): restored in the UTC region, the same instant.
+      const zone = v.endsWith(' UTC') ? 'TZR' : 'TZH:TZM';
+      return `TO_TIMESTAMP_TZ(${quote(v)}, ${v.includes('.') ? `'SYYYY-MM-DD HH24:MI:SS.FF9 ${zone}'` : `'SYYYY-MM-DD HH24:MI:SS ${zone}'`})`;
+    }
+    case 'INTERVAL DAY TO SECOND':
+      return `TO_DSINTERVAL(${quote(v)})`;
+    case 'INTERVAL YEAR TO MONTH':
+      return `TO_YMINTERVAL(${quote(v)})`;
+    case 'BOOLEAN':
+      return v === 'true' ? 'TRUE' : 'FALSE';
+    case 'NCHAR':
+    case 'NVARCHAR2':
+    case 'NCLOB':
+      return textLiteral(v, true, base === 'NCLOB');
+    case 'XMLTYPE':
+      return `XMLTYPE(${textLiteral(v, false, true)})`;
+    default:
+      return textLiteral(v, false, base === 'CLOB' || base === 'JSON' || base === 'LONG');
+  }
+}
+
+/** A string literal, in pieces of at most 1,000 characters joined with `||` (TO_CLOB for LOBs, so it can grow past 4,000 bytes). */
+function textLiteral(v: string, national: boolean, lob: boolean): string {
+  const parts = pieces(v).map((p) => `${national ? 'N' : ''}${quote(p)}`);
+  if (parts.length <= 1) return parts[0] ?? "''";
+  return (lob ? parts.map((p) => `${national ? 'TO_NCLOB' : 'TO_CLOB'}(${p})`) : parts).join('\n    || ');
+}
+
+function quote(v: string): string {
+  return `'${v.split("'").join("''")}'`;
+}
+
+/** Text in pieces of at most PIECE characters, never splitting a surrogate pair. */
+function pieces(v: string): string[] {
+  const out: string[] = [];
+  for (let at = 0; at < v.length; ) {
+    let end = Math.min(v.length, at + PIECE);
+    if (end < v.length && /[\uD800-\uDBFF]/.test(v[end - 1])) end--;
+    out.push(v.slice(at, end));
+    at = end;
+  }
+  return out.length ? out : [''];
 }
 
 /** How Oracle writes table edits: named binds (`:p1`), so the NULL-safe check can use a value twice. */

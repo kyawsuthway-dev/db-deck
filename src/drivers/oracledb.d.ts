@@ -49,10 +49,21 @@ declare module 'oracledb' {
 
     interface BindDefinition {
       dir?: number;
-      type?: number;
+      type?: number | DbType;
       val?: unknown;
       maxSize?: number;
       maxArraySize?: number;
+    }
+
+    /** A LOB out bind's value (DBMS_METADATA's CLOBs). */
+    interface Lob {
+      getData(): Promise<string | Buffer | null>;
+      destroy(): void;
+    }
+
+    interface ExecuteManyOptions {
+      autoCommit?: boolean;
+      bindDefs?: BindDefinition[];
     }
 
     interface Connection {
@@ -60,6 +71,8 @@ declare module 'oracledb' {
       oracleServerVersionString: string;
       callTimeout: number;
       execute(sql: string, binds?: unknown[] | Record<string, unknown>, options?: ExecuteOptions): Promise<Result>;
+      /** The same statement for many rows of binds in one round trip (array DML). */
+      executeMany(sql: string, binds: unknown[][], options?: ExecuteManyOptions): Promise<{ rowsAffected?: number }>;
       commit(): Promise<void>;
       rollback(): Promise<void>;
       close(): Promise<void>;
