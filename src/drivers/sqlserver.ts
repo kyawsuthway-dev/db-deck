@@ -667,7 +667,7 @@ function request(conn: Connection, sql: string, params: Cell[] = [], userSql = t
 
 /**
  * tedious and DB Deck's wrappers around it, loaded on first use. In the extension this is dist/sqlserver.js, its own
- * bundle (esbuild.mjs DRIVER_BUNDLES), so VS Code never reads it unless a SQL Server connection opens; a plain
+ * bundle (esbuild.mjs LIBRARY_BUNDLES), so VS Code never reads it unless a SQL Server connection opens; a plain
  * require inside a function keeps it lazy.
  */
 function sqlServerLib(): typeof import('./sqlserverLib') {
