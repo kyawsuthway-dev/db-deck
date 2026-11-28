@@ -60,6 +60,11 @@ Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (My
 - Oracle `query()` splits with the `oracle` dialect, commits each statement on its own (as the other databases do), and shows implicit results (`DBMS_SQL.RETURN_RESULT`), DBMS_OUTPUT lines after BEGIN / DECLARE / CALL, and compilation errors (`ALL_ERRORS`) as messages. Edits use named binds (`:p1`), because the NULL-safe check repeats a value.
 - Oracle has no usable read-only session (a read-only transaction still allows DDL, which commits): a read-only connection runs only SELECT and WITH (`readingStatement` with Oracle's list), and `applyChanges` refuses.
 - `ColumnInfo.shortened` marks columns the grid shows shortened or the database can't compare (Oracle LOBs, RAW, XMLTYPE, JSON): never edited (`TableView.fixed`, with binary types).
+- Oracle Run SQL File: `analyzeScript` skips SQL*Plus commands (`sqlPlusCommand`; the splitter ends them at their line) and lists them, runs `EXEC` as a block (`execAsBlock`), and refuses `@file` / `START`. Own transactions are COMMIT / ROLLBACK / SAVEPOINT / SET TRANSACTION anywhere in the code. `runScript` commits at the end and rolls back on an error.
+- Oracle dumps: DDL from DBMS_METADATA's handle API (transforms for that call only: no schema names or storage clauses), one INSERT per row with typed literals that don't depend on NLS settings, values in pieces of at most 1,000 characters (SQL*Plus's line limit), large LOBs through `DBMS_LOB.WRITEAPPEND`. GENERATED ALWAYS identities are switched to BY DEFAULT for the rows and back with `START WITH LIMIT VALUE`.
+- Oracle Import CSV: `executeMany` per batch (INSERT ALL repeats identity values), a SAVEPOINT per batch (no RELEASE).
+- Oracle table design: `DdlDialect.defaultFirst` and `referentialActions` (no ON UPDATE; NO ACTION is no clause), `TableFeatures.updateActions`. `readDesign` trims defaults, reads DEFAULT NULL as none and leaves out Oracle's own NOT NULL checks; `MODIFY` writes only what changed; IDENTITY can be turned off but not on. XMLTYPE columns are reported as virtual but aren't computed.
+- `TableInfo.materialized` (set by the tree) makes `dropSql` write DROP MATERIALIZED VIEW (PostgreSQL, Oracle).
 
 ## Connections
 
