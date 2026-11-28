@@ -77,8 +77,8 @@ const out = [
   'The database logos in `media/logos` are from [Simple Icons](https://simpleicons.org) (CC0 1.0); the',
   'brands belong to their owners.',
   '',
-  'The Connections tree icons in `media/icons` are from [Tabler Icons](https://tabler.io/icons) 3.51.0',
-  '(MIT, license below), recolored.',
+  'The Connections tree icons in `media/icons` and the SQL Server / Azure SQL icons in `media/logos` are from',
+  '[Tabler Icons](https://tabler.io/icons) 3.51.0 (MIT, license below), recolored.',
   '',
 ];
 for (const p of sorted) {
@@ -86,7 +86,7 @@ for (const p of sorted) {
   if (p.text) out.push('```text', p.text, '```', '');
 }
 // Not an npm package (the SVGs are copied into media/icons, recolored), so its license is kept here.
-out.push('## Tabler Icons 3.51.0 (media/icons)', '', 'License: MIT · https://github.com/tabler/tabler-icons', '', '```text', TABLER_LICENSE, '```', '');
+out.push('## Tabler Icons 3.51.0 (media/icons, media/logos)', '', 'License: MIT · https://github.com/tabler/tabler-icons', '', '```text', TABLER_LICENSE, '```', '');
 writeFileSync('THIRD_PARTY_NOTICES.md', out.join('\n'));
 console.log(`THIRD_PARTY_NOTICES.md: ${sorted.length} packages.`);
 for (const p of problems) console.warn(`check: ${p}`);

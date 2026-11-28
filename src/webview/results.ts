@@ -221,6 +221,8 @@ function renderResult(result: StatementResult, index: number, table: TableViewSt
   if (table && !result.error) section.append(renderEditBar(table));
   if (table && !result.error && confirm) section.append(renderConfirm(confirm));
 
+  // Server messages (SQL Server PRINT and informational messages), as text.
+  if (result.messages?.length) section.append(el('pre', 'messages', result.messages.join('\n')));
   if (result.error) {
     section.append(el('pre', 'error', result.error));
   } else if (result.columns.length) {
@@ -237,6 +239,7 @@ function summary(r: StatementResult): string {
     return `${r.truncated ? `First ${rows} (more not shown)` : rows} · ${time}`;
   }
   if (r.affectedRows !== undefined) return `${r.affectedRows.toLocaleString()} row${r.affectedRows === 1 ? '' : 's'} affected · ${time}`;
+  if (r.messages?.length) return `Messages · ${time}`;
   return `Done · ${time}`;
 }
 

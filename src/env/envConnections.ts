@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { DB_KINDS } from '../drivers';
+import { offeredKinds } from '../drivers';
 import type { ConnectionConfig } from '../types';
 import { detectConnections, type EnvSource } from './detect';
 import { parseDotenv } from './dotenv';
@@ -117,7 +117,7 @@ export class EnvConnections implements vscode.Disposable {
         const dir = path.dirname(file.fsPath);
         const vars = parseDotenv(text);
         if (name === '.env') composeVars = vars;
-        const detected = detectConnections(vars, { kinds: DB_KINDS, dir, exists: (f) => fs.existsSync(f) });
+        const detected = detectConnections(vars, { kinds: offeredKinds(), dir, exists: (f) => fs.existsSync(f) });
         for (const d of detected) {
           const id = envId(folder.uri, name, d.source);
           // DB_HOST=pgsql (a Compose service) only resolves inside Docker: use its published port here.
@@ -142,7 +142,7 @@ export class EnvConnections implements vscode.Disposable {
       // Databases in the compose file, also when there's no .env (see below for duplicates).
       if (compose && composeLib) {
         const file = vscode.Uri.joinPath(folder.uri, compose.name);
-        for (const db of composeLib.composeDatabases(compose.text, compose.name, composeVars, DB_KINDS)) {
+        for (const db of composeLib.composeDatabases(compose.text, compose.name, composeVars, offeredKinds())) {
           const id = envId(folder.uri, compose.name, `service:${db.service}`);
           composeFound.push({
             config: { ...db.config, id, source: 'env', ...(readOnly.has(id) ? { readOnly: true } : {}) },

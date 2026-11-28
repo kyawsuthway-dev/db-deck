@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import type { ConnectionManager, ConnectionSecrets } from '../connectionManager';
 import { checkForm, initialValues, readValues, type FieldErrors, type FormContext, type FormValues, type KindInfo } from '../connectionForm/fields';
 import { errorMessage } from '../drivers/common';
-import { DATABASE_SCOPE, DB_KINDS, USES_NETWORK } from '../drivers';
+import { DATABASE_SCOPE, offeredKinds, USES_NETWORK } from '../drivers';
 import type { ConnectionsTree } from '../tree/ConnectionsTree';
 import { FormPanel, FormTabs } from './FormPanel';
 import type { ConnectionConfig } from '../types';
@@ -33,8 +33,11 @@ export type FormMessage =
       logos: Record<string, { light: string; dark: string }>;
     }
   | { type: 'fieldErrors'; errors: FieldErrors }
-  /** `saveAnyway`: the test failed, offer to save without it. */
-  | { type: 'status'; state: 'busy' | 'ok' | 'error' | 'info'; text: string; saveAnyway?: boolean }
+  /**
+   * `saveAnyway`: the test failed, offer to save without it. `trustCertificate`: it failed on the server's
+   * certificate (a local server's self-signed one), offer to switch SSL to no-verify and try again.
+   */
+  | { type: 'status'; state: 'busy' | 'ok' | 'error' | 'info'; text: string; saveAnyway?: boolean; trustCertificate?: boolean }
   | { type: 'path'; target: PathTarget; path: string }
   /** Workspace folders were added or removed while the form is open. */
   | { type: 'workspace'; hasWorkspace: boolean };
@@ -51,7 +54,7 @@ const SQLITE_FILTERS = { 'SQLite databases': ['db', 'sqlite', 'sqlite3', 'db3'],
 
 /** The form's view of the database registry, so the webview needs no runtime import. */
 function kinds(): KindInfo[] {
-  return DB_KINDS.map((k) => ({
+  return offeredKinds().map((k) => ({
     label: k.label,
     type: k.type,
     defaultPort: k.defaultPort,
@@ -59,7 +62,12 @@ function kinds(): KindInfo[] {
     defaultDatabase: k.defaultDatabase,
     logo: k.logo,
     network: USES_NETWORK[k.type],
-    database: DATABASE_SCOPE[k.type],
+    database: k.databaseRequired ? 'required' : DATABASE_SCOPE[k.type],
+    defaultSsl: k.defaultSsl ?? 'off',
+    instances: !!k.instances,
+    signIns: k.signIns ?? ['password'],
+    readOnlyNote: k.readOnlyNote,
+    urlExample: k.urlExample,
   }));
 }
 
@@ -210,7 +218,7 @@ class ConnectionFormPanel extends FormPanel<FormMessage> {
       await this.manager.test(checked.config, this.secretsForTest(checked));
       this.post({ type: 'status', state: 'ok', text: `Connected to ${checked.config.name}.` });
     } catch (err) {
-      this.post({ type: 'status', state: 'error', text: `Couldn’t connect: ${errorMessage(err)}` });
+      this.post({ type: 'status', state: 'error', text: `Couldn’t connect: ${errorMessage(err)}`, trustCertificate: certificateFailure(checked.config, err) });
     } finally {
       this.busy = false;
     }
@@ -229,7 +237,13 @@ class ConnectionFormPanel extends FormPanel<FormMessage> {
         try {
           await this.manager.test(config, this.secretsForTest(checked));
         } catch (err) {
-          this.post({ type: 'status', state: 'error', text: `Couldn’t connect: ${errorMessage(err)}`, saveAnyway: true });
+          this.post({
+            type: 'status',
+            state: 'error',
+            text: `Couldn’t connect: ${errorMessage(err)}`,
+            saveAnyway: true,
+            trustCertificate: certificateFailure(config, err),
+          });
           return;
         }
       }
@@ -301,4 +315,9 @@ class ConnectionFormPanel extends FormPanel<FormMessage> {
     }
     if (file) this.post({ type: 'path', target, path: file });
   }
+}
+
+/** The connection verifies certificates and the server's didn't pass (often a self-signed one on a local server). */
+function certificateFailure(config: ConnectionConfig, err: unknown): boolean {
+  return config.ssl === 'require' && /certificate/i.test(errorMessage(err));
 }

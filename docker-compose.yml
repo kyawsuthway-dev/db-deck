@@ -38,8 +38,24 @@ services:
       - ./docker/seed/mysql.sql:/docker-entrypoint-initdb.d/seed.sql:ro
       - mysqldata:/var/lib/mysql
 
+  # SQL Server (Developer edition, free for development and testing). Opt-in: it needs about 2 GB of RAM and an
+  # x86-64 machine, so it starts only with `task up:sqlserver` (compose profile "sqlserver"). Log in as sa.
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: ["sqlserver"]
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: DbDeck-sa-2026
+    ports:
+      - "1433:1433"
+    command: ["bash", "/init.sh"]
+    volumes:
+      - ./docker/sqlserver/init.sh:/init.sh:ro
+      - ./docker/seed/sqlserver.sql:/seed/sqlserver.sql:ro
+      - mssqldata:/var/opt/mssql
+
   # Test SSH server, for the SSH tunnel. Log in as dbdeck/dbdeck at localhost:2222;
-  # through it, the databases are postgres:5432 and mysql:3306.
+  # through it, the databases are postgres:5432, mysql:3306 and sqlserver:1433.
   sshd:
     build: ./docker/sshd
     ports:
@@ -48,3 +64,4 @@ services:
 volumes:
   pgdata:
   mysqldata:
+  mssqldata:

@@ -15,10 +15,36 @@ export interface StatementRange {
 /**
  * Splits a script into statements at top-level `;`, skipping semicolons inside
  * strings, quoted identifiers, comments, PostgreSQL dollar quotes and SQLite trigger bodies.
- * Statements that are empty or only comments are dropped.
+ * SQL Server: `GO` lines end a batch (DB Deck's job: the server doesn't know `GO`), `[names]` and nested
+ * comments are skipped, and `;` inside `BEGIN … END` / `CASE … END` or a procedure, function, trigger or view
+ * body doesn't split (see `TSQL_BODY`). Statements that are empty or only comments are dropped.
  */
 export function splitSql(sql: string, dialect: DbType): string[] {
   return splitSqlRanges(sql, dialect).map((r) => r.text);
+}
+
+/** One SQL Server batch: its text, and how many times `GO n` runs it (1 for a plain `GO` or none). */
+export interface Batch {
+  sql: string;
+  repeat: number;
+}
+
+/**
+ * SQL Server: the script's `GO` batches, each to send as one request. Variables (`DECLARE @x`) and some
+ * statements live for one batch, so the statements of a batch must not be sent apart.
+ */
+export function splitBatches(sql: string): Batch[] {
+  const { statements, batches, repeats } = scanWithBatches(sql, 'sqlserver');
+  const out: Batch[] = [];
+  statements.forEach((s, k) => {
+    if (k > 0 && batches[k] === batches[k - 1]) {
+      const first = statements.findIndex((_, j) => batches[j] === batches[k]);
+      out[out.length - 1].sql = sql.slice(statements[first].start, s.stop).trim();
+    } else {
+      out.push({ sql: sql.slice(s.start, s.stop).trim(), repeat: repeats.get(batches[k]) ?? 1 });
+    }
+  });
+  return out;
 }
 
 /** `splitSql`, with where each statement is in the script (run at cursor, CodeLens). */
@@ -48,12 +74,28 @@ export function statementAt(sql: string, ranges: StatementRange[], offset: numbe
  * (a, b): a cursor strictly between them is inside. An unclosed one runs past the end of the script.
  */
 function scan(sql: string, dialect: DbType): { statements: StatementRange[]; literals: [number, number][] } {
+  const { statements, literals } = scanWithBatches(sql, dialect);
+  return { statements, literals };
+}
+
+/** `scan`, plus each statement's `GO` batch number and the `GO n` counts (SQL Server; always batch 0 elsewhere). */
+function scanWithBatches(
+  sql: string,
+  dialect: DbType,
+): { statements: StatementRange[]; literals: [number, number][]; batches: number[]; repeats: Map<number, number> } {
   const statements: StatementRange[] = [];
   const literals: [number, number][] = [];
   const n = sql.length;
+  const tsql = dialect === 'sqlserver';
   let start = 0;
   let codeStart = -1;
   let i = 0;
+  // SQL Server only: open BEGIN / CASE blocks, the GO batch each statement is in, and where its text ends.
+  let depth = 0;
+  let batch = 0;
+  const batches: number[] = [];
+  const ends: number[] = [];
+  const repeats = new Map<number, number>();
 
   const code = (at: number) => {
     if (codeStart < 0) codeStart = at;
@@ -63,6 +105,8 @@ function scan(sql: string, dialect: DbType): { statements: StatementRange[]; lit
       const raw = sql.slice(start, end);
       const lead = raw.length - raw.trimStart().length;
       statements.push({ start: start + lead, codeStart, stop: Math.min(end + 1, n), text: raw.trim() });
+      batches.push(batch);
+      ends.push(end);
     }
     start = end + 1;
     codeStart = -1;
@@ -79,16 +123,43 @@ function scan(sql: string, dialect: DbType): { statements: StatementRange[]; lit
       continue;
     }
     if (c === '/' && next === '*') {
-      const end = sql.indexOf('*/', i + 2);
+      // SQL Server comments nest: /* a /* b */ c */ is one comment.
+      const end = tsql ? nestedCommentEnd(sql, i) : sql.indexOf('*/', i + 2);
       literals.push([i, end === -1 ? n + 1 : end + 2]);
       i = end === -1 ? n : end + 2;
       continue;
     }
-    if (c === "'" || c === '"' || c === '`') {
+    if (c === "'" || c === '"' || c === '`' || (c === '[' && tsql)) {
       code(i);
       const end = skipQuoted(sql, i, dialect === 'mysql' && c !== '`');
       literals.push([i, end ?? n + 1]);
       i = end ?? n;
+      continue;
+    }
+    if (tsql && /[A-Za-z_]/.test(c) && !/[\w@#$.]/.test(sql[i - 1] ?? '')) {
+      WORD.lastIndex = i;
+      const word = WORD.exec(sql)![0];
+      const upper = word.toUpperCase();
+      if (upper === 'GO') {
+        const lineStart = sql.lastIndexOf('\n', i - 1) + 1;
+        const lineEnd = sql.indexOf('\n', i);
+        const rest = sql.slice(i + 2, lineEnd === -1 ? n : lineEnd);
+        const go = sql.slice(lineStart, i).trim() ? null : GO_REST.exec(rest);
+        if (go) {
+          push(lineStart > 0 ? lineStart - 1 : 0);
+          if (go[1]) repeats.set(batch, Math.max(1, Number(go[1])));
+          start = lineEnd === -1 ? n : lineEnd + 1;
+          depth = 0;
+          batch++;
+          i = start;
+          continue;
+        }
+      }
+      code(i);
+      if (upper === 'CASE') depth++;
+      else if (upper === 'BEGIN' && !NOT_A_BLOCK.test(sql.slice(i + 5))) depth++;
+      else if (upper === 'END' && !/^\s+CONVERSATION\b/i.test(sql.slice(i + 3)) && depth > 0) depth--;
+      i += word.length;
       continue;
     }
     if (c === '$' && dialect === 'postgres' && !/\w/.test(sql[i - 1] ?? '')) {
@@ -103,21 +174,86 @@ function scan(sql: string, dialect: DbType): { statements: StatementRange[]; lit
       }
     }
     if (c === ';') {
-      if (!(dialect === 'sqlite' && insideTriggerBody(sql.slice(start, i)))) push(i);
+      const keep = tsql
+        ? depth > 0 || (codeStart >= 0 && TSQL_BODY.test(sql.slice(codeStart, i)))
+        : dialect === 'sqlite' && insideTriggerBody(sql.slice(start, i));
+      if (!keep) push(i);
     } else if (!/\s/.test(c)) {
       code(i);
     }
     i++;
   }
   push(n);
-  return { statements, literals };
+  if (!tsql) return { statements, literals, batches, repeats };
+  const joined = joinContinuations(sql, statements, batches, ends);
+  return { statements: joined.statements, literals, batches: joined.batches, repeats };
 }
 
 const DOLLAR_TAG = /\$(?:[A-Za-z_]\w*)?\$/y;
 
+/** A T-SQL word: keywords, names, `@variables` and `#temp` tables. */
+const WORD = /[A-Za-z_][\w@#$]*/y;
+
+/** What may follow `GO` on its line: a repeat count (`GO 5` runs the batch above it five times) and a comment. */
+const GO_REST = /^[ \t]*(\d+)?[ \t]*(--.*)?\r?$/;
+
+/** `BEGIN TRAN` and friends start no block (no `END` follows). */
+const NOT_A_BLOCK = /^\s+(TRAN|TRANSACTION|DISTRIBUTED|DIALOG|CONVERSATION)\b/i;
+
+/**
+ * Statements whose body runs to the next `GO` (or the end): T-SQL has no end marker for them, and the body
+ * often has `;` without `BEGIN … END`.
+ */
+const TSQL_BODY = /^(CREATE|ALTER)(\s+OR\s+ALTER)?\s+(PROC|PROCEDURE|FUNCTION|TRIGGER|VIEW)\b/i;
+
+/** Where a SQL Server comment opened at `open` closes (comments nest), or -1. */
+function nestedCommentEnd(sql: string, open: number): number {
+  let level = 0;
+  for (let j = open; j < sql.length - 1; j++) {
+    if (sql[j] === '/' && sql[j + 1] === '*') {
+      level++;
+      j++;
+    } else if (sql[j] === '*' && sql[j + 1] === '/') {
+      level--;
+      if (level === 0) return j;
+      j++;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Joins a statement that can't stand alone to the one before it in the same batch: `IF … ;` followed by
+ * `ELSE …`, and `END TRY;` followed by `BEGIN CATCH`.
+ */
+function joinContinuations(
+  sql: string,
+  statements: StatementRange[],
+  batches: number[],
+  ends: number[],
+): { statements: StatementRange[]; batches: number[] } {
+  const out: StatementRange[] = [];
+  const outEnds: number[] = [];
+  const outBatches: number[] = [];
+  statements.forEach((s, k) => {
+    const last = out.length - 1;
+    if (last >= 0 && outBatches[last] === batches[k] && /^(ELSE|BEGIN\s+CATCH)\b/i.test(s.text)) {
+      const prev = out[last];
+      out[last] = { ...prev, stop: s.stop, text: sql.slice(prev.start, ends[k]).trim() };
+      outEnds[last] = ends[k];
+      return;
+    }
+    out.push(s);
+    outEnds.push(ends[k]);
+    outBatches.push(batches[k]);
+  });
+  return { statements: out, batches: outBatches };
+}
+
 /** Returns the index just past the closing quote, or undefined when the quote isn't closed. */
 function skipQuoted(sql: string, open: number, backslashEscapes: boolean): number | undefined {
-  const quote = sql[open];
+  // SQL Server's [name] closes with ], and ]] is an escaped ].
+  const quote = sql[open] === '[' ? ']' : sql[open];
   let j = open + 1;
   while (j < sql.length) {
     const ch = sql[j];

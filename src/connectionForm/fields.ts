@@ -2,7 +2,7 @@
 // so it can be smoke-tested in plain Node. The form is a webview, so its messages are untrusted
 // (webview.md): every field is checked here, never only in the form.
 import * as path from 'path';
-import type { ConnectionConfig, ConnectionScope, DbType, SshConfig, SslMode } from '../types';
+import type { ConnectionConfig, ConnectionScope, DbType, SignIn, SshConfig, SslMode } from '../types';
 
 /** Everything the form edits, as the form holds it (text inputs are strings). */
 export interface FormValues {
@@ -29,6 +29,10 @@ export interface FormValues {
   /** SSH password or key passphrase; empty keeps the stored one when that's possible (see checkForm). */
   sshSecret: string;
   readOnly: boolean;
+  /** SQL Server named instance; empty for none. */
+  instance: string;
+  /** A SignIn; 'password' for kinds that only have that. */
+  signIn: string;
 }
 
 /** What the form needs to know about each database kind (sent to the webview, so it needs no registry). */
@@ -42,8 +46,18 @@ export interface KindInfo {
   logo: string;
   /** Can go through an SSH tunnel (USES_NETWORK). */
   network: boolean;
-  /** none: a file; required/optional: the database field (DATABASE_SCOPE). */
+  /** none: a file; required/optional: the database field (DATABASE_SCOPE, or `databaseRequired`). */
   database: 'none' | 'required' | 'optional';
+  /** The SSL setting a new connection starts with (DbKind.defaultSsl, else off). */
+  defaultSsl: SslMode;
+  /** Shows the Instance field (DbKind.instances). */
+  instances: boolean;
+  /** Sign-in methods offered, first is the default (DbKind.signIns, else only a password). */
+  signIns: SignIn[];
+  /** The read-only switch's description when it differs from the usual one (DbKind.readOnlyNote). */
+  readOnlyNote?: string;
+  /** The connection string example (DbKind.urlExample). */
+  urlExample?: string;
 }
 
 export type FieldErrors = Partial<Record<keyof FormValues, string>>;
@@ -67,12 +81,15 @@ export type CheckedForm =
   | { ok: false; errors: FieldErrors };
 
 const SSL_MODES: Record<SslMode, true> = { off: true, require: true, 'no-verify': true };
+const SIGN_INS: Record<SignIn, true> = { password: true, 'entra-account': true, 'entra-default': true };
+/** SQL Server instance names: up to 16 letters, digits, `_`, `$` or `#`, starting with a letter or `_`. */
+const INSTANCE_NAME = /^[A-Za-z_][A-Za-z0-9_$#]{0,15}$/;
 const MAX_TEXT = 4096;
 export const MAX_FOLDER = 100;
 
 const STRING_FIELDS = [
   'kind', 'name', 'folder', 'scope', 'host', 'port', 'user', 'password', 'database', 'ssl', 'filePath',
-  'sshHost', 'sshPort', 'sshUser', 'sshAuth', 'sshKeyPath', 'sshSecret',
+  'sshHost', 'sshPort', 'sshUser', 'sshAuth', 'sshKeyPath', 'sshSecret', 'instance', 'signIn',
 ] as const;
 const BOOLEAN_FIELDS = ['sshEnabled', 'readOnly'] as const;
 
@@ -103,7 +120,7 @@ export function initialValues(kind: KindInfo, existing?: Omit<ConnectionConfig, 
     user: c?.user ?? kind.defaultUser ?? '',
     password: '',
     database: c ? (c.database ?? '') : (kind.defaultDatabase ?? ''),
-    ssl: c?.ssl ?? 'off',
+    ssl: c ? (c.ssl ?? 'off') : kind.defaultSsl,
     filePath: c?.filePath ?? '',
     sshEnabled: !!c?.ssh,
     sshHost: c?.ssh?.host ?? '',
@@ -113,6 +130,8 @@ export function initialValues(kind: KindInfo, existing?: Omit<ConnectionConfig, 
     sshKeyPath: c?.ssh?.keyPath ?? '',
     sshSecret: '',
     readOnly: !!c?.readOnly,
+    instance: c?.instance ?? '',
+    signIn: c?.signIn ?? kind.signIns[0] ?? 'password',
   };
 }
 
@@ -147,12 +166,20 @@ export function checkForm(v: FormValues, ctx: FormContext): CheckedForm {
   }
 
   const host = v.host.trim();
-  const user = v.user.trim();
   const database = v.database.trim();
+  const instance = kind.instances ? v.instance.trim() : '';
+  // Entra ID sign-in has no user or password: the token says who it is.
+  const signIn = Object.prototype.hasOwnProperty.call(SIGN_INS, v.signIn) && kind.signIns.includes(v.signIn as SignIn) ? (v.signIn as SignIn) : undefined;
+  if (!signIn) errors.signIn = 'Choose how to sign in.';
+  const withPassword = signIn === 'password' || !signIn;
+  const user = withPassword ? v.user.trim() : '';
   if (!host) errors.host = 'Required.';
   const port = portNumber(v.port);
-  if (port === undefined) errors.port = 'A port between 1 and 65535.';
-  if (!user) errors.user = 'Required.';
+  // A named instance's port comes from SQL Browser, so the port field may stay as it is.
+  if (port === undefined && !instance) errors.port = 'A port between 1 and 65535.';
+  if (instance && !INSTANCE_NAME.test(instance)) errors.instance = 'An instance name: up to 16 letters, digits or _ (like SQLEXPRESS).';
+  if (instance && v.sshEnabled && kind.network) errors.instance = 'A named instance can’t be found through an SSH tunnel. Use its port instead.';
+  if (withPassword && !user) errors.user = 'Required.';
   if (kind.database === 'required' && !database) errors.database = 'Required.';
   if (!Object.prototype.hasOwnProperty.call(SSL_MODES, v.ssl)) errors.ssl = 'Choose an encryption setting.';
 
@@ -181,23 +208,26 @@ export function checkForm(v: FormValues, ctx: FormContext): CheckedForm {
     ok: true,
     config: {
       ...base,
-      name: v.name.trim() || defaultServerName(user, host, database || undefined),
+      name: v.name.trim() || defaultServerName(user || undefined, instance ? `${host}\\${instance}` : host, database || undefined),
       host,
-      port: port!,
-      user,
+      port: port ?? kind.defaultPort ?? 1,
+      ...(user ? { user } : {}),
       ...(database ? { database } : {}),
       ssl: v.ssl as SslMode,
+      ...(instance ? { instance } : {}),
+      ...(signIn && signIn !== 'password' ? { signIn } : {}),
       ...(ssh ? { ssh } : {}),
     },
     scope,
-    password: v.password || undefined,
+    // Entra ID sign-in has no password: '' deletes one stored for an earlier login.
+    password: withPassword ? v.password || undefined : '',
     sshSecret,
   };
 }
 
 /** The name suggested for a server connection; Switch Database… keeps it in step when unchanged. */
 export function defaultServerName(user: string | undefined, host: string | undefined, database: string | undefined): string {
-  return `${user ?? ''}@${host ?? ''}${database ? `/${database}` : ''}`;
+  return `${user ? `${user}@` : ''}${host ?? ''}${database ? `/${database}` : ''}`;
 }
 
 function portNumber(text: string): number | undefined {

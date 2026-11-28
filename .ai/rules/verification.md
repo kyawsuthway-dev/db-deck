@@ -25,6 +25,7 @@ Drivers don't import `vscode`, so smoke-test them in plain Node against the Dock
 - Import from `/app/src/...`. Inside the container the databases are `postgres:5432` and `mysql:3306`, not `localhost`.
 - Cover: `listTables`, `listColumns` (PK flags), `previewSql` + `query`, multi-statement runs including one that errors, and the specific case you changed. For SQLite use a throwaway file under `/tmp`.
 - Seed data must end the test as it started: only no-op writes (`UPDATE orders SET status = status`) or writes to throwaway tables/files (`core.md` rule 9).
+- SQL Server: the `sqlserver` service is opt-in (`task up:sqlserver`: about 2 GB of RAM, x86-64 only), user `sa` / `DbDeck-sa-2026`, database `sample` with `value_types` (values a driver easily gets wrong). `task mssql` opens sqlcmd. Smoke scripts outside `/app` that import libraries themselves need `-e NODE_PATH=/app/node_modules`.
 
 ## Bundle loads
 

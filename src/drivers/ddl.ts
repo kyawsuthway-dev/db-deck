@@ -2,10 +2,10 @@
 // so it's smoke-tested in plain Node. Identifiers are always quoted; defaults, types and CHECK conditions are
 // SQL the user typed (checked to be one fragment by checkDesign) and go in as written.
 import type { CheckDesign, ColumnDesign, ForeignKeyDesign, IndexDesign, TableDesign } from '../design/model';
-import { quoteIdent } from './common';
+import { quoteIdent, type IdentQuote } from './common';
 
 export interface DdlDialect {
-  quote: '"' | '`';
+  quote: IdentQuote;
   /** The table's name in SQL (schema-qualified when needed). */
   table(schema: string | undefined, name: string): string;
   literal(value: string): string;

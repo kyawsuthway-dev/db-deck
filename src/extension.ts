@@ -7,6 +7,7 @@ import { TableEditor } from './edit/applyEdits';
 import { ResultsExporter } from './export/exportResults';
 import { QueryHistory } from './history/queryHistory';
 import { PAGE_SIZE, QueryController } from './query/runQuery';
+import { offerHiddenKinds } from './drivers';
 import { SqlEditor } from './query/sqlEditor';
 import { SavedQueries } from './saved/savedQueries';
 import { ConnectionFolderNode, ConnectionNode, ConnectionsTree, DatabaseNode, EnvGroupNode, FolderNode, SchemaNode, ObjectNode, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
@@ -27,6 +28,8 @@ import { TableDesignForms } from './views/TableDesignForm';
 import { ResultsPanel } from './views/ResultsPanel';
 
 export function activate(context: vscode.ExtensionContext) {
+  // Database kinds still being built (DbKind.hidden) are offered only in the Extension Development Host.
+  offerHiddenKinds(context.extensionMode === vscode.ExtensionMode.Development);
   const envConnections = new EnvConnections(context);
   const manager = new ConnectionManager(context, envConnections);
   const tree = new ConnectionsTree(manager, context.extensionUri);

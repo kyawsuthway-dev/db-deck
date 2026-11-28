@@ -10,6 +10,8 @@
 - New colored icons in the Connections tree for databases, schemas, tables, views, functions, procedures, sequences, indexes, triggers and columns ([Tabler Icons](https://tabler.io/icons), MIT). Each folder shows the icon of what it holds.
 - Hovering a connection shows **Disconnect** (while connected), **Edit Connection…** and **Refresh**. **New Query** moved to the database: hover the PostgreSQL database or a MySQL / MariaDB database for **New Query** and the new **Open Query…**. SQLite connections keep New Query on hover, and the connection's right-click menu still has it.
 - **Open Query…** picks one of the connection's saved queries and opens it. New Query from a MySQL database other than the connection's default starts with a comment naming it; DB Deck doesn't switch the session's database.
+- When a connection fails because the server's certificate can't be verified (often a local server's self-signed one), the connection form offers **Trust Server Certificate**, which switches Encryption to "SSL, allow self-signed" and tries again.
+- Explain Analyze also refuses statements that contain EXEC, USE, GRANT, DBCC and similar keywords, not only INSERT / UPDATE / DELETE and schema changes.
 
 ## 0.1.1 — 2026-11-28
 

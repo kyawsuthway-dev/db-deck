@@ -87,7 +87,7 @@ const GENERATED_NOTE =
 const WRITE_DIALECT: WriteDialect = {
   quote: '"',
   placeholder: (n) => `$${n}`,
-  nullSafeEquals: 'IS NOT DISTINCT FROM',
+  nullSafeEquals: (column, value) => `${column} IS NOT DISTINCT FROM ${value}`,
   allDefaults: 'DEFAULT VALUES',
   literal: standardLiteral,
   asText: (column) => `${column}::text`,
@@ -303,6 +303,10 @@ export class PostgresDriver implements Driver {
       case 'table':
         return this.tableDdl(name);
     }
+  }
+
+  databaseName(): string {
+    return this.config.database ?? '';
   }
 
   async listDatabases(): Promise<string[]> {

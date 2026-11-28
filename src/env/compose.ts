@@ -92,7 +92,7 @@ export function composeDatabases(composeText: string, fileName: string, vars: Ma
         port: published.port,
         user,
         ...(database ? { database } : {}),
-        ssl: 'off',
+        ssl: kind.docker.ssl ?? 'off',
       },
       password: login ? env.get(login.passwordVar) : undefined,
       via: published.via,

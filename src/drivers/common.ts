@@ -21,33 +21,55 @@ export interface RawResult {
   columns: string[];
   rows: unknown[][];
   affectedRows?: number;
+  /** Messages the server sent with it (SQL Server PRINT and informational messages). */
+  messages?: string[];
 }
 
-/** Runs statements one by one, timing each and stopping at the first error. */
+/**
+ * Runs statements one by one, timing each and stopping at the first error. A statement may return several
+ * results (a SQL Server batch with two SELECTs): each is shown, with the statement's time on the first. A
+ * `PartialResults` error keeps the results that came before it.
+ */
 export async function runEach(
   statements: string[],
-  exec: (sql: string) => Promise<RawResult>,
+  exec: (sql: string) => Promise<RawResult | RawResult[]>,
 ): Promise<StatementResult[]> {
   const results: StatementResult[] = [];
   for (const sql of statements) {
     const started = performance.now();
     const elapsed = () => Math.round(performance.now() - started);
-    try {
-      const raw = await exec(sql);
+    const show = (raw: RawResult, first: boolean) =>
       results.push({
         sql,
         columns: raw.columns,
         rows: raw.rows.slice(0, MAX_ROWS).map((row) => row.map(toCell)),
         affectedRows: raw.affectedRows,
+        messages: raw.messages?.length ? raw.messages : undefined,
         truncated: raw.rows.length > MAX_ROWS,
-        durationMs: elapsed(),
+        durationMs: first ? elapsed() : 0,
       });
+    try {
+      const raw = await exec(sql);
+      (Array.isArray(raw) ? raw : [raw]).forEach((r, i) => show(r, i === 0));
     } catch (err) {
-      results.push({ sql, columns: [], rows: [], durationMs: elapsed(), error: errorMessage(err) });
+      const before = err instanceof PartialResults ? err.results : [];
+      before.forEach((r, i) => show(r, i === 0));
+      const cause = err instanceof PartialResults ? err.cause : err;
+      results.push({ sql, columns: [], rows: [], durationMs: before.length ? 0 : elapsed(), error: errorMessage(cause) });
       break;
     }
   }
   return results;
+}
+
+/** A statement failed after some of its results arrived (a batch whose second query fails). */
+export class PartialResults extends Error {
+  constructor(
+    readonly results: RawResult[],
+    readonly cause: unknown,
+  ) {
+    super(errorMessage(cause));
+  }
 }
 
 export function toCell(value: unknown): Cell {
@@ -84,7 +106,11 @@ export function errorMessage(err: unknown): string {
   return String(err);
 }
 
-export function quoteIdent(name: string, quote: '"' | '`'): string {
+/** How a database quotes identifiers: `"name"` (standard), `` `name` `` (MySQL) or `[name]` (SQL Server). */
+export type IdentQuote = '"' | '`' | '[';
+
+export function quoteIdent(name: string, quote: IdentQuote): string {
+  if (quote === '[') return `[${name.split(']').join(']]')}]`;
   return quote + name.split(quote).join(quote + quote) + quote;
 }
 
@@ -94,7 +120,7 @@ export function quoteIdent(name: string, quote: '"' | '`'): string {
  * `condition` comes from `filterCondition()`. LIMIT/OFFSET is the same in every supported database;
  * a database that differs would build its own.
  */
-export function buildPageQuery(from: string, quote: '"' | '`', page: TablePage, condition?: string): string {
+export function buildPageQuery(from: string, quote: IdentQuote, page: TablePage, condition?: string): string {
   const limit = Math.max(0, Math.trunc(page.limit));
   const offset = Math.max(0, Math.trunc(page.offset));
   // On its own lines, so a trailing `-- comment` in the condition ends before ORDER BY / LIMIT.
@@ -163,7 +189,7 @@ const RESERVED = new Set(
 );
 
 /** `name` bare when it matches `safe` and isn't a reserved word, otherwise quoted. */
-export function identifierFor(name: string, quote: '"' | '`', safe: RegExp): string {
+export function identifierFor(name: string, quote: IdentQuote, safe: RegExp): string {
   return safe.test(name) && !RESERVED.has(name.toLowerCase()) ? name : quoteIdent(name, quote);
 }
 
@@ -171,7 +197,7 @@ export function identifierFor(name: string, quote: '"' | '`', safe: RegExp): str
  * `INSERT INTO … (…) VALUES (…);` per row, for export. Every value is a string literal, which each
  * database converts to the column's type; NULL stays NULL. `literal` quotes a value for the database.
  */
-export function insertStatements(from: string, quote: '"' | '`', columns: string[], rows: Cell[][], literal: (value: string) => string): string {
+export function insertStatements(from: string, quote: IdentQuote, columns: string[], rows: Cell[][], literal: (value: string) => string): string {
   const cols = columns.map((c) => quoteIdent(c, quote)).join(', ');
   return rows
     .map((row) => `INSERT INTO ${from} (${cols}) VALUES (${row.map((v) => (v === null ? 'NULL' : literal(v))).join(', ')});\n`)
@@ -185,11 +211,14 @@ export function standardLiteral(value: string): string {
 
 /** What `buildChangeStatements` needs to know about a database's SQL. Each driver defines one. */
 export interface WriteDialect {
-  quote: '"' | '`';
+  quote: IdentQuote;
   /** Placeholder for the n-th parameter (1-based): `$1` or `?`. */
   placeholder(n: number): string;
-  /** NULL-safe equality: `IS NOT DISTINCT FROM`, `<=>` or `IS`. A plain `=` never matches NULL. */
-  nullSafeEquals: string;
+  /**
+   * NULL-safe equality of a column and a value (a placeholder, or a literal for review): `IS NOT DISTINCT FROM`,
+   * `<=>`, `IS`, or SQL Server's `(c = @p OR (c IS NULL AND @p IS NULL))`. A plain `=` never matches NULL.
+   */
+  nullSafeEquals(column: string, value: string): string;
   /** An INSERT with every column at its default: `DEFAULT VALUES` or `() VALUES ()`. */
   allDefaults: string;
   /** A value as a SQL literal, for the review text only. */
@@ -233,8 +262,10 @@ export function buildChangeStatements(from: string, dialect: WriteDialect, chang
         add(' WHERE ');
         keyMatch(change.key);
         for (const s of change.set.filter((s) => s.check)) {
-          add(` AND ${s.asText ? dialect.asText(q(s.column)) : q(s.column)} ${dialect.nullSafeEquals} `);
-          value(s.original);
+          const column = s.asText ? dialect.asText(q(s.column)) : q(s.column);
+          const placeholder = dialect.placeholder(params.push(s.original));
+          const literal = s.original === null ? 'NULL' : dialect.literal(s.original);
+          add(` AND ${dialect.nullSafeEquals(column, placeholder)}`, ` AND ${dialect.nullSafeEquals(column, literal)}`);
         }
         break;
       case 'insert':
@@ -321,7 +352,7 @@ export function toDumpCell(value: unknown): DumpCell {
 }
 
 /** SELECT of some columns, one page, for dumps. Identifiers are quoted; nothing comes from the user. */
-export function buildDumpQuery(from: string, quote: '"' | '`', columns: string[], page: TablePage): string {
+export function buildDumpQuery(from: string, quote: IdentQuote, columns: string[], page: TablePage): string {
   const cols = columns.map((c) => quoteIdent(c, quote)).join(', ');
   return buildPageQuery(from, quote, page).replace(/^SELECT \* FROM /, `SELECT ${cols} FROM `);
 }
@@ -332,7 +363,7 @@ export function buildDumpQuery(from: string, quote: '"' | '`', columns: string[]
  */
 export function dumpInserts(
   from: string,
-  quote: '"' | '`',
+  quote: IdentQuote,
   columns: string[],
   rows: DumpCell[][],
   literal: (value: string) => string,
@@ -417,7 +448,7 @@ export class ImportCancelled extends Error {
 }
 
 /** `INSERT INTO t (a, b) VALUES (?, ?), (?, ?)` for `rows` rows, with the database's placeholders. */
-export function buildInsertBatch(from: string, quote: '"' | '`', columns: string[], rows: number, placeholder: (n: number) => string): string {
+export function buildInsertBatch(from: string, quote: IdentQuote, columns: string[], rows: number, placeholder: (n: number) => string): string {
   let n = 0;
   const one = () => `(${columns.map(() => placeholder(++n)).join(', ')})`;
   const values = Array.from({ length: rows }, one).join(', ');

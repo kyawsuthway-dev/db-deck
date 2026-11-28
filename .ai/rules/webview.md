@@ -21,6 +21,7 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 - `localResourceRoots` stays limited to `dist/webview` (forms add `media/logos`, nothing else).
 - The table-edit save confirmation is rendered in the webview, so the strict CSP and `textContent`-only rules are what keep that confirmation trustworthy. Never relax them.
 - The detail pane may indent JSON only by changing whitespace between tokens (`jsonText.ts`); never re-print values through `JSON.parse`. Copy always copies the value as stored (or as edited), never the indented form.
+- Server messages (`StatementResult.messages`, SQL Server PRINT) are shown as text above the result.
 - Values cross the boundary as `Cell` (`string | null`) — already converted in the driver layer. The webview never changes how a value is displayed; client-side sorting may compare them as numbers, but always shows the original text.
 
 ## Build
@@ -49,7 +50,8 @@ Query results are untrusted: a cell can contain `<script>` or anything else.
 - It never receives a stored password: password fields start empty ("Unchanged — type to replace"). Every field it sends is checked in the extension (`readValues`, `checkForm` in `src/connectionForm/fields.ts`), never only in the form.
 - It gets the database kinds (labels, defaults, `USES_NETWORK`, `DATABASE_SCOPE`, logo URIs) from the registry in its `init` message, so it never branches on database type.
 - Connection strings are parsed in the webview (`src/shared/connectionString.ts`, also used for `.env` URLs) only to fill fields; the box is cleared afterwards, since it may hold a password.
-- Icons are DB Deck's own SVG paths (`icons.ts`, constants built with `createElementNS`). Database logos are files in `media/logos` (Simple Icons, CC0) and the Connections tree icons in `media/icons` (Tabler Icons, MIT, recolored per kind, through `treeIcons.ts`): the only fixed colors in the UI, with `-light` / `-dark` variants.
+- It also gets each kind's `defaultSsl`, `instances`, `signIns`, `readOnlyNote` and `urlExample` from the registry. **Trust Server Certificate** appears on a certificate failure with SSL `require` and only switches the SSL field to no-verify before trying again.
+- Icons are DB Deck's own SVG paths (`icons.ts`, constants built with `createElementNS`). Database logos are files in `media/logos` (Simple Icons, CC0) and the Connections tree icons in `media/icons` (Tabler Icons, MIT, recolored per kind, through `treeIcons.ts`): the only fixed colors in the UI, with `-light` / `-dark` variants. SQL Server and Azure SQL use a neutral database icon (Tabler, MIT), not Microsoft's logos: Microsoft's brand guidelines don't allow its logos or product icons without a license (the product names are fine).
 
 ## Messaging
 
