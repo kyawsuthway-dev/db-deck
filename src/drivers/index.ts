@@ -59,7 +59,7 @@ export interface DbKind {
   urlExample?: string;
   /**
    * Not offered yet (connection form, .env and compose detection) while it's being built; shown only in the
-   * Extension Development Host (F5). Phase 14a: SQL Server and Azure SQL until 14a-3.
+   * Extension Development Host (F5). Used for SQL Server and Azure SQL during phase 14a; free for the next database.
    */
   hidden?: boolean;
 }
@@ -153,7 +153,6 @@ export const DB_KINDS: DbKind[] = [
       databaseVars: [],
       ssl: 'no-verify',
     },
-    hidden: true,
   },
   {
     label: 'Azure SQL',
@@ -165,7 +164,6 @@ export const DB_KINDS: DbKind[] = [
     signIns: ['password', 'entra-account', 'entra-default'],
     readOnlyNote: SQL_SERVER_READ_ONLY,
     urlExample: 'Server=tcp:name.database.windows.net,1433;Database=…  (from the Azure portal)',
-    hidden: true,
   },
 ];
 
@@ -332,12 +330,15 @@ export const TABLE_FEATURES: Record<DbType, TableFeatures> = {
   },
 };
 
-/** Which Server panel and Explain features a database has. */
-export const SERVER_TOOLS: Record<DbType, { processes: boolean; explainAnalyze: boolean }> = {
-  postgres: { processes: true, explainAnalyze: true },
+/**
+ * Which Server panel and Explain features a database has. `cancelQuery`: another session's running statement can be
+ * cancelled while the session stays open (SQL Server can only end the session, with KILL).
+ */
+export const SERVER_TOOLS: Record<DbType, { processes: boolean; explainAnalyze: boolean; cancelQuery: boolean }> = {
+  postgres: { processes: true, explainAnalyze: true, cancelQuery: true },
   // MariaDB has neither EXPLAIN ANALYZE nor FORMAT=TREE; the driver detects it and says so.
-  mysql: { processes: true, explainAnalyze: true },
-  sqlite: { processes: false, explainAnalyze: false },
-  // No Explain Analyze: SQL Server has no read-only transaction to run a statement in safely (phase 14a-3).
-  sqlserver: { processes: true, explainAnalyze: false },
+  mysql: { processes: true, explainAnalyze: true, cancelQuery: true },
+  sqlite: { processes: false, explainAnalyze: false, cancelQuery: false },
+  // No Explain Analyze: SQL Server has no read-only transaction to run a statement in safely.
+  sqlserver: { processes: true, explainAnalyze: false, cancelQuery: false },
 };

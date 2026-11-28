@@ -18,6 +18,8 @@ export type ServerMessage =
       processes: boolean;
       /** Cancel Query / End Session are offered (off on read-only connections). */
       canEnd: boolean;
+      /** Cancel Query is offered (SERVER_TOOLS.cancelQuery; SQL Server can only end a session). */
+      canCancel: boolean;
     }
   | { type: 'status'; items: ServerItem[] }
   | { type: 'settings'; items: ServerItem[] }
@@ -78,6 +80,7 @@ class ServerPanel extends FormPanel<ServerMessage> {
         logo: kind && this.logo(kind.logo),
         processes: tools.processes,
         canEnd: tools.processes && !config.readOnly,
+        canCancel: tools.cancelQuery,
       });
       for (const tab of TABS) if (tab !== 'processes' || tools.processes) void this.load(tab);
     } else if (msg.type === 'refresh' && TABS.includes(msg.tab as ServerTab)) {
@@ -114,6 +117,7 @@ class ServerPanel extends FormPanel<ServerMessage> {
   private async end(id: string, how: 'cancel' | 'terminate'): Promise<void> {
     const config = this.manager.get(this.connectionId);
     if (!config || !SERVER_TOOLS[config.type].processes) return;
+    if (how === 'cancel' && !SERVER_TOOLS[config.type].cancelQuery) return;
     if (config.readOnly) {
       this.post({ type: 'notice', text: 'This connection is read-only: DB Deck doesn’t cancel queries or end sessions through it.', tone: 'error' });
       return;

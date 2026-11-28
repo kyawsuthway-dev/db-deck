@@ -126,6 +126,53 @@ export function parseSqlitePlan(rows: (string | null)[][]): PlanNode {
   return hint(top, (n) => (/^SCAN (?!CONSTANT|SUBQUERY)/.test(n.label) && !/COVERING INDEX|USING INDEX/.test(n.label) ? 'Reads the whole table; if it’s large, an index on the filtered or joined columns may help.' : undefined));
 }
 
+/**
+ * SQL Server's `SET SHOWPLAN_ALL ON` rows: a statement row (`Type` SELECT, UPDATE…) and its operators under it
+ * through `NodeId` / `Parent`. Several statements become children of one Query. Hints for a scan over many rows
+ * and for SQL Server's own warnings (missing statistics, a join without a predicate, implicit conversions).
+ */
+export function parseSqlServerPlan(columns: string[], rows: (string | null)[][]): PlanNode {
+  const at = (row: (string | null)[], name: string) => row[columns.indexOf(name)] ?? null;
+  const root: PlanNode = { label: 'Query', details: [], children: [] };
+  const byId = new Map<string, PlanNode>();
+  for (const row of rows) {
+    const type = at(row, 'Type');
+    const warnings = at(row, 'Warnings');
+    let node: PlanNode;
+    if (type !== 'PLAN_ROW') {
+      const text = (at(row, 'StmtText') ?? '').trim().replace(/\s+/g, ' ');
+      node = { label: `${type ?? 'Statement'}: ${text.length > 120 ? `${text.slice(0, 120)}…` : text}`, details: [], cost: num(at(row, 'TotalSubtreeCost')), rows: num(at(row, 'EstimateRows')), children: [] };
+    } else {
+      const physical = at(row, 'PhysicalOp') ?? '';
+      const logical = at(row, 'LogicalOp') ?? '';
+      const details: string[] = [];
+      const argument = at(row, 'Argument');
+      if (argument) details.push(argument);
+      const output = at(row, 'OutputList');
+      if (output) details.push(`Output: ${output}`);
+      node = {
+        label: logical && logical !== physical ? `${physical} (${logical})` : physical,
+        details,
+        cost: num(at(row, 'TotalSubtreeCost')),
+        rows: num(at(row, 'EstimateRows')),
+        children: [],
+      };
+    }
+    if (warnings) node.details.push(`Warnings: ${warnings}`);
+    byId.set(String(at(row, 'NodeId')), node);
+    const parent = at(row, 'Parent');
+    ((parent && parent !== '0' && byId.get(parent)) || root).children.push(node);
+  }
+  const top = root.children.length === 1 ? root.children[0] : root;
+  return hint(top, (n) => {
+    const warning = n.details.find((d) => d.startsWith('Warnings: '));
+    if (warning) return `SQL Server warns about this step (${warning.slice('Warnings: '.length)}): check statistics, join conditions and column types.`;
+    return /^(Table Scan|Clustered Index Scan|Index Scan)\b/.test(n.label) && (n.rows ?? 0) > LARGE
+      ? 'Reads the whole table; an index on the filtered or joined columns may help.'
+      : undefined;
+  });
+}
+
 /** Adds `make`'s hint to each step, and (Explain Analyze) a hint where estimates were far from actual rows. */
 function hint(root: PlanNode, make: (n: PlanNode) => string | undefined): PlanNode {
   const visit = (n: PlanNode) => {

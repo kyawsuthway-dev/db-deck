@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- **SQL Server and Azure SQL** (SQL Server 2017 or newer, Azure SQL Database): browsing, the schema tree, the SQL editor, table views, editing, export, table design, dump, Run SQL File, Import CSV, Compare Structure, Generate Mock Data, ER diagram, Explain (estimated plan) and the Server panel.
+  - Sign in with a user and password, or for Azure SQL with Microsoft Entra ID (your VS Code Microsoft account, or Azure's default credentials). Named instances through the **Instance** field. Paste the connection string from the Azure portal to fill in the form.
+  - `GO` batches run as SQL Server runs them, so `DECLARE` variables and temp tables work; `PRINT` messages show with the results.
+  - Values are shown exactly: `decimal` and `money` keep every digit, dates and times keep their full precision, and `datetimeoffset` keeps its offset.
+  - Laravel `sqlsrv` in `.env` and `mcr.microsoft.com/mssql/server` in Docker Compose are found automatically.
+
 ### Changed
 
 - The Connections tree shows the server's structure. PostgreSQL: the database, then **Schemas**, then each schema. MySQL / MariaDB: every database on the server, also when the connection has one set. The connection's own schema or database comes first, marked *default*.
