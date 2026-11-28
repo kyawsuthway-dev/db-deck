@@ -23,10 +23,12 @@ export function splitSql(sql: string, dialect: DbType): string[] {
   return splitSqlRanges(sql, dialect).map((r) => r.text);
 }
 
-/** One SQL Server batch: its text, and how many times `GO n` runs it (1 for a plain `GO` or none). */
+/** One SQL Server batch: its text, how many times `GO n` runs it (1 for a plain `GO` or none), and where its code starts. */
 export interface Batch {
   sql: string;
   repeat: number;
+  /** Offset of the batch's first code in the script (for "the batch at line N"). */
+  start: number;
 }
 
 /**
@@ -41,7 +43,7 @@ export function splitBatches(sql: string): Batch[] {
       const first = statements.findIndex((_, j) => batches[j] === batches[k]);
       out[out.length - 1].sql = sql.slice(statements[first].start, s.stop).trim();
     } else {
-      out.push({ sql: sql.slice(s.start, s.stop).trim(), repeat: repeats.get(batches[k]) ?? 1 });
+      out.push({ sql: sql.slice(s.start, s.stop).trim(), repeat: repeats.get(batches[k]) ?? 1, start: s.codeStart });
     }
   });
   return out;

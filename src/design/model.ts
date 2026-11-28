@@ -21,6 +21,11 @@ export interface ColumnDesign {
    * it compares equal to an identity column, and turning it off drops the default). Set by the extension only.
    */
   ownedSequence?: boolean;
+  /**
+   * SQL Server: the name of the column's default constraint, to drop it before changing the column or its default.
+   * Set by the extension only (`withServerFields`), never from the form.
+   */
+  defaultName?: string;
 }
 
 export interface IndexDesign {
@@ -171,11 +176,14 @@ export function withServerFields(edited: TableDesign, original: TableDesign): Ta
   const generated = new Map(original.columns.filter((c) => c.generated).map((c) => [c.key, c]));
   const constraints = new Set(original.indexes.filter((x) => x.constraint).map((x) => x.name));
   const owned = new Set(original.columns.filter((c) => c.ownedSequence).map((c) => c.key));
+  const defaultNames = new Map(original.columns.filter((c) => c.defaultName).map((c) => [c.key, c.defaultName]));
   return {
     ...edited,
     // Generated columns can't be edited: the original definition is kept wherever the form put it.
     columns: [
-      ...edited.columns.filter((c) => !generated.has(c.key)).map((c) => ({ ...c, generated: undefined, ownedSequence: owned.has(c.key) || undefined })),
+      ...edited.columns
+        .filter((c) => !generated.has(c.key))
+        .map((c) => ({ ...c, generated: undefined, ownedSequence: owned.has(c.key) || undefined, defaultName: defaultNames.get(c.key) })),
       ...[...generated.values()],
     ],
     indexes: edited.indexes.map((x) => ({ ...x, constraint: constraints.has(x.name) || undefined })),

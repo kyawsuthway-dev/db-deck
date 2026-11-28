@@ -110,6 +110,11 @@ export interface ColumnInfo {
   hasDefault?: boolean;
   /** A generated (computed) column: it can't be given a value. */
   generated?: boolean;
+  /**
+   * SQL Server IDENTITY: importing values into it turns IDENTITY_INSERT on for the import (Import CSV says so);
+   * left unmapped, the server numbers the rows.
+   */
+  identity?: boolean;
 }
 
 /** Every value is turned into display text (or null) before it reaches the webview. */

@@ -142,7 +142,8 @@ function hint(root: PlanNode, make: (n: PlanNode) => string | undefined): PlanNo
 }
 
 /** The statement without strings, quoted names and comments, so keywords inside them don't count. */
-function codeOnly(sql: string, dialect: DbType): string {
+/** The statement with strings, quoted names and comments blanked out, so keywords can be searched for. */
+export function codeOnly(sql: string, dialect: DbType): string {
   let out = '';
   for (let i = 0; i < sql.length; ) {
     const c = sql[i];
