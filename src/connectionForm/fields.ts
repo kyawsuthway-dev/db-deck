@@ -2,7 +2,7 @@
 // so it can be smoke-tested in plain Node. The form is a webview, so its messages are untrusted
 // (webview.md): every field is checked here, never only in the form.
 import * as path from 'path';
-import type { ConnectionConfig, ConnectionScope, DbType, SignIn, SshConfig, SslMode } from '../types';
+import type { ConnectionConfig, ConnectionScope, DbType, OraclePrivilege, SignIn, SshConfig, SslMode } from '../types';
 
 /** Everything the form edits, as the form holds it (text inputs are strings). */
 export interface FormValues {
@@ -33,6 +33,10 @@ export interface FormValues {
   instance: string;
   /** A SignIn; 'password' for kinds that only have that. */
   signIn: string;
+  /** Oracle "Connect as": '' for a normal session, or one of the kind's privileges (SYSDBA…). */
+  privilege: string;
+  /** Oracle: 'service' (the Database field is a service name) or 'sid'. */
+  target: string;
 }
 
 /** What the form needs to know about each database kind (sent to the webview, so it needs no registry). */
@@ -58,6 +62,16 @@ export interface KindInfo {
   readOnlyNote?: string;
   /** The connection string example (DbKind.urlExample). */
   urlExample?: string;
+  /** Encryption settings offered (DbKind.sslModes, else all three). */
+  sslModes: SslMode[];
+  /** The Database field's label (DbKind.databaseLabel, else "Database"). */
+  databaseLabel: string;
+  /** Offers Service name / SID for the Database field (DbKind.sid). */
+  sid: boolean;
+  /** "Connect as" privileges (DbKind.privileges); empty: no such field. */
+  privileges: OraclePrivilege[];
+  /** Through SSH the driver listens on a 127.0.0.1 port (DbKind.sshLocalPort). */
+  sshLocalPort: boolean;
 }
 
 export type FieldErrors = Partial<Record<keyof FormValues, string>>;
@@ -87,9 +101,12 @@ const INSTANCE_NAME = /^[A-Za-z_][A-Za-z0-9_$#]{0,15}$/;
 const MAX_TEXT = 4096;
 export const MAX_FOLDER = 100;
 
+/** Characters that would change an Oracle connect descriptor's structure (oracle.ts builds one from the fields). */
+const DESCRIPTOR_SYNTAX = /[()=]/;
+
 const STRING_FIELDS = [
   'kind', 'name', 'folder', 'scope', 'host', 'port', 'user', 'password', 'database', 'ssl', 'filePath',
-  'sshHost', 'sshPort', 'sshUser', 'sshAuth', 'sshKeyPath', 'sshSecret', 'instance', 'signIn',
+  'sshHost', 'sshPort', 'sshUser', 'sshAuth', 'sshKeyPath', 'sshSecret', 'instance', 'signIn', 'privilege', 'target',
 ] as const;
 const BOOLEAN_FIELDS = ['sshEnabled', 'readOnly'] as const;
 
@@ -132,6 +149,8 @@ export function initialValues(kind: KindInfo, existing?: Omit<ConnectionConfig, 
     readOnly: !!c?.readOnly,
     instance: c?.instance ?? '',
     signIn: c?.signIn ?? kind.signIns[0] ?? 'password',
+    privilege: c?.privilege ?? '',
+    target: c?.sid ? 'sid' : 'service',
   };
 }
 
@@ -181,7 +200,15 @@ export function checkForm(v: FormValues, ctx: FormContext): CheckedForm {
   if (instance && v.sshEnabled && kind.network) errors.instance = 'A named instance can’t be found through an SSH tunnel. Use its port instead.';
   if (withPassword && !user) errors.user = 'Required.';
   if (kind.database === 'required' && !database) errors.database = 'Required.';
-  if (!Object.prototype.hasOwnProperty.call(SSL_MODES, v.ssl)) errors.ssl = 'Choose an encryption setting.';
+  if (!Object.prototype.hasOwnProperty.call(SSL_MODES, v.ssl) || !kind.sslModes.includes(v.ssl as SslMode)) errors.ssl = 'Choose an encryption setting.';
+  const privilege = kind.privileges.includes(v.privilege as OraclePrivilege) ? (v.privilege as OraclePrivilege) : undefined;
+  if (v.privilege && !privilege) errors.privilege = 'Choose how to connect.';
+  if (kind.sid && v.target !== 'service' && v.target !== 'sid') errors.target = 'Choose service name or SID.';
+  const sid = kind.sid && v.target === 'sid';
+  if (kind.sid) {
+    if (DESCRIPTOR_SYNTAX.test(host)) errors.host = 'A host name or address (no parentheses or =).';
+    if (DESCRIPTOR_SYNTAX.test(database)) errors.database = 'A name without parentheses or =.';
+  }
 
   let ssh: SshConfig | undefined;
   let sshSecret: string | undefined;
@@ -216,6 +243,8 @@ export function checkForm(v: FormValues, ctx: FormContext): CheckedForm {
       ssl: v.ssl as SslMode,
       ...(instance ? { instance } : {}),
       ...(signIn && signIn !== 'password' ? { signIn } : {}),
+      ...(privilege ? { privilege } : {}),
+      ...(sid ? { sid: true } : {}),
       ...(ssh ? { ssh } : {}),
     },
     scope,

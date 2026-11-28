@@ -1,5 +1,6 @@
-import type { ConnectionConfig, DbType, Driver, SignIn, SslMode, StreamOpener } from '../types';
+import type { ConnectionConfig, DbType, Driver, OraclePrivilege, SignIn, SslMode, StreamOpener } from '../types';
 import { MysqlDriver } from './mysql';
+import { OracleDriver } from './oracle';
 import { PostgresDriver } from './postgres';
 import { SqliteDriver } from './sqlite';
 import { SqlServerDriver } from './sqlserver';
@@ -25,12 +26,18 @@ export function createDriver(
       return new MysqlDriver(config, password, opener);
     case 'sqlserver':
       return new SqlServerDriver(config, password, opener, accessToken);
+    case 'oracle':
+      return new OracleDriver(config, password, opener);
   }
 }
 
 /** SQL Server has no read-only session setting, so DB Deck checks statements itself (SqlServerDriver.query). */
 const SQL_SERVER_READ_ONLY =
   'SQL Server has no read-only session, so DB Deck checks each statement and only runs reading ones (SELECT, WITH, DECLARE, SET, PRINT); table editing is off. A guard against mistakes, not a security boundary: for a real guarantee, connect as a user that can’t write.';
+
+/** Oracle's read-only transaction ends at the first commit and still lets DDL through, so DB Deck checks statements. */
+const ORACLE_READ_ONLY =
+  'Oracle’s read-only transactions still allow schema changes, so DB Deck checks each statement and only runs reading ones (SELECT, WITH); PL/SQL blocks and CALL are refused, since a procedure can write. Table editing is off. A guard against mistakes, not a security boundary: for a real guarantee, connect as a user that can’t write.';
 
 /** Database kinds the connection form offers. Several kinds can share one driver. */
 export interface DbKind {
@@ -57,9 +64,22 @@ export interface DbKind {
   readOnlyNote?: string;
   /** The connection string example the form shows. */
   urlExample?: string;
+  /** Encryption settings the form offers (default: all three). Oracle's Thin mode can't skip certificate checks. */
+  sslModes?: SslMode[];
+  /** The Database field's label when it isn't "Database" (Oracle: Service name). */
+  databaseLabel?: string;
+  /** The Database field can hold a SID instead of a service name (Oracle): the form shows the choice. */
+  sid?: boolean;
+  /** "Connect as" choices for administrative sessions (Oracle SYSDBA…); none: no such field. */
+  privileges?: OraclePrivilege[];
+  /**
+   * Through SSH the driver listens on a 127.0.0.1 port for its own sockets (its library can't take a stream), so the
+   * form says so instead of "no local port opened".
+   */
+  sshLocalPort?: boolean;
   /**
    * Not offered yet (connection form, .env and compose detection) while it's being built; shown only in the
-   * Extension Development Host (F5). Used for SQL Server and Azure SQL during phase 14a; free for the next database.
+   * Extension Development Host (F5). Used for SQL Server and Azure SQL during phase 14a, Oracle during phase 14b.
    */
   hidden?: boolean;
 }
@@ -79,6 +99,8 @@ export interface DockerImage {
   defaultDatabase?: 'user';
   /** The SSL setting for the local container (default off): SQL Server's encrypts with a self-signed certificate. */
   ssl?: SslMode;
+  /** The database when none is set, by image (Oracle images each have their own default service). */
+  databaseByImage?: Record<string, string>;
 }
 
 const MYSQL_LOGINS = [
@@ -165,6 +187,40 @@ export const DB_KINDS: DbKind[] = [
     readOnlyNote: SQL_SERVER_READ_ONLY,
     urlExample: 'Server=tcp:name.database.windows.net,1433;Database=…  (from the Azure portal)',
   },
+  {
+    label: 'Oracle',
+    type: 'oracle',
+    defaultPort: 1521,
+    defaultDatabase: 'FREEPDB1',
+    logo: 'oracle',
+    // yajra/laravel-oci8, the usual Oracle driver for Laravel.
+    laravel: ['oracle'],
+    databaseLabel: 'Service name',
+    sid: true,
+    privileges: ['SYSDBA', 'SYSOPER', 'SYSBACKUP', 'SYSDG', 'SYSKM', 'SYSRAC'],
+    sslModes: ['off', 'require'],
+    sshLocalPort: true,
+    readOnlyNote: ORACLE_READ_ONLY,
+    urlExample: 'host:1521/FREEPDB1  or  oracle://user@host:1521/service',
+    hidden: true,
+    docker: {
+      // gvenzl/oracle-free and -xe (APP_USER, or SYSTEM with ORACLE_PASSWORD), container-registry.oracle.com/database/*.
+      images: ['gvenzl/oracle-free', 'gvenzl/oracle-xe', 'database/free', 'database/express', 'database/enterprise'],
+      logins: [
+        { userVar: 'APP_USER', passwordVar: 'APP_USER_PASSWORD' },
+        { user: 'system', passwordVar: 'ORACLE_PASSWORD' },
+        { user: 'system', passwordVar: 'ORACLE_PWD' },
+      ],
+      databaseVars: ['ORACLE_DATABASE'],
+      databaseByImage: {
+        'gvenzl/oracle-free': 'FREEPDB1',
+        'gvenzl/oracle-xe': 'XEPDB1',
+        'database/free': 'FREEPDB1',
+        'database/express': 'XEPDB1',
+        'database/enterprise': 'ORCLPDB1',
+      },
+    },
+  },
 ];
 
 let showHidden = false;
@@ -184,30 +240,43 @@ export function typeLabel(type: DbType): string {
 }
 
 /** sql-formatter languages DB Deck uses (see query/formatSql.ts). */
-export type FormatLanguage = 'postgresql' | 'mysql' | 'sqlite' | 'transactsql';
+export type FormatLanguage = 'postgresql' | 'mysql' | 'sqlite' | 'transactsql' | 'plsql';
 
 /** How the SQL editor treats each database's SQL: the formatter language and keywords beyond the common ones. */
 export interface SqlDialect {
   format: FormatLanguage;
   keywords: string[];
+  /** How a SELECT asks for its first rows (Generate SQL): `LIMIT n`, SQL Server's `TOP (n)`, or `FETCH FIRST n ROWS ONLY`. */
+  rowLimit: RowLimit;
 }
+
+export type RowLimit = 'limit' | 'top' | 'fetch';
 
 export const SQL_DIALECTS: Record<DbType, SqlDialect> = {
   postgres: {
     format: 'postgresql',
     keywords: ['ILIKE', 'RETURNING', 'ON CONFLICT', 'DO NOTHING', 'DO UPDATE', 'IS DISTINCT FROM', 'FETCH FIRST', 'SERIAL', 'JSONB'],
+    rowLimit: 'limit',
   },
   mysql: {
     format: 'mysql',
     keywords: ['REPLACE INTO', 'ON DUPLICATE KEY UPDATE', 'AUTO_INCREMENT', 'ENGINE', 'DUAL', 'SHOW TABLES', 'DESCRIBE', 'REGEXP'],
+    rowLimit: 'limit',
   },
   sqlite: {
     format: 'sqlite',
     keywords: ['INSERT OR REPLACE', 'INSERT OR IGNORE', 'AUTOINCREMENT', 'WITHOUT ROWID', 'PRAGMA', 'GLOB', 'VACUUM'],
+    rowLimit: 'limit',
   },
   sqlserver: {
     format: 'transactsql',
     keywords: ['TOP', 'OFFSET', 'FETCH NEXT', 'ROWS ONLY', 'IDENTITY', 'NVARCHAR', 'DECLARE', 'PRINT', 'GO', 'EXEC', 'MERGE', 'OUTPUT', 'WITH (NOLOCK)', 'BEGIN TRY', 'BEGIN CATCH', 'RAISERROR', 'THROW'],
+    rowLimit: 'top',
+  },
+  oracle: {
+    format: 'plsql',
+    keywords: ['DUAL', 'ROWNUM', 'ROWID', 'SYSDATE', 'SYSTIMESTAMP', 'NVL', 'DECODE', 'VARCHAR2', 'NUMBER', 'FETCH FIRST', 'ROWS ONLY', 'CONNECT BY', 'START WITH', 'MERGE', 'DECLARE', 'EXCEPTION', 'DBMS_OUTPUT.PUT_LINE', 'CREATE OR REPLACE'],
+    rowLimit: 'fetch',
   },
 };
 
@@ -221,6 +290,8 @@ export const DATABASE_SCOPE: Record<DbType, 'none' | 'required' | 'optional'> = 
   mysql: 'optional',
   // Empty: the login's default database.
   sqlserver: 'optional',
+  // The service name (or SID) the connection goes to.
+  oracle: 'required',
 };
 
 /**
@@ -233,6 +304,7 @@ export const TREE_LAYOUT: Record<DbType, 'objects' | 'schemas' | 'database'> = {
   postgres: 'database',
   mysql: 'schemas',
   sqlserver: 'database',
+  oracle: 'database',
 };
 
 /** Whether the database is reached over the network, so it can go through an SSH tunnel (SQLite is a local file). */
@@ -241,6 +313,7 @@ export const USES_NETWORK: Record<DbType, boolean> = {
   postgres: true,
   mysql: true,
   sqlserver: true,
+  oracle: true,
 };
 
 /**
@@ -253,6 +326,8 @@ export const TRANSACTIONAL_DDL: Record<DbType, boolean> = {
   postgres: true,
   mysql: false,
   sqlserver: true,
+  // Every CREATE / ALTER / DROP commits, with what ran before it.
+  oracle: false,
 };
 
 /** What the Table Designer offers for a database, so the form never branches on the type. */
@@ -328,6 +403,18 @@ export const TABLE_FEATURES: Record<DbType, TableFeatures> = {
     dropNote: 'SQL Server refuses to drop a table other tables reference through foreign keys. Indexes and triggers on it are dropped with it. It runs in a transaction.',
     uniqueNullsDistinct: false,
   },
+  // Table design for Oracle comes in phase 14b-2; these are the designer's suggestions and notes.
+  oracle: {
+    types: ['NUMBER', 'NUMBER(10)', 'NUMBER(10,2)', 'INTEGER', 'BINARY_DOUBLE', 'VARCHAR2(255)', 'VARCHAR2(255 CHAR)', 'NVARCHAR2(255)', 'CHAR(1)', 'CLOB', 'DATE', 'TIMESTAMP', 'TIMESTAMP WITH TIME ZONE', 'INTERVAL DAY TO SECOND', 'RAW(16)', 'BLOB', 'BOOLEAN', 'JSON'],
+    comments: true,
+    autoIncrement: 'GENERATED BY DEFAULT AS IDENTITY',
+    autoIncrementNeedsIntegerKey: false,
+    referentialActions: ['NO ACTION', 'CASCADE', 'SET NULL'],
+    reorder: 'none',
+    truncateNote: 'Oracle commits TRUNCATE immediately, so it can’t be rolled back, and refuses it while enabled foreign keys reference this table (DB Deck never adds CASCADE).',
+    dropNote: 'Oracle commits DROP TABLE immediately. The table goes to the recycle bin where that’s on (FLASHBACK TABLE … TO BEFORE DROP brings it back). DB Deck never adds CASCADE CONSTRAINTS.',
+    uniqueNullsDistinct: true,
+  },
 };
 
 /**
@@ -341,4 +428,6 @@ export const SERVER_TOOLS: Record<DbType, { processes: boolean; explainAnalyze: 
   sqlite: { processes: false, explainAnalyze: false, cancelQuery: false },
   // No Explain Analyze: SQL Server has no read-only transaction to run a statement in safely.
   sqlserver: { processes: true, explainAnalyze: false, cancelQuery: false },
+  // Phase 14b-3: no Explain Analyze (decision 8); ALTER SYSTEM CANCEL SQL (18c and later) cancels a statement.
+  oracle: { processes: true, explainAnalyze: false, cancelQuery: true },
 };

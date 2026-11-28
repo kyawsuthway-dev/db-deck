@@ -13,6 +13,7 @@ Width and height are set to 16; the paths are Tabler's, unchanged.
 | function | math-function | #8250DF | #BC8CFF |
 | procedure | settings-automation | #BC4C00 | #F0883E |
 | sequence | list-numbers | #0F766E | #2DD4BF |
+| package | package | #1F6FEB | #79C0FF |
 | index | list-search | #9A6700 | #D29922 |
 | trigger | bolt | #CF222E | #FF7B72 |
 | column | columns-1 | #57606A | #8B949E |

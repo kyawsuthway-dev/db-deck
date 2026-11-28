@@ -3,12 +3,15 @@ import type { DesignChange } from './design/diff';
 import type { TableDesign } from './design/model';
 import type { PlanNode } from './tools/plan';
 
-export type DbType = 'sqlite' | 'postgres' | 'mysql' | 'sqlserver';
+export type DbType = 'sqlite' | 'postgres' | 'mysql' | 'sqlserver' | 'oracle';
 
 /** off: plain TCP. require: TLS with certificate checks. no-verify: TLS, accept self-signed certificates. */
 export type SslMode = 'off' | 'require' | 'no-verify';
 
 export type SignIn = 'password' | 'entra-account' | 'entra-default';
+
+/** Oracle's administrative privileges, for "Connect as" (oracledb's `privilege`). Absent: a normal session. */
+export type OraclePrivilege = 'SYSDBA' | 'SYSOPER' | 'SYSBACKUP' | 'SYSDG' | 'SYSKM' | 'SYSRAC';
 
 /** A saved connection. Stored in globalState, so it must never contain a password. */
 export interface ConnectionConfig {
@@ -29,6 +32,10 @@ export interface ConnectionConfig {
    * or Azure's default credentials (Azure CLI, environment, managed identity). Microsoft Entra ID for the last two.
    */
   signIn?: SignIn;
+  /** Oracle: connect with an administrative privilege (SYSDBA…); absent for a normal session. */
+  privilege?: OraclePrivilege;
+  /** Oracle: `database` is a SID rather than a service name (older or single-instance setups). */
+  sid?: boolean;
   /** Reach the database through an SSH host (servers only). Its password or key passphrase is in SecretStorage. */
   ssh?: SshConfig;
   /** One level of grouping in the Connections view. */
@@ -67,7 +74,7 @@ export interface TableInfo {
 }
 
 /** Kinds of database objects the tree shows. */
-export type ObjectKind = 'table' | 'view' | 'function' | 'procedure' | 'sequence' | 'index' | 'trigger';
+export type ObjectKind = 'table' | 'view' | 'function' | 'procedure' | 'sequence' | 'package' | 'index' | 'trigger';
 
 /** A database object in the tree. Tables and views also fit `TableInfo`. */
 export interface DbObject {
@@ -115,6 +122,11 @@ export interface ColumnInfo {
    * left unmapped, the server numbers the rows.
    */
   identity?: boolean;
+  /**
+   * The grid may show the value shortened (Oracle LOBs, capped at 1 MB) or the database can't compare it with a
+   * value (CLOB, XMLTYPE): never edited in the grid, so a cut-off value can't be written back.
+   */
+  shortened?: boolean;
 }
 
 /** Every value is turned into display text (or null) before it reaches the webview. */

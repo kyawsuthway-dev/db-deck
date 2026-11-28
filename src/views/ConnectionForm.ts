@@ -6,10 +6,10 @@ import * as vscode from 'vscode';
 import type { ConnectionManager, ConnectionSecrets } from '../connectionManager';
 import { checkForm, initialValues, readValues, type FieldErrors, type FormContext, type FormValues, type KindInfo } from '../connectionForm/fields';
 import { errorMessage } from '../drivers/common';
-import { DATABASE_SCOPE, offeredKinds, USES_NETWORK } from '../drivers';
+import { DATABASE_SCOPE, DB_KINDS, offeredKinds, USES_NETWORK } from '../drivers';
 import type { ConnectionsTree } from '../tree/ConnectionsTree';
 import { FormPanel, FormTabs } from './FormPanel';
-import type { ConnectionConfig } from '../types';
+import type { ConnectionConfig, SslMode } from '../types';
 
 /** Which file a Browse… button picks. */
 export type PathTarget = 'sqliteOpen' | 'sqliteCreate' | 'sshKey';
@@ -68,8 +68,15 @@ function kinds(): KindInfo[] {
     signIns: k.signIns ?? ['password'],
     readOnlyNote: k.readOnlyNote,
     urlExample: k.urlExample,
+    sslModes: k.sslModes ?? ALL_SSL_MODES,
+    databaseLabel: k.databaseLabel ?? 'Database',
+    sid: !!k.sid,
+    privileges: k.privileges ?? [],
+    sshLocalPort: !!k.sshLocalPort,
   }));
 }
+
+const ALL_SSL_MODES: SslMode[] = ['off', 'require', 'no-verify'];
 
 /**
  * Add Connection and Edit Connection… as a form in an editor tab: one tab per connection being edited,
@@ -317,7 +324,11 @@ class ConnectionFormPanel extends FormPanel<FormMessage> {
   }
 }
 
-/** The connection verifies certificates and the server's didn't pass (often a self-signed one on a local server). */
+/**
+ * The connection verifies certificates and the server's didn't pass (often a self-signed one on a local server), and
+ * the database can skip the check (Oracle's Thin mode can't, so it has no `no-verify`).
+ */
 function certificateFailure(config: ConnectionConfig, err: unknown): boolean {
-  return config.ssl === 'require' && /certificate/i.test(errorMessage(err));
+  const canSkip = DB_KINDS.some((k) => k.type === config.type && (k.sslModes ?? ALL_SSL_MODES).includes('no-verify'));
+  return canSkip && config.ssl === 'require' && /certificate/i.test(errorMessage(err));
 }

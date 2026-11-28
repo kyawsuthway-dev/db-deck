@@ -201,6 +201,13 @@ export function codeOnly(sql: string, dialect: DbType): string {
     } else if (two === '/*') {
       const end = sql.indexOf('*/', i + 2);
       i = end === -1 ? sql.length : end + 2;
+    } else if (dialect === 'oracle' && /^[nN]?[qQ]'./.test(sql.slice(i, i + 4)) && !/[\w$#]/.test(sql[i - 1] ?? '')) {
+      // Oracle's q'[it's]': runs to the closing delimiter followed by a quote.
+      const open = /^[nN]?[qQ]'(.)/.exec(sql.slice(i, i + 4))!;
+      const close = ({ '[': ']', '{': '}', '<': '>', '(': ')' } as Record<string, string>)[open[1]] ?? open[1];
+      const end = sql.indexOf(`${close}'`, i + open[0].length);
+      i = end === -1 ? sql.length : end + 2;
+      out += ' ';
     } else if (c === "'" || c === '"' || c === '`' || (c === '[' && dialect === 'sqlserver')) {
       // SQL Server's [name] closes with ] (]] is an escaped one).
       const close = c === '[' ? ']' : c;
@@ -237,15 +244,22 @@ export function readOnlyStatement(sql: string, dialect: DbType): { ok: true } | 
 }
 
 /**
- * Whether a read-only SQL Server connection may run a statement: SQL Server has no read-only session setting, so
- * DB Deck checks each statement itself, like the one above. T-SQL's DECLARE, SET, PRINT and IF / WHILE / BEGIN
- * blocks are allowed as long as nothing in them writes; EXEC isn't (a procedure can write).
+ * Whether a read-only connection may run a statement where the database has no read-only session to rely on, so
+ * DB Deck checks each statement itself, like the one above. SQL Server: T-SQL's DECLARE, SET, PRINT and IF / WHILE /
+ * BEGIN blocks are allowed as long as nothing in them writes; EXEC isn't (a procedure can write). Oracle passes only
+ * SELECT and WITH: a PL/SQL block can call a procedure without any keyword saying so, and Oracle's read-only
+ * transaction still lets DDL through (and commits).
  */
-export function readingStatement(sql: string, dialect: DbType): { ok: true } | { ok: false; reason: string } {
-  const problem = writes(sql, dialect, ['SELECT', 'WITH', 'DECLARE', 'SET', 'PRINT', 'IF', 'WHILE', 'BEGIN']);
+export function readingStatement(
+  sql: string,
+  dialect: DbType,
+  allowed = ['SELECT', 'WITH', 'DECLARE', 'SET', 'PRINT', 'IF', 'WHILE', 'BEGIN'],
+): { ok: true } | { ok: false; reason: string } {
+  const problem = writes(sql, dialect, allowed);
   if (!problem) return { ok: true };
   const what = problem.word ? ` (${problem.word})` : '';
-  return { ok: false, reason: `This connection is read-only, so DB Deck only runs reading statements on it (SELECT, WITH, DECLARE, SET, PRINT), and this one may change something${what}.` };
+  const shown = allowed.filter((w) => !['IF', 'WHILE', 'BEGIN'].includes(w)).join(', ');
+  return { ok: false, reason: `This connection is read-only, so DB Deck only runs reading statements on it (${shown}), and this one may change something${what}.` };
 }
 
 /** Why a statement may write: its first word isn't one of `allowed`, it contains a writing keyword, or SELECT … INTO. */

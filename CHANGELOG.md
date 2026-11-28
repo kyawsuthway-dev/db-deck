@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Generate SQL → SELECT** on SQL Server writes `SELECT TOP (100)` instead of `LIMIT 100`, which SQL Server doesn't have.
+
 ## 0.2.0 — 2026-11-28
 
 ### Added

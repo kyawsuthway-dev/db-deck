@@ -166,6 +166,7 @@ const FOLDER_LABELS: Partial<Record<ObjectKind, string>> = {
   function: 'Functions',
   procedure: 'Procedures',
   sequence: 'Sequences',
+  package: 'Packages',
 };
 
 /** Whether the connection's tree items offer server-only actions (Switch Database…). */

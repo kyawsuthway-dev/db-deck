@@ -298,6 +298,9 @@ export class PostgresDriver implements Driver {
         const def = await one('SELECT pg_get_indexdef($1::regclass) AS def', [name]);
         return def === null ? missing : end(def);
       }
+      // PostgreSQL has no packages (Oracle only); the tree never lists one here.
+      case 'package':
+        return missing;
       case 'sequence':
         return this.sequenceDdl(object, name);
       case 'table':
