@@ -123,6 +123,23 @@ export class SavedQueries implements vscode.Disposable {
     this.changed.fire();
   }
 
+  /** Open Query…: picks one of the connection's saved queries and opens it (linked to the connection by its folder). */
+  async pickAndOpen(connectionId: string): Promise<void> {
+    const name = this.manager.get(connectionId)?.name ?? 'this connection';
+    const group = (await this.groups()).find((g) => g.connectionId === connectionId);
+    if (!group) {
+      void vscode.window.showInformationMessage(
+        `No saved queries for ${name} yet. In one of its SQL editors, use Save Query… (Ctrl/Cmd+S in a new editor).`,
+      );
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      group.queries.map((query) => ({ label: query.name, query })),
+      { title: `Open Query · ${name}`, placeHolder: 'Saved query to open' },
+    );
+    if (picked) await vscode.window.showTextDocument(picked.query.uri);
+  }
+
   /** Runs the whole query, including unsaved changes in an open editor. */
   async run(query: SavedQuery): Promise<void> {
     const doc = await vscode.workspace.openTextDocument(query.uri);

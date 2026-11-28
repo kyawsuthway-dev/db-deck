@@ -9,7 +9,7 @@ import { QueryHistory } from './history/queryHistory';
 import { PAGE_SIZE, QueryController } from './query/runQuery';
 import { SqlEditor } from './query/sqlEditor';
 import { SavedQueries } from './saved/savedQueries';
-import { ConnectionFolderNode, ConnectionNode, ConnectionsTree, EnvGroupNode, FolderNode, SchemaNode, ObjectNode, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
+import { ConnectionFolderNode, ConnectionNode, ConnectionsTree, DatabaseNode, EnvGroupNode, FolderNode, SchemaNode, ObjectNode, TableNode, tableLabel, type TreeNode } from './tree/ConnectionsTree';
 import { ObjectCommands } from './tree/objectCommands';
 import { HistoryNode, HistoryTree } from './tree/HistoryTree';
 import { SavedQueriesTree, SavedQueryNode } from './tree/SavedQueriesTree';
@@ -188,13 +188,30 @@ export function activate(context: vscode.ExtensionContext) {
       await manager.disconnect(node.config.id);
     }),
 
-    command('newQuery', async (node?: ConnectionNode | TableNode) => {
+    command('newQuery', async (node?: ConnectionNode | DatabaseNode | SchemaNode | TableNode) => {
       if (node instanceof TableNode) {
         const driver = await manager.getDriver(node.connectionId);
         await queries.newQuery(node.connectionId, driver.previewSql(node.table, { limit: PAGE_SIZE, offset: 0, orderBy: [] }));
+      } else if (node instanceof SchemaNode) {
+        // Another MySQL database than the connection's: say so, but never run USE (every editor shares the session).
+        const name = node.schema;
+        const note = name ? `-- Database: ${name} (not this connection's default: write ${name}.table_name, or run USE ${name};)\n` : '';
+        await queries.newQuery(node.connectionId, note);
+      } else if (node instanceof DatabaseNode) {
+        await queries.newQuery(node.connectionId);
       } else {
         await queries.newQuery(node?.config.id);
       }
+    }),
+    command('openSavedQuery', async (node?: DatabaseNode | SchemaNode) => {
+      // Every connection, .env ones too (pickConnection leaves them out: it's for editing and removing).
+      const connectionId =
+        node?.connectionId ??
+        (await vscode.window.showQuickPick(
+          manager.list().map((c) => ({ label: c.name, id: c.id })),
+          { placeHolder: 'Connection whose saved query to open' },
+        ))?.id;
+      if (connectionId) await saved.pickAndOpen(connectionId);
     }),
 
     command('previewTable', (node?: TableNode) => {
