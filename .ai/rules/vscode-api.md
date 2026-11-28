@@ -43,5 +43,6 @@ paths:
 - Connection tree items show the database logo (`logos.ts`, `{ light, dark }` files); open connections use the `-connected` variant (green dot). Not a file decoration: that would color the name. Nodes below the connection use DB Deck's own icons (`treeIcons.ts`, `media/icons`); each object folder shows its kind's icon. Connection folders and .env / compose groups keep codicons.
 - Multi-step input uses `showQuickPick`/`showInputBox` with a `title` and `ignoreFocusOut: true`; Escape at any step cancels without side effects.
 - Destructive actions (remove connection) use a modal confirmation that says what is and isn't affected.
+- The Server panel offers Cancel Query only where `SERVER_TOOLS.cancelQuery` is true (SQL Server can only end a session); a status value the login may not read shows "n/a" with the permission it needs instead of failing the panel.
 - Long operations use `withProgress`.
 - Results open beside the editor for queries (`ViewColumn.Beside`, `preserveFocus`), in the active group for table previews.

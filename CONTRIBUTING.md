@@ -38,7 +38,8 @@ Then open the folder in VS Code and press **F5**. A second window, the **Extensi
 | `task check` | Type check and build — run before committing (the hook does) |
 | `task npm -- install <pkg>` | Run npm in the container |
 | `task restart` | Restart the watcher — needed after editing `esbuild.mjs` |
-| `task psql` / `task mysql` | Open a SQL shell on a test database |
+| `task psql` / `task mysql` / `task mssql` | Open a SQL shell on a test database |
+| `task up:sqlserver` | Also start the SQL Server test database (opt-in: about 2 GB of RAM, x86-64 only) |
 | `task db:reset` | Delete and reseed the test databases |
 | `task package` | Build a production `.vsix`; try it with **Extensions: Install from VSIX…** in a normal VS Code window |
 | `task notices` | Rewrite `THIRD_PARTY_NOTICES.md` from the packages actually bundled — run after adding or upgrading a runtime dependency, and commit the file |
@@ -51,10 +52,11 @@ The watcher rebuilds on save. Press `Ctrl+R` (`Cmd+R`) in the Extension Developm
 | --- | --- | --- | --- | --- |
 | PostgreSQL 16 | `localhost:5432` | `postgres` | `postgres` | `sample` |
 | MySQL 8.4 | `localhost:3306` | `root` | `mysql` | `sample` |
+| SQL Server 2022 (`task up:sqlserver`) | `localhost:1433` | `sa` | `DbDeck-sa-2026` | `sample` |
 
-Both contain `customers` and `orders` tables and a `paid_orders` view.
+All contain `customers` and `orders` tables and a `paid_orders` view. SQL Server's also has `value_types`, with values a driver easily gets wrong (large decimals, money, `datetime2(7)`, `datetimeoffset`). Its certificate is self-signed: use **Trust Server Certificate** when the connection form offers it.
 
-To try the SSH tunnel, edit a PostgreSQL or MySQL connection and set **SSH Tunnel** to host `localhost`, port `2222`, user `dbdeck`, password `dbdeck`. The database host is then as seen from the SSH server: `postgres` port `5432`, or `mysql` port `3306`. The SSH server makes new host keys whenever its container is recreated, so DB Deck then asks you to trust the new key. If a port is already taken on your machine, change the left side of its `ports` entry in `docker-compose.yml` (don't commit that change).
+To try the SSH tunnel, edit a PostgreSQL or MySQL connection and set **SSH Tunnel** to host `localhost`, port `2222`, user `dbdeck`, password `dbdeck`. The database host is then as seen from the SSH server: `postgres` port `5432`, `mysql` port `3306`, or `sqlserver` port `1433`. The SSH server makes new host keys whenever its container is recreated, so DB Deck then asks you to trust the new key. If a port is already taken on your machine, change the left side of its `ports` entry in `docker-compose.yml` (don't commit that change).
 
 ## Project rules
 

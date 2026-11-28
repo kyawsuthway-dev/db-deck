@@ -125,7 +125,7 @@ function build(init: Init) {
     showProcesses(items: ServerProcess[]) {
       tabs.counts.processes.textContent = String(items.length);
       tabs.counts.processes.hidden = false;
-      bodies.processes.replaceChildren(items.length ? processTable(items, init.canEnd) : note('info', 'No sessions.'));
+      bodies.processes.replaceChildren(items.length ? processTable(items, init.canEnd, init.canCancel) : note('info', 'No sessions.'));
     },
   };
 }
@@ -164,7 +164,7 @@ function table(headers: string[], rows: string[][], className: string): HTMLElem
   return wrap;
 }
 
-function processTable(items: ServerProcess[], canEnd: boolean): HTMLElement {
+function processTable(items: ServerProcess[], canEnd: boolean, canCancel: boolean): HTMLElement {
   const rows = items.map((p) => [p.id, p.user, p.database, p.client, p.state, p.seconds !== undefined ? duration(p.seconds) : '', p.query]);
   const wrap = table(['Id', 'User', 'Database', 'Client', 'State', 'Running', 'Query', ...(canEnd ? [''] : [])], rows, 'process-table');
   const trs = wrap.querySelectorAll('tbody tr');
@@ -186,7 +186,9 @@ function processTable(items: ServerProcess[], canEnd: boolean): HTMLElement {
     const end = el('button', 'link-button danger-link', 'End Session');
     end.type = 'button';
     end.addEventListener('click', () => vscode.postMessage({ type: 'end', id: p.id, how: 'terminate' }));
-    actions.append(cancel, end);
+    // SQL Server can't cancel another session's statement, only end the session (SERVER_TOOLS.cancelQuery).
+    if (canCancel) actions.append(cancel);
+    actions.append(end);
     tr.append(actions);
   });
   return wrap;
