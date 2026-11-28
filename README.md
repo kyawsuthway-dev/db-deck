@@ -106,7 +106,7 @@ All commands are in the Command Palette under **DB Deck**.
 
 ## Privacy and security
 
-- **No telemetry.** DB Deck only talks to the databases (and SSH hosts) you configure.
+- **No telemetry.** DB Deck only talks to the databases (and SSH hosts) you configure, and, for an Azure SQL connection set to Microsoft Entra ID sign-in, Microsoft's sign-in service to get its token (through VS Code's Microsoft account or Azure's credentials). DB Deck doesn't store that token.
 - **Passwords** — database passwords, SSH passwords and key passphrases are stored only in VS Code's SecretStorage (your OS keychain), never in settings files. `.env` and compose passwords are read when connecting and kept only in memory. Private key files are read when connecting and never copied.
 - **Writes happen only when you ask.** Browsing, previews and metadata only read. DB Deck writes when you run SQL that does, or when you confirm in a form: **Apply** for table edits and designs, **Run** for a SQL file, **Import**, **Insert** for mock data, **Create Table**, **Apply** in Compare Structure, or after typing a table's name for Truncate and Drop. Read-only connections refuse all of these.
 - **Query history** stores the SQL you run exactly as typed, in VS Code's local workspace storage, so it can include values you typed. It never leaves your machine; turn it off with `dbDeck.history.enabled`.
