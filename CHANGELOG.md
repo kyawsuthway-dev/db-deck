@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 — 2026-11-28
+
 ### Added
 
 - **SQL Server and Azure SQL** (SQL Server 2017 or newer, Azure SQL Database): browsing, the schema tree, the SQL editor, table views, editing, export, table design, dump, Run SQL File, Import CSV, Compare Structure, Generate Mock Data, ER diagram, Explain (estimated plan) and the Server panel.
