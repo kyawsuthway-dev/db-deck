@@ -26,7 +26,7 @@ export type ImportMessage =
     }
   | { type: 'tables'; connectionId: string; tables: { key: string; label: string }[]; tableKey?: string }
   /** The chosen table's columns that can be filled, and how many rows it has now (for "delete first"). */
-  | { type: 'columns'; columns: { name: string; type: string; required: boolean }[]; existingRows?: string }
+  | { type: 'columns'; columns: { name: string; type: string; required: boolean; identity?: boolean }[]; existingRows?: string }
   | { type: 'file'; name: string; path: string; size: string }
   /** The file as read with the current options; `mapping` is the suggested target per CSV column. */
   | {
@@ -208,7 +208,7 @@ class ImportFormPanel extends FormPanel<ImportMessage> {
     }
     this.post({
       type: 'columns',
-      columns: this.targets.map((c) => ({ name: c.name, type: c.type, required: !c.nullable && !c.hasDefault })),
+      columns: this.targets.map((c) => ({ name: c.name, type: c.type, required: !c.nullable && !c.hasDefault, ...(c.identity ? { identity: true } : {}) })),
       existingRows: this.existingRows.toLocaleString(),
     });
   }

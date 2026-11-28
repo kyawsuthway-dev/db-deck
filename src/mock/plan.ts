@@ -250,10 +250,12 @@ export interface MockTable {
   foreignKeys: MockForeignKey[];
   /** CHECK constraints that aren't simple IN lists: not evaluated. */
   otherChecks: number;
+  /** NULLs never clash in a unique key (TableFeatures.uniqueNullsDistinct); false: NULL counts as one value. */
+  nullsDistinct: boolean;
 }
 
 /** The columns with their auto-picked generators, from the table's design and `Driver.columnChoices`. */
-export function mockTable(design: TableDesign, choices: Record<string, string[]>): MockTable {
+export function mockTable(design: TableDesign, choices: Record<string, string[]>, nullsDistinct = true): MockTable {
   const index = new Map(design.columns.map((c, i) => [c.name, i]));
   const checkValues = new Map<string, string[]>();
   let otherChecks = 0;
@@ -297,7 +299,7 @@ export function mockTable(design: TableDesign, choices: Record<string, string[]>
     col.setting = { generator, options: { ...col.defaults[generator] } };
     return col;
   });
-  return { columns, uniqueKeys, foreignKeys, otherChecks };
+  return { columns, uniqueKeys, foreignKeys, otherChecks, nullsDistinct };
 }
 
 function allowedGenerators(c: MockColumn): GeneratorId[] {
@@ -581,7 +583,8 @@ export function generateRows(table: MockTable, request: MockRequest, data: MockD
   const seen = keys.map(({ k }) => new Set((data.existing[k]?.rows ?? []).map(tupleKey)));
   for (const { cols } of keys) {
     if (cols.length !== 1) continue;
-    const cap = capacity(settings[cols[0]]);
+    // Where NULL counts as a value in a unique key (SQL Server), the NULL generator makes exactly one.
+    const cap = settings[cols[0]].generator === 'null' && !table.nullsDistinct ? 1n : capacity(settings[cols[0]]);
     const fk = settings[cols[0]].generator === 'foreignKey' ? table.columns[cols[0]].foreignKey : undefined;
     const limit = fk !== undefined ? BigInt(usableParents(data, fk).length) : cap;
     if (limit !== undefined && limit < BigInt(request.rows)) {
@@ -614,7 +617,7 @@ export function generateRows(table: MockTable, request: MockRequest, data: MockD
     for (const [n, { cols }] of keys.entries()) {
       for (let attempt = 0; ; attempt++) {
         const values = cols.map((i) => row[i]);
-        if (values.some((v) => v === null) || !seen[n].has(tupleKey(values))) break;
+        if ((table.nullsDistinct && values.some((v) => v === null)) || !seen[n].has(tupleKey(values))) break;
         if (attempt >= 100) {
           throw new MockError(
             `Row ${r + 1}: couldn’t make a new value for unique ${cols.map((i) => table.columns[i].name).join(', ')} after 100 tries. Widen its range or choose another generator.`,
@@ -642,7 +645,7 @@ export function generateRows(table: MockTable, request: MockRequest, data: MockD
     // A regenerated key may clash with an earlier key's values again; the database is the last check.
     keys.forEach(({ cols }, n) => {
       const values = cols.map((i) => row[i]);
-      if (!values.some((v) => v === null)) seen[n].add(tupleKey(values));
+      if (!table.nullsDistinct || !values.some((v) => v === null)) seen[n].add(tupleKey(values));
     });
     rows.push(used.map((i) => row[i]));
   }

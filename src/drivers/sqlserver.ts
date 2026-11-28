@@ -11,14 +11,18 @@ import type {
   Driver,
   DumpCell,
   DumpPlan,
+  DumpTable,
   ExplainResult,
   FilterOperator,
+  ImportOptions,
   ImportResult,
+  ImportRow,
   IndexInfo,
   ObjectKind,
   RowChange,
   SchemaDiagram,
   SchemaEntry,
+  ScriptOptions,
   ScriptResult,
   ServerItem,
   ServerProcess,
@@ -27,10 +31,18 @@ import type {
   TableInfo,
   TablePage,
 } from '../types';
-import type { TableDesign } from '../design/model';
+import type { ForeignKeyDesign, TableDesign } from '../design/model';
+import type { DesignChange } from '../design/diff';
+import { checkClause, columnDefinition, createIndexStatement, createTableStatements, foreignKeyClause, type DdlDialect } from './ddl';
 import {
   buildChangeStatements,
+  buildInsertBatch,
   ChangeConflict,
+  dumpInserts,
+  importBatchRows,
+  importRowsWith,
+  runScriptStatements,
+  toDumpCell,
   countFrom,
   FILTER_OPERATORS,
   filterCondition,
@@ -101,6 +113,7 @@ export class SqlServerDriver implements Driver {
       nullable: nullable === true,
       primaryKey: Number(pk) === 1,
       hasDefault: identity === true || Number(defaultId) !== 0,
+      identity: identity === true,
       // rowversion / timestamp columns are filled by the server and can't be written, like computed ones.
       generated: computed === true || /^(timestamp|rowversion)$/i.test(String(type)),
     }));
@@ -317,38 +330,292 @@ export class SqlServerDriver implements Driver {
   }
 
   // Phase 14a-2 (transfer and design) and 14a-3 (tools). SQL Server isn't offered outside development until then.
-  async dumpPlan(): Promise<DumpPlan> {
-    throw new Error(NOT_YET);
+  /**
+   * A T-SQL dump with `GO` between batches (DB Deck's Run SQL File, sqlcmd and SSMS all run it): schemas,
+   * sequences the tables' defaults use, tables without foreign keys and extra indexes, rows (IDENTITY_INSERT
+   * around tables with an identity column), then foreign keys and indexes, sequence positions and views in
+   * dependency order. Computed and rowversion columns are left out of the rows: they can't be written.
+   */
+  async dumpPlan(tables: TableInfo[], views: TableInfo[]): Promise<DumpPlan> {
+    const planned: DumpTable[] = [];
+    const schemas = new Set<string>();
+    let afterData = '';
+    for (const table of tables) {
+      const name = qualifiedName(table);
+      const parts = await this.tableParts(name);
+      if (!parts) continue;
+      if (table.schema) schemas.add(table.schema);
+      const lines = [...parts.columns, ...parts.keys, ...parts.checks];
+      const keys = (await this.listColumns(table)).filter((c) => c.primaryKey).map((c) => ({ column: c.name, direction: 'asc' as const }));
+      const columns = parts.writable;
+      planned.push({
+        table,
+        create: `CREATE TABLE ${name} (\n  ${lines.join(',\n  ')}\n);\nGO\n`,
+        columns,
+        orderBy: keys,
+        insert: (rows) => {
+          const inserts = dumpInserts(name, '[', columns, rows, sqlServerLiteral, (h) => `0x${h}`);
+          if (!inserts) return '';
+          return parts.identity ? `SET IDENTITY_INSERT ${name} ON;\n${inserts}SET IDENTITY_INSERT ${name} OFF;\nGO\n` : `${inserts}GO\n`;
+        },
+      });
+      for (const fk of parts.foreignKeys) afterData += `ALTER TABLE ${name} ADD ${fk.clause};\n`;
+      for (const ix of parts.indexes) afterData += `${ix}\n`;
+    }
+    if (afterData) afterData += 'GO\n';
+    // Schemas the tables are in (CREATE SCHEMA must be alone in its batch).
+    let structure = [...schemas].map((schema) => `IF SCHEMA_ID(${sqlServerLiteral(schema)}) IS NULL EXEC(${sqlServerLiteral(`CREATE SCHEMA ${quoteIdent(schema, '[')}`)});\nGO\n`).join('');
+    // Sequences the tables' defaults use (NEXT VALUE FOR), created before the tables, set past the rows after.
+    let sequenceValues = '';
+    if (planned.length) {
+      const ids = planned.map((t) => qualifiedName(t.table));
+      const seqs = await this.rows(
+        `SELECT DISTINCT SCHEMA_NAME(sq.schema_id), sq.name, CAST(sq.last_used_value AS nvarchar(40)), CAST(sq.increment AS nvarchar(40))
+           FROM sys.default_constraints dc
+           JOIN sys.sql_expression_dependencies d ON d.referencing_id = dc.object_id
+           JOIN sys.sequences sq ON sq.object_id = d.referenced_id
+          WHERE dc.parent_object_id IN (SELECT OBJECT_ID(value) FROM STRING_SPLIT(@p1, NCHAR(1)))`,
+        [ids.join('\u0001')],
+      );
+      for (const [schema, seqName, last, step] of seqs) {
+        const seq = `${quoteIdent(String(schema), '[')}.${quoteIdent(String(seqName), '[')}`;
+        const ddl = (await this.sequenceDdl(seq)).split('\n').find((l) => l.startsWith('CREATE SEQUENCE'));
+        if (ddl) structure += `IF OBJECT_ID(${sqlServerLiteral(seq)}, N'SO') IS NULL EXEC(${sqlServerLiteral(ddl)});\nGO\n`;
+        if (last !== null && last !== undefined) sequenceValues += `ALTER SEQUENCE ${seq} RESTART WITH ${(BigInt(String(last)) + BigInt(String(step))).toString()};\n`;
+      }
+      if (sequenceValues) sequenceValues += 'GO\n';
+    }
+    return {
+      start: 'SET XACT_ABORT ON;\nGO\n',
+      structure,
+      tables: planned,
+      afterData,
+      sequenceValues,
+      views: await this.viewsInOrder(views),
+      end: '',
+    };
   }
-  async dumpRows(): Promise<DumpCell[][]> {
-    throw new Error(NOT_YET);
+
+  async dumpRows(table: TableInfo, columns: string[], page: TablePage): Promise<DumpCell[][]> {
+    const cols = columns.map((c) => quoteIdent(c, '[')).join(', ');
+    const sql = pageQuery(qualifiedName(table), page).replace(/^SELECT \* FROM /, `SELECT ${cols} FROM `);
+    const [result] = await this.run((conn) => request(conn, sql));
+    return (result?.rows ?? []).map((row) => row.map(toDumpCell));
   }
-  async runScript(): Promise<ScriptResult> {
-    throw new Error(NOT_YET);
+
+  /**
+   * Runs Run SQL File's statements, which for SQL Server are `GO` batches (`analyzeScript`), on its own connection:
+   * in one transaction (XACT_ABORT, so any error rolls back everything) unless the script manages its own.
+   */
+  async runScript(statements: string[], options: ScriptOptions): Promise<ScriptResult> {
+    if (this.config.readOnly) throw new Error('This connection is read-only, so DB Deck doesn’t run SQL files on it.');
+    const conn = await this.createConnection();
+    try {
+      return await runScriptStatements(
+        statements,
+        options,
+        async (sql) => (await request(conn, sql)).reduce((n, r) => n + (r.affectedRows ?? 0), 0),
+        {
+          begin: async () => void (await request(conn, 'SET XACT_ABORT ON; BEGIN TRANSACTION;')),
+          commit: async () => void (await request(conn, 'COMMIT;')),
+          rollback: async () => void (await request(conn, 'IF @@TRANCOUNT > 0 ROLLBACK;')),
+        },
+      );
+    } finally {
+      conn.close();
+    }
   }
-  async importRows(): Promise<ImportResult> {
-    throw new Error(NOT_YET);
+
+  /**
+   * Import CSV through `importRowsWith` on its own connection: parameters (at most 2,100 per request), a
+   * SAVE TRANSACTION per batch. XACT_ABORT stays off so a failing row leaves the transaction usable for the
+   * row-by-row retry. Mapping a CSV column to the IDENTITY column inserts its values (IDENTITY_INSERT, decision A).
+   */
+  async importRows(table: TableInfo, columns: string[], rows: AsyncIterable<ImportRow>, options: ImportOptions): Promise<ImportResult> {
+    if (this.config.readOnly) throw new Error('This connection is read-only, so DB Deck doesn’t import into it.');
+    const name = qualifiedName(table);
+    const identity = (await this.listColumns(table)).some((c) => c.identity && columns.includes(c.name));
+    const conn = await this.createConnection();
+    const run = (sql: string, params: Cell[] = []) => request(conn, sql, params);
+    try {
+      return await importRowsWith(rows, options, {
+        begin: async () => void (await run(`SET NOCOUNT ON; BEGIN TRANSACTION;${identity ? ` SET IDENTITY_INSERT ${name} ON;` : ''}`)),
+        commit: async () => void (await run(`${identity ? `SET IDENTITY_INSERT ${name} OFF; ` : ''}COMMIT;`)),
+        rollback: async () => void (await run('IF @@TRANCOUNT > 0 ROLLBACK;')),
+        savepoint: async () => void (await run('SAVE TRANSACTION dbdeck_batch;')),
+        rollbackToSavepoint: async () => void (await run('ROLLBACK TRANSACTION dbdeck_batch;')),
+        // SQL Server has no RELEASE SAVEPOINT: a savepoint simply ends with the transaction.
+        releaseSavepoint: async () => undefined,
+        deleteAll: async () => Number((await run(`DELETE FROM ${name}; SELECT @@ROWCOUNT;`)).at(-1)?.rows[0]?.[0] ?? 0),
+        insert: async (batch) => void (await run(buildInsertBatch(name, '[', columns, batch.length, (n) => `@p${n}`), batch.flatMap((r) => r.values))),
+        batchRows: importBatchRows(2_000, columns.length),
+      });
+    } finally {
+      conn.close();
+    }
   }
-  createTableSql(): string[] {
-    throw new Error(NOT_YET);
+  createTableSql(design: TableDesign): string[] {
+    return createTableStatements(design, DDL);
   }
-  renameTableSql(): string {
-    throw new Error(NOT_YET);
+
+  /** sp_rename keeps the table in its schema. */
+  renameTableSql(table: TableInfo, newName: string): string {
+    return `EXEC sp_rename ${sqlServerLiteral(qualifiedName(table))}, ${sqlServerLiteral(newName.trim())};`;
   }
-  truncateTableSql(): string {
-    throw new Error(NOT_YET);
+
+  /** SQL Server refuses TRUNCATE while foreign keys reference the table; DB Deck never adds CASCADE. */
+  truncateTableSql(table: TableInfo): string {
+    return `TRUNCATE TABLE ${qualifiedName(table)};`;
   }
-  dropSql(): string {
-    throw new Error(NOT_YET);
+
+  dropSql(object: TableInfo): string {
+    return `DROP ${object.kind === 'view' ? 'VIEW' : 'TABLE'} ${qualifiedName(object)};`;
   }
-  async readDesign(): Promise<TableDesign> {
-    throw new Error(NOT_YET);
+
+  async referencingTables(table: TableInfo): Promise<string[]> {
+    const rows = await this.rows(
+      `SELECT DISTINCT SCHEMA_NAME(t.schema_id), t.name
+         FROM sys.foreign_keys fk JOIN sys.tables t ON t.object_id = fk.parent_object_id
+        WHERE fk.referenced_object_id = OBJECT_ID(@p1) AND fk.parent_object_id <> fk.referenced_object_id
+        ORDER BY 1, 2`,
+      [qualifiedName(table)],
+    );
+    return rows.map(([schema, name]) => (String(schema) === this.defaultSchema ? String(name) : `${String(schema)}.${String(name)}`));
   }
-  alterTableSql(): { statements: string[]; rebuild: boolean } {
-    throw new Error(NOT_YET);
+
+  /**
+   * The table as the designer edits it, read the same way every time (Apply compares two reads). Defaults and
+   * checks lose the one pair of parentheses SQL Server wraps around them, and get it back when written, so a
+   * round trip reads the same. Indexes the designer can't show (descending keys, included columns, filters,
+   * columnstore) are left out, so a design change never touches them.
+   */
+  async readDesign(table: TableInfo): Promise<TableDesign> {
+    const name = qualifiedName(table);
+    const cols = await this.rows(
+      `SELECT c.name, TYPE_NAME(c.user_type_id), c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity,
+              cc.definition, dc.name, dc.definition,
+              CASE WHEN EXISTS (SELECT 1 FROM sys.indexes i
+                                  JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+                                 WHERE i.object_id = c.object_id AND i.is_primary_key = 1 AND ic.column_id = c.column_id)
+                   THEN 1 ELSE 0 END
+         FROM sys.columns c
+         LEFT JOIN sys.computed_columns cc ON cc.object_id = c.object_id AND cc.column_id = c.column_id
+         LEFT JOIN sys.default_constraints dc ON dc.object_id = c.default_object_id
+        WHERE c.object_id = OBJECT_ID(@p1) ORDER BY c.column_id`,
+      [name],
+    );
+    if (!cols.length) throw new Error(`Table ${name} wasn't found.`);
+    const columns = cols.map(([col, type, maxLength, precision, scale, nullable, identity, computed, dfName, dfDef, pk], i) => ({
+      key: `c${i}`,
+      name: String(col),
+      type: typeText(String(type), Number(maxLength), Number(precision), Number(scale)),
+      nullable: nullable === true,
+      default: dfDef === null || dfDef === undefined ? '' : unwrap(String(dfDef)),
+      primaryKey: Number(pk) === 1,
+      autoIncrement: identity === true,
+      comment: '',
+      ...(computed !== null && computed !== undefined ? { generated: true } : {}),
+      ...(dfName !== null && dfName !== undefined ? { defaultName: String(dfName) } : {}),
+    }));
+    const [[pkName] = []] = await this.rows(`SELECT name FROM sys.key_constraints WHERE parent_object_id = OBJECT_ID(@p1) AND type = 'PK'`, [name]);
+    const indexes = (await this.indexes(name))
+      .filter((ix) => !ix.primary && ix.type === 'NONCLUSTERED' && !ix.filter && !ix.included.length && !ix.descending && ix.keyNames.length)
+      .map((ix) => ({ name: ix.name, columns: ix.keyNames, unique: ix.unique, ...(ix.constraint ? { constraint: true } : {}) }));
+    const fkRows = await this.rows(
+      `SELECT fk.object_id, fk.name, SCHEMA_NAME(rt.schema_id), rt.name, fk.delete_referential_action_desc, fk.update_referential_action_desc, pc.name, rc.name
+         FROM sys.foreign_keys fk
+         JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id
+         JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+         JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+         JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+        WHERE fk.parent_object_id = OBJECT_ID(@p1)
+        ORDER BY fk.name, fkc.constraint_column_id`,
+      [name],
+    );
+    const fks = new Map<string, ForeignKeyDesign>();
+    for (const [id, fkName, refSchema, refTable, onDelete, onUpdate, from, to] of fkRows) {
+      const fk = fks.get(String(id)) ?? {
+        name: String(fkName),
+        columns: [],
+        // Left out only for the connection's own default schema (drivers.md).
+        ...(String(refSchema) === this.defaultSchema ? {} : { refSchema: String(refSchema) }),
+        refTable: String(refTable),
+        refColumns: [],
+        onDelete: String(onDelete).replace(/_/g, ' '),
+        onUpdate: String(onUpdate).replace(/_/g, ' '),
+      };
+      fk.columns.push(String(from));
+      fk.refColumns.push(String(to));
+      fks.set(String(id), fk);
+    }
+    const checks = await this.rows('SELECT name, definition FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID(@p1) ORDER BY name', [name]);
+    return {
+      ...(table.schema ? { schema: table.schema } : {}),
+      name: table.name,
+      comment: '',
+      columns,
+      indexes,
+      foreignKeys: [...fks.values()],
+      checks: checks.map(([check, def]) => ({ name: String(check), expression: unwrap(String(def)) })),
+      ...(pkName !== null && pkName !== undefined ? { primaryKeyName: String(pkName) } : {}),
+    };
   }
-  async referencingTables(): Promise<string[]> {
-    throw new Error(NOT_YET);
+
+  /**
+   * One statement per change, in an order SQL Server accepts: column renames (sp_rename), then drops (indexes,
+   * constraints, the primary key, columns with their default constraint), column changes, new columns, the new
+   * primary key, foreign keys, checks and indexes. A column's default constraint is dropped before its type or
+   * nullability changes (SQL Server refuses while it exists) and added back after. IDENTITY can't be turned on or
+   * off for an existing column in SQL Server, so that change is refused with the reason. Pure: the designer calls
+   * it on an unconnected driver.
+   */
+  alterTableSql(before: TableDesign, _after: TableDesign, changes: DesignChange[]): { statements: string[]; rebuild: boolean } {
+    const table = qualifiedName({ schema: before.schema, name: before.name });
+    const bare = before.name.trim();
+    const q = (n: string) => quoteIdent(n.trim(), '[');
+    const out: string[] = [];
+    const alter = (action: string) => out.push(`ALTER TABLE ${table} ${action};`);
+    const identity = changes.find((c) => c.kind === 'alterColumn' && c.autoIncrement);
+    if (identity?.kind === 'alterColumn') {
+      throw new Error(
+        `SQL Server can’t turn IDENTITY ${identity.after.autoIncrement ? 'on' : 'off'} for an existing column (${identity.after.name.trim()}). Create a new table with the column as you want it and copy the rows over.`,
+      );
+    }
+    for (const c of changes) {
+      if (c.kind === 'renameColumn') out.push(`EXEC sp_rename ${sqlServerLiteral(`${table}.${q(c.from)}`)}, ${sqlServerLiteral(c.to.trim())}, 'COLUMN';`);
+    }
+    for (const c of changes) {
+      if (c.kind === 'dropIndex') {
+        if (c.index.constraint) alter(`DROP CONSTRAINT ${q(c.index.name)}`);
+        else out.push(`DROP INDEX ${q(c.index.name)} ON ${table};`);
+      } else if (c.kind === 'dropForeignKey') alter(`DROP CONSTRAINT ${q(c.foreignKey.name)}`);
+      else if (c.kind === 'dropCheck') alter(`DROP CONSTRAINT ${q(c.check.name)}`);
+    }
+    const pkChange = changes.find((c) => c.kind === 'primaryKey');
+    if (pkChange && before.primaryKeyName) alter(`DROP CONSTRAINT ${q(before.primaryKeyName)}`);
+    for (const c of changes) {
+      if (c.kind !== 'dropColumn') continue;
+      if (c.column.defaultName) alter(`DROP CONSTRAINT ${q(c.column.defaultName)}`);
+      alter(`DROP COLUMN ${q(c.column.name)}`);
+    }
+    for (const c of changes) {
+      if (c.kind !== 'alterColumn' || !(c.type || c.nullable || c.default)) continue;
+      const col = q(c.after.name);
+      const dropped = !!c.before.defaultName;
+      if (dropped) alter(`DROP CONSTRAINT ${q(c.before.defaultName!)}`);
+      if (c.type || c.nullable) alter(`ALTER COLUMN ${col} ${c.after.type.trim()} ${c.after.nullable ? 'NULL' : 'NOT NULL'}`);
+      if ((dropped || c.default) && c.after.default.trim()) {
+        alter(`ADD CONSTRAINT ${q(DDL.defaultName!(bare, c.after.name.trim()))} DEFAULT ${c.after.default.trim()} FOR ${col}`);
+      }
+    }
+    for (const c of changes) if (c.kind === 'addColumn') alter(`ADD ${columnDefinition({ ...c.column, primaryKey: false }, DDL, false, bare)}`);
+    if (pkChange?.after.length) alter(`ADD CONSTRAINT ${q(`PK_${bare}`)} PRIMARY KEY (${pkChange.after.map(q).join(', ')})`);
+    for (const c of changes) {
+      if (c.kind === 'addForeignKey') alter(`ADD ${foreignKeyClause(c.foreignKey, DDL)}`);
+      else if (c.kind === 'addCheck') alter(`ADD ${checkClause(c.check, DDL)}`);
+    }
+    for (const c of changes) if (c.kind === 'addIndex') out.push(createIndexStatement(c.index, table, DDL));
+    return { statements: out, rebuild: false };
   }
   async explain(): Promise<ExplainResult> {
     throw new Error(NOT_YET);
@@ -367,6 +634,41 @@ export class SqlServerDriver implements Driver {
   }
   async schemaDiagram(): Promise<SchemaDiagram> {
     throw new Error(NOT_YET);
+  }
+
+  /** Views' definitions as stored, each in its own batch, views another view uses first. */
+  private async viewsInOrder(views: TableInfo[]): Promise<string> {
+    const names = views.map(qualifiedName);
+    const deps = await this.rows(
+      `SELECT OBJECT_SCHEMA_NAME(d.referencing_id), OBJECT_NAME(d.referencing_id), OBJECT_SCHEMA_NAME(d.referenced_id), OBJECT_NAME(d.referenced_id)
+         FROM sys.sql_expression_dependencies d JOIN sys.views v ON v.object_id = d.referenced_id
+        WHERE d.referencing_id IN (SELECT OBJECT_ID(value) FROM STRING_SPLIT(@p1, NCHAR(1)))`,
+      [names.join('\u0001')],
+    );
+    const key = (schema: unknown, name: unknown) => `${String(schema)}.${String(name)}`;
+    const keyOf = (v: TableInfo) => key(v.schema ?? this.defaultSchema, v.name);
+    const needs = new Map<string, string[]>();
+    for (const [s1, n1, s2, n2] of deps) needs.set(key(s1, n1), [...(needs.get(key(s1, n1)) ?? []), key(s2, n2)]);
+    const done = new Set<string>();
+    const ordered: TableInfo[] = [];
+    const visit = (v: TableInfo, path: Set<string>) => {
+      const k = keyOf(v);
+      if (done.has(k) || path.has(k)) return;
+      path.add(k);
+      for (const dep of needs.get(k) ?? []) {
+        const other = views.find((x) => keyOf(x) === dep);
+        if (other) visit(other, path);
+      }
+      done.add(k);
+      ordered.push(v);
+    };
+    for (const v of views) visit(v, new Set());
+    let out = '';
+    for (const v of ordered) {
+      const [[def] = []] = await this.rows('SELECT OBJECT_DEFINITION(OBJECT_ID(@p1))', [qualifiedName(v)]);
+      if (def !== null && def !== undefined) out += `${String(def).trim()}\nGO\n`;
+    }
+    return out;
   }
 
   /** Objects in the login's default schema have no `schema` (the DbObject convention). */
@@ -474,6 +776,8 @@ export class SqlServerDriver implements Driver {
           constraint: constraint === true,
           filter: filter === null ? undefined : String(filter),
           keys: [],
+          keyNames: [],
+          descending: false,
           included: [],
         };
         byId.set(Number(id), ix);
@@ -481,13 +785,29 @@ export class SqlServerDriver implements Driver {
       const col = quoteIdent(String(column), '[');
       // Columnstore indexes have no key columns: every column is "included".
       if (included === true || /COLUMNSTORE/.test(ix.type)) ix.included.push(col);
-      else ix.keys.push(`${col}${descending === true ? ' DESC' : ''}`);
+      else {
+        ix.keys.push(`${col}${descending === true ? ' DESC' : ''}`);
+        ix.keyNames.push(String(column));
+        if (descending === true) ix.descending = true;
+      }
     }
     return [...byId.values()];
   }
 
   private async tableDdl(name: string): Promise<string> {
-    const columns = await this.rows(
+    const parts = await this.tableParts(name);
+    if (!parts) return `-- No definition found for ${name}.\n`;
+    const lines = [...parts.columns, ...parts.keys, ...parts.checks, ...parts.foreignKeys.map((fk) => fk.clause)];
+    return [GENERATED_NOTE, `CREATE TABLE ${name} (\n  ${lines.join(',\n  ')}\n);`, ...parts.indexes, ''].join('\n');
+  }
+
+  /**
+   * A table from the catalog, in parts: column definitions (with IDENTITY, computed and default constraints),
+   * PRIMARY KEY / UNIQUE constraints, checks, foreign keys, and the other indexes. Show DDL puts them in one
+   * CREATE TABLE; a dump adds the foreign keys and indexes after the data.
+   */
+  private async tableParts(name: string): Promise<TableParts | undefined> {
+    const rows = await this.rows(
       `SELECT c.name, TYPE_NAME(c.user_type_id), c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity,
               CAST(idc.seed_value AS nvarchar(40)), CAST(idc.increment_value AS nvarchar(40)),
               cc.definition, cc.is_persisted, dc.name, dc.definition
@@ -498,8 +818,8 @@ export class SqlServerDriver implements Driver {
         WHERE c.object_id = OBJECT_ID(@p1) ORDER BY c.column_id`,
       [name],
     );
-    if (!columns.length) return `-- No definition found for ${name}.\n`;
-    const lines = columns.map(([col, type, maxLength, precision, scale, nullable, identity, seed, step, computed, persisted, dfName, dfDef]) => {
+    if (!rows.length) return undefined;
+    const columns = rows.map(([col, type, maxLength, precision, scale, nullable, identity, seed, step, computed, persisted, dfName, dfDef]) => {
       const q = quoteIdent(String(col), '[');
       if (computed !== null && computed !== undefined) return `${q} AS ${String(computed)}${persisted === true ? ' PERSISTED' : ''}`;
       const parts = [q, typeText(String(type), Number(maxLength), Number(precision), Number(scale))];
@@ -509,16 +829,12 @@ export class SqlServerDriver implements Driver {
       return parts.join(' ');
     });
     const indexes = await this.indexes(name);
-    for (const ix of indexes.filter((i) => i.primary || i.constraint)) {
-      const kind = ix.primary ? 'PRIMARY KEY' : 'UNIQUE';
-      lines.push(`CONSTRAINT ${quoteIdent(ix.name, '[')} ${kind} ${ix.type === 'CLUSTERED' ? 'CLUSTERED' : 'NONCLUSTERED'} (${ix.keys.join(', ')})`);
-    }
-    const checks = await this.rows(
-      'SELECT name, definition FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID(@p1) ORDER BY name',
-      [name],
-    );
-    for (const [check, def] of checks) lines.push(`CONSTRAINT ${quoteIdent(String(check), '[')} CHECK ${String(def)}`);
-    const fks = await this.rows(
+    const keys = indexes
+      .filter((i) => i.primary || i.constraint)
+      .map((ix) => `CONSTRAINT ${quoteIdent(ix.name, '[')} ${ix.primary ? 'PRIMARY KEY' : 'UNIQUE'} ${ix.type === 'CLUSTERED' ? 'CLUSTERED' : 'NONCLUSTERED'} (${ix.keys.join(', ')})`);
+    const checkRows = await this.rows('SELECT name, definition FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID(@p1) ORDER BY name', [name]);
+    const checks = checkRows.map(([check, def]) => `CONSTRAINT ${quoteIdent(String(check), '[')} CHECK ${String(def)}`);
+    const fkRows = await this.rows(
       `SELECT fk.object_id, fk.name, SCHEMA_NAME(rt.schema_id), rt.name, fk.delete_referential_action_desc, fk.update_referential_action_desc,
               pc.name, rc.name
          FROM sys.foreign_keys fk
@@ -531,9 +847,8 @@ export class SqlServerDriver implements Driver {
       [name],
     );
     const byFk = new Map<string, { name: string; ref: string; onDelete: string; onUpdate: string; from: string[]; to: string[] }>();
-    for (const [id, fkName, refSchema, refTable, onDelete, onUpdate, from, to] of fks) {
-      const key = String(id);
-      const fk = byFk.get(key) ?? {
+    for (const [id, fkName, refSchema, refTable, onDelete, onUpdate, from, to] of fkRows) {
+      const fk = byFk.get(String(id)) ?? {
         name: String(fkName),
         ref: `${quoteIdent(String(refSchema), '[')}.${quoteIdent(String(refTable), '[')}`,
         onDelete: String(onDelete).replace(/_/g, ' '),
@@ -543,15 +858,23 @@ export class SqlServerDriver implements Driver {
       };
       fk.from.push(quoteIdent(String(from), '['));
       fk.to.push(quoteIdent(String(to), '['));
-      byFk.set(key, fk);
+      byFk.set(String(id), fk);
     }
-    for (const fk of byFk.values()) {
+    const foreignKeys = [...byFk.values()].map((fk) => {
       const actions = `${fk.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk.onDelete}` : ''}${fk.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk.onUpdate}` : ''}`;
-      lines.push(`CONSTRAINT ${quoteIdent(fk.name, '[')} FOREIGN KEY (${fk.from.join(', ')}) REFERENCES ${fk.ref} (${fk.to.join(', ')})${actions}`);
-    }
-    const create = `CREATE TABLE ${name} (\n  ${lines.join(',\n  ')}\n);`;
-    const others = indexes.filter((i) => !i.primary && !i.constraint).map((i) => indexDdl(name, i));
-    return [GENERATED_NOTE, create, ...others, ''].join('\n');
+      return { name: fk.name, clause: `CONSTRAINT ${quoteIdent(fk.name, '[')} FOREIGN KEY (${fk.from.join(', ')}) REFERENCES ${fk.ref} (${fk.to.join(', ')})${actions}` };
+    });
+    return {
+      columns,
+      keys,
+      checks,
+      foreignKeys,
+      indexes: indexes.filter((i) => !i.primary && !i.constraint).map((i) => indexDdl(name, i)),
+      identity: rows.some(([, , , , , , identity]) => identity === true),
+      writable: rows
+        .filter(([, type, , , , , , , , computed]) => (computed === null || computed === undefined) && !/^(timestamp|rowversion)$/i.test(String(type)))
+        .map(([col]) => String(col)),
+    };
   }
 
   private async sequenceDdl(name: string): Promise<string> {
@@ -574,6 +897,21 @@ export class SqlServerDriver implements Driver {
   }
 }
 
+interface TableParts {
+  /** Column definitions as in CREATE TABLE. */
+  columns: string[];
+  /** PRIMARY KEY and UNIQUE constraint clauses. */
+  keys: string[];
+  checks: string[];
+  foreignKeys: { name: string; clause: string }[];
+  /** CREATE INDEX statements for the indexes that aren't constraints. */
+  indexes: string[];
+  /** Has an IDENTITY column (inserting its values needs SET IDENTITY_INSERT). */
+  identity: boolean;
+  /** Columns that take values: not computed, not rowversion. */
+  writable: string[];
+}
+
 interface IndexParts {
   name: string;
   /** sys.indexes.type_desc: CLUSTERED, NONCLUSTERED, CLUSTERED COLUMNSTORE… */
@@ -584,6 +922,10 @@ interface IndexParts {
   constraint: boolean;
   filter?: string;
   keys: string[];
+  /** The key columns' names, unquoted (the designer's IndexDesign.columns). */
+  keyNames: string[];
+  /** A key column is DESC (the designer can't show that). */
+  descending: boolean;
   included: string[];
 }
 
@@ -745,6 +1087,42 @@ export function typeText(name: string, maxLength: number, precision: number, sca
   if (['datetime2', 'time', 'datetimeoffset'].includes(lower)) return `${name}(${scale})`;
   return name;
 }
+
+/**
+ * A default or CHECK as the designer shows it: SQL Server stores them wrapped in parentheses (`('pending')`,
+ * `((0))` for a number, `([total]>(0))`) and wraps them again when they're written, so outer pairs that wrap the
+ * whole expression come off. That never changes the meaning, and the same stored text always reads the same.
+ */
+export function unwrap(definition: string): string {
+  let t = definition.trim();
+  while (t.startsWith('(') && t.endsWith(')') && wrapsWhole(t)) t = t.slice(1, -1).trim();
+  return t;
+}
+
+/** The first `(` closes at the very end (`(a) + (b)` isn't one wrapped expression). Strings don't count. */
+function wrapsWhole(t: string): boolean {
+  let depth = 0;
+  let quoted = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c === "'") quoted = !quoted;
+    if (quoted) continue;
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    if (depth === 0 && i < t.length - 1) return false;
+  }
+  return depth === 0;
+}
+
+/** How SQL Server writes table DDL (drivers/ddl.ts): defaults are named constraints, DF_<table>_<column> (decision B). */
+const DDL: DdlDialect = {
+  quote: '[',
+  table: (schema, name) => qualifiedName({ schema, name }),
+  literal: (value) => sqlServerLiteral(value),
+  autoIncrement: { clause: 'IDENTITY(1, 1)', position: 'afterType' },
+  comments: 'none',
+  defaultName: (table, column) => `DF_${table}_${column}`,
+};
 
 /** An N'…' literal (Unicode), quotes doubled. Backslashes mean nothing in T-SQL strings. */
 function sqlServerLiteral(value: string): string {

@@ -277,6 +277,11 @@ export interface TableFeatures {
   /** Database-specific notes for the Truncate / Drop forms. */
   truncateNote: string;
   dropNote: string;
+  /**
+   * NULLs never clash in a UNIQUE key (PostgreSQL, MySQL, SQLite). SQL Server treats NULL as a value there: a
+   * nullable unique column holds one NULL at most, which Generate Mock Data has to respect.
+   */
+  uniqueNullsDistinct: boolean;
 }
 
 export const TABLE_FEATURES: Record<DbType, TableFeatures> = {
@@ -289,6 +294,7 @@ export const TABLE_FEATURES: Record<DbType, TableFeatures> = {
     reorder: 'none',
     truncateNote: 'PostgreSQL refuses TRUNCATE while other tables reference this one through foreign keys (DB Deck never adds CASCADE). It runs in a transaction.',
     dropNote: 'PostgreSQL refuses to drop it while views or foreign keys depend on it (DB Deck never adds CASCADE). It runs in a transaction.',
+    uniqueNullsDistinct: true,
   },
   mysql: {
     types: ['int', 'bigint', 'smallint', 'tinyint', 'decimal(10,2)', 'float', 'double', 'varchar(255)', 'char(1)', 'text', 'mediumtext', 'longtext', 'boolean', 'date', 'time', 'datetime', 'timestamp', 'year', 'json', 'blob', 'varbinary(255)', "enum('a','b')"],
@@ -299,6 +305,7 @@ export const TABLE_FEATURES: Record<DbType, TableFeatures> = {
     reorder: 'alter',
     truncateNote: 'MySQL commits TRUNCATE immediately, so it can’t be rolled back, and refuses it while other tables reference this one through foreign keys.',
     dropNote: 'MySQL commits DROP TABLE immediately, so it can’t be rolled back.',
+    uniqueNullsDistinct: true,
   },
   sqlite: {
     types: ['INTEGER', 'TEXT', 'REAL', 'NUMERIC', 'BLOB', 'BOOLEAN', 'DATE', 'DATETIME', 'VARCHAR(255)'],
@@ -309,6 +316,7 @@ export const TABLE_FEATURES: Record<DbType, TableFeatures> = {
     reorder: 'rebuild',
     truncateNote: 'SQLite has no TRUNCATE: DB Deck runs DELETE FROM, which also fires ON DELETE CASCADE in tables that reference this one. It runs in a transaction.',
     dropNote: 'Indexes and triggers on the table are dropped with it. It runs in a transaction.',
+    uniqueNullsDistinct: true,
   },
   // Table design for SQL Server comes in phase 14a-2; these are the designer's suggestions and notes.
   sqlserver: {
@@ -320,6 +328,7 @@ export const TABLE_FEATURES: Record<DbType, TableFeatures> = {
     reorder: 'none',
     truncateNote: 'SQL Server refuses TRUNCATE while other tables reference this one through foreign keys (DB Deck never adds CASCADE). It runs in a transaction.',
     dropNote: 'SQL Server refuses to drop a table other tables reference through foreign keys. Indexes and triggers on it are dropped with it. It runs in a transaction.',
+    uniqueNullsDistinct: false,
   },
 };
 

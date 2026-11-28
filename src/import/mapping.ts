@@ -54,7 +54,11 @@ export function checkMapping(mapping: (string | null)[], targets: ColumnInfo[]):
     seen.add(m);
   }
   for (const t of targets) {
-    if (seen.has(t.name)) continue;
+    if (seen.has(t.name)) {
+      // SQL Server numbers IDENTITY columns itself; a mapped one gets the file's values (IDENTITY_INSERT).
+      if (t.identity) warnings.push(`${t.name} is an IDENTITY column: the file's values go in as they are (IDENTITY_INSERT is on for this import). Skip it to let the server number the rows.`);
+      continue;
+    }
     if (!t.nullable && !t.hasDefault) warnings.push(`${t.name} is required (NOT NULL, no default) but nothing is mapped to it.`);
   }
   return { errors: [...new Set(errors)], warnings };

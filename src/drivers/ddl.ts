@@ -13,16 +13,27 @@ export interface DdlDialect {
   autoIncrement: { clause: string; position: 'afterType' | 'afterNotNull'; primaryKeyInline?: boolean };
   /** MySQL writes comments inside CREATE TABLE; PostgreSQL with COMMENT ON; SQLite has none. */
   comments: 'inline' | 'statements' | 'none';
+  /**
+   * The name for a column's default constraint (SQL Server keeps each default as a named constraint); without
+   * it the default is a plain `DEFAULT …` and the database names it, if it names it at all.
+   */
+  defaultName?(table: string, column: string): string;
 }
 
-/** A column's definition as in CREATE TABLE (also ADD COLUMN, MySQL CHANGE / MODIFY). `inlineKey`: SQLite rowid form. */
-export function columnDefinition(c: ColumnDesign, dialect: DdlDialect, inlineKey = false): string {
+/**
+ * A column's definition as in CREATE TABLE (also ADD COLUMN, MySQL CHANGE / MODIFY). `inlineKey`: SQLite rowid form.
+ * `table` (the bare name) names the default constraint where the dialect names them.
+ */
+export function columnDefinition(c: ColumnDesign, dialect: DdlDialect, inlineKey = false, table?: string): string {
   const q = (n: string) => quoteIdent(n.trim(), dialect.quote);
   let line = `${q(c.name)} ${c.type.trim()}`;
   if (c.autoIncrement && inlineKey) line += ` PRIMARY KEY ${dialect.autoIncrement.clause}`;
   else if (c.autoIncrement && dialect.autoIncrement.position === 'afterType') line += ` ${dialect.autoIncrement.clause}`;
   if (!c.nullable && !(c.autoIncrement && inlineKey)) line += ' NOT NULL';
-  if (c.default.trim() && !c.autoIncrement) line += ` DEFAULT ${c.default.trim()}`;
+  if (c.default.trim() && !c.autoIncrement) {
+    const named = dialect.defaultName && table !== undefined ? `CONSTRAINT ${q(dialect.defaultName(table, c.name.trim()))} ` : '';
+    line += ` ${named}DEFAULT ${c.default.trim()}`;
+  }
   if (c.autoIncrement && !inlineKey && dialect.autoIncrement.position === 'afterNotNull') line += ` ${dialect.autoIncrement.clause}`;
   if (dialect.comments === 'inline' && c.comment.trim()) line += ` COMMENT ${dialect.literal(c.comment.trim())}`;
   return line;
@@ -50,7 +61,7 @@ export function createTableStatements(d: TableDesign, dialect: DdlDialect, optio
   const keys = d.columns.filter((c) => c.primaryKey);
   const inlineKey = !!dialect.autoIncrement.primaryKeyInline && keys.length === 1 && keys[0].autoIncrement;
 
-  const lines = d.columns.map((c) => `  ${columnDefinition(c, dialect, inlineKey && c.primaryKey)}`);
+  const lines = d.columns.map((c) => `  ${columnDefinition(c, dialect, inlineKey && c.primaryKey, d.name.trim())}`);
   if (keys.length && !inlineKey) lines.push(`  PRIMARY KEY (${keys.map((k) => q(k.name)).join(', ')})`);
   for (const f of d.foreignKeys) lines.push(`  ${foreignKeyClause(f, dialect)}`);
   for (const c of d.checks) lines.push(`  ${checkClause(c, dialect)}`);

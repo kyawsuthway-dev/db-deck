@@ -292,7 +292,10 @@ function mappingProblems(): { errors: string[]; warnings: string[] } {
     if (seen.has(m)) errors.push(`Two CSV columns go into ${m}.`);
     seen.add(m);
   }
-  for (const c of columns) if (c.required && !seen.has(c.name)) warnings.push(`${c.name} is required (NOT NULL, no default) but nothing is mapped to it.`);
+  for (const c of columns) {
+    if (c.required && !seen.has(c.name)) warnings.push(`${c.name} is required (NOT NULL, no default) but nothing is mapped to it.`);
+    if (c.identity && seen.has(c.name)) warnings.push(`${c.name} is an IDENTITY column: the file's values go in as they are (IDENTITY_INSERT is on for this import). Skip it to let the server number the rows.`);
+  }
   return { errors: [...new Set(errors)], warnings };
 }
 
