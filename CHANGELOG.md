@@ -8,6 +8,8 @@
 - System schemas are listed too (PostgreSQL `pg_catalog`, `information_schema`; MySQL `information_schema`, `mysql`, `performance_schema`, `sys`), last and marked *system*. Their tables and views open read-only, with only the reading actions (Show Rows, Show DDL, Generate SQL → SELECT, Copy Name).
 - Tables, Views, Functions, Procedures and Sequences folders always show for the databases that have them, with a count, even when empty. A schema's objects are read when it's expanded.
 - New colored icons in the Connections tree for databases, schemas, tables, views, functions, procedures, sequences, indexes, triggers and columns ([Tabler Icons](https://tabler.io/icons), MIT). Each folder shows the icon of what it holds.
+- Hovering a connection shows **Disconnect** (while connected), **Edit Connection…** and **Refresh**. **New Query** moved to the database: hover the PostgreSQL database or a MySQL / MariaDB database for **New Query** and the new **Open Query…**. SQLite connections keep New Query on hover, and the connection's right-click menu still has it.
+- **Open Query…** picks one of the connection's saved queries and opens it. New Query from a MySQL database other than the connection's default starts with a comment naming it; DB Deck doesn't switch the session's database.
 
 ## 0.1.1 — 2026-11-28
 

@@ -266,8 +266,10 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
         item.iconPath = treeIcon(this.extensionUri, 'schema');
         item.description = entry.isDefault ? 'default' : entry.system ? 'system' : undefined;
         if (entry.system) item.tooltip = `${entry.name} is a system schema: browse and query only`;
-        // `schema.system` matches no design or write menu (they use `== schema`).
-        item.contextValue = entry.system ? 'schema.system' : 'schema';
+        // Directly under a connection (MySQL), a schema is a database: `.database` adds the query hover actions.
+        // `.system` (last) matches no design or write menu (they match /^schema(\.database)?$/).
+        const database = node.parent.kind === 'connection' ? '.database' : '';
+        item.contextValue = `schema${database}${entry.system ? '.system' : ''}`;
         return withId(item, node);
       }
       case 'folder': {

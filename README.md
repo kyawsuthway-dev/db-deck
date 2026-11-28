@@ -78,12 +78,13 @@ A free, open-source database client for VS Code. Browse local and remote databas
 2. Click the **database icon** in the activity bar, then **Add Connection**.
 3. Choose the database type, fill in the details and **Save**.
 4. Expand the connection to browse; click a table to see its rows.
-5. Click **New Query** on a connection, write SQL, and press **Ctrl+Enter** (**Cmd+Enter** on macOS).
+5. Expand a connection and click **New Query** on its database (on a SQLite connection: the connection itself), write SQL, and press **Ctrl+Enter** (**Cmd+Enter** on macOS).
 
 | Command | Where |
 | --- | --- |
 | Add Connection | Connections view toolbar, Command Palette |
-| New Query | Connections toolbar, connection or table (inline / right-click) |
+| New Query | Connections toolbar; hover a database (a SQLite connection); right-click a connection, database or table |
+| Open Query… (a saved query) | Hover or right-click a database |
 | Run Query (selection or statement at cursor) | `Ctrl+Enter` / `Cmd+Enter` in a SQL editor, **▶ Run** above a statement |
 | Run All | `Ctrl+Shift+Enter` / `Cmd+Shift+Enter`, ▶ in the editor title |
 | Select Connection for This Editor | Status bar, Command Palette |
