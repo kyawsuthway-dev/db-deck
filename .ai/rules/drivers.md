@@ -20,13 +20,14 @@ Before adding a runtime dependency, check and report to the user:
 - Files it loads at runtime (like `sql-wasm.wasm`) are copied into `dist/` by `esbuild.mjs`; `.vscodeignore` excludes `node_modules/`.
 - License is MIT-compatible.
 - Run `task notices` so `THIRD_PARTY_NOTICES.md` lists it (and its dependencies) with their license texts.
+- Libraries load on first use: import only types at the top (`import type`) and `await import('…')` where the library is first needed, so activation doesn't run them (the six together cost about 75 ms of a 90 ms start). For an ESM library with named imports (sql-formatter), lazily import the small module that imports it instead (`query/formatSql.ts`), so its unused parts are still left out of the bundle.
 
 Current drivers: `sql.js` (SQLite, WebAssembly), `pg` (PostgreSQL), `mysql2` (MySQL/MariaDB). SSH tunnels: `ssh2`; its optional native parts (`sshcrypto.node`, `cpu-features`) are `external` in `esbuild.mjs`, so it uses its pure-JavaScript crypto. Compose files: `yaml` (pure JavaScript). ER diagram layout: `@dagrejs/dagre` (pure JavaScript, MIT), bundled into the diagram webview only, never the extension.
 
 ## The `Driver` contract (`src/types.ts`)
 
 - `connect()` throws with a readable message on failure. A connection test is `connect()` + `listTables()` (`ConnectionManager.test`).
-- `query(sql)` splits with `splitSql(sql, dialect)` and runs statements through `runEach()` from `common.ts`, which times each statement, converts values with `toCell()`, caps rows at `MAX_ROWS`, and stops at the first error. Don't reimplement any of that per driver.
+- `query(sql)` splits with `splitSql(sql, dialect)` and runs statements through `runEach()` from `common.ts`, which times each statement, converts values with `toCell()`, caps rows at `MAX_ROWS`, and stops at the first error. Don't reimplement any of that per driver. Read rows through `RowCollector` as they arrive (PostgreSQL: a `pg` `Query` with a `row` listener; MySQL: the core connection's events); never collect a whole result and let `runEach` cut it.
 - `listTables()` returns `schema` only when the table is outside the connection's default schema/database; `previewSql()` and `listColumns()` must handle both cases.
 - `selectPage(table, page, where?)` runs one table-view page as a single statement through `runEach`. It's read-only; SQLite must not write the file back. `previewSql()` builds the same SQL as text, without a filter, for opening in an editor.
 - `filterIdentifier(name)` returns a column name as it should be typed in that database — bare when safe, quoted otherwise (use `identifierFor()` with the database's safe pattern; PostgreSQL's excludes uppercase). `filterOperators()` returns `FILTER_OPERATORS`, plus any operators only that database has.
