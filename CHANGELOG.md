@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Queries that return more than 10,000 rows no longer hold every row in memory (PostgreSQL, MySQL, MariaDB): a 1,000,000-row result now uses about 17 MB instead of about 190 MB. The grid still shows the first 10,000 rows with the truncated note.
+- DB Deck starts about twice as fast: the database, SSH, YAML and SQL-formatting libraries load the first time they're needed instead of when the extension starts.
+
 ## 0.1.0 — 2026-11-26
 
 The first public version: a database client for SQLite, PostgreSQL, MySQL and MariaDB (`sql.js`, `pg`, `mysql2`; no native modules).

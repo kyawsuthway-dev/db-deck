@@ -1,4 +1,4 @@
-import { Client, type CustomTypesConfig, type QueryResult } from 'pg';
+import type { Client, CustomTypesConfig, QueryArrayConfig, QueryResult } from 'pg';
 import type { TableDesign } from '../design/model';
 import { splitSql } from '../query/splitSql';
 import type { DesignChange } from '../design/diff';
@@ -48,10 +48,12 @@ import {
   importRowsWith,
   insertStatements,
   quoteIdent,
+  RowCollector,
   runEach,
   runScriptStatements,
   standardLiteral,
   toDumpCell,
+  type RawResult,
   type WriteDialect,
   assembleDiagram,
 } from './common';
@@ -479,13 +481,7 @@ export class PostgresDriver implements Driver {
 
   async query(sql: string): Promise<StatementResult[]> {
     const client = await this.getClient();
-    return runEach(splitSql(sql, 'postgres'), async (statement) => {
-      const res: unknown = await client.query({ text: statement, rowMode: 'array' });
-      // If the splitter ever leaves two statements together, pg returns an array; show the last.
-      const r = (Array.isArray(res) ? res[res.length - 1] : res) as QueryResult<unknown[]>;
-      const columns = r.fields.map((f) => f.name);
-      return { columns, rows: r.rows, affectedRows: columns.length === 0 ? (r.rowCount ?? undefined) : undefined };
-    });
+    return runEach(splitSql(sql, 'postgres'), (statement) => queryKeepingRows(client, statement));
   }
 
   previewSql(table: TableInfo, page: TablePage): string {
@@ -642,7 +638,7 @@ export class PostgresDriver implements Driver {
     };
   }
 
-  alterTableSql(before: TableDesign, after: TableDesign, changes: DesignChange[]): { statements: string[]; rebuild: boolean } {
+  alterTableSql(before: TableDesign, _after: TableDesign, changes: DesignChange[]): { statements: string[]; rebuild: boolean } {
     const table = qualifiedName({ schema: before.schema, name: before.name });
     const q = (n: string) => quoteIdent(n.trim(), '"');
     const statements: string[] = [];
@@ -879,7 +875,9 @@ export class PostgresDriver implements Driver {
   private async newClient(applicationName: string): Promise<Client> {
     const c = this.config;
     const stream = this.opener ? await this.opener(c.host ?? 'localhost', c.port ?? 5432) : undefined;
-    return new Client({
+    // Loaded on first use, like every database library (faster activation).
+    const pg = await import('pg');
+    return new pg.Client({
       // Through a tunnel, pg still gets the real host: TLS checks the certificate against it.
       stream: stream && (() => stream),
       host: c.host,
@@ -912,6 +910,40 @@ export class PostgresDriver implements Driver {
 
 function qualifiedName(table: { name: string; schema?: string }): string {
   return `${quoteIdent(table.schema ?? 'public', '"')}.${quoteIdent(table.name, '"')}`;
+}
+
+/**
+ * Runs one statement of user SQL, keeping only the rows a result shows (`RowCollector`). With a `row` listener and
+ * no callback, pg doesn't collect the rows itself; the server still sends them all.
+ */
+async function queryKeepingRows(client: Client, text: string): Promise<RawResult> {
+  const { Query } = await import('pg');
+  return new Promise((resolve, reject) => {
+    const config: QueryArrayConfig = { text, rowMode: 'array' };
+    const query = new Query<unknown[]>(config);
+    let rows = new RowCollector();
+    let current: unknown;
+    query.on('row', (row, result) => {
+      // If the splitter ever leaves two statements together, each gets its own result; show the last.
+      if (result !== current) {
+        current = result;
+        rows = new RowCollector();
+      }
+      rows.add(row);
+    });
+    query.on('error', reject);
+    query.on('end', (res) => {
+      const results = res as unknown as QueryResult<unknown[]> | QueryResult<unknown[]>[];
+      const r = Array.isArray(results) ? results[results.length - 1] : results;
+      const columns = r.fields.map((f) => f.name);
+      resolve({
+        columns,
+        rows: r === current ? rows.rows : [],
+        affectedRows: columns.length === 0 ? (r.rowCount ?? undefined) : undefined,
+      });
+    });
+    client.query(query);
+  });
 }
 
 function sslOption(mode: SslMode | undefined) {

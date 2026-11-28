@@ -4,7 +4,6 @@ import { errorMessage } from '../drivers/common';
 import { SQL_DIALECTS } from '../drivers';
 import type { Driver, TableInfo } from '../types';
 import { cursorContext, findTable, resolveQualifier, SQL_KEYWORDS, tableReferences } from './completion';
-import { formatSql } from './formatSql';
 import type { QueryController } from './runQuery';
 import { SchemaCache } from './schemaCache';
 import { codeAt, splitSqlRanges, statementAt } from './splitSql';
@@ -155,11 +154,13 @@ export class SqlEditor implements vscode.Disposable {
   }
 
   /** Formats the range in the connection's dialect (generic SQL without one). Unparseable SQL is left as it is. */
-  private format(doc: vscode.TextDocument, range: vscode.Range, options: vscode.FormattingOptions): vscode.TextEdit[] {
+  private async format(doc: vscode.TextDocument, range: vscode.Range, options: vscode.FormattingOptions): Promise<vscode.TextEdit[]> {
     const connectionId = this.queries.connectionFor(doc);
     const type = connectionId ? this.manager.get(connectionId)?.type : undefined;
     const original = doc.getText(range);
     if (!original.trim()) return [];
+    // Loaded on first use: sql-formatter is the slowest library to start (~70 ms), and most sessions never format.
+    const { formatSql } = await import('./formatSql');
     let formatted: string;
     try {
       formatted = formatSql(original.trim(), type ? SQL_DIALECTS[type].format : 'sql', {

@@ -4,6 +4,18 @@ import type { Cell, ChangeStatement, ColumnInfo, ColumnValue, DbType, DiagramFor
 /** Rows kept per statement; the grid shows a "truncated" note beyond this. */
 export const MAX_ROWS = 10_000;
 
+/**
+ * Keeps the first `MAX_ROWS + 1` rows of a result as they arrive and drops the rest, so a huge result never sits
+ * in memory. The extra row lets `runEach` mark the result truncated.
+ */
+export class RowCollector {
+  readonly rows: unknown[][] = [];
+
+  add(row: unknown[]): void {
+    if (this.rows.length <= MAX_ROWS) this.rows.push(row);
+  }
+}
+
 /** What a driver returns for one statement, before values are turned into display text. */
 export interface RawResult {
   columns: string[];

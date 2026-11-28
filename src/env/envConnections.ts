@@ -4,13 +4,14 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { DB_KINDS } from '../drivers';
 import type { ConnectionConfig } from '../types';
-import { COMPOSE_FILES, composeDatabases, publishedPort } from './compose';
 import { detectConnections, type EnvSource } from './detect';
 import { parseDotenv } from './dotenv';
 
 const ENV_FILES_SETTING = 'dbDeck.envFiles';
 /** .env connections marked read-only (by id), per workspace. */
 const ENV_READ_ONLY_KEY = 'dbDeck.envReadOnly';
+/** Compose file names Docker looks for, in its order of preference. */
+const COMPOSE_FILES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'];
 
 export interface EnvConnection {
   config: ConnectionConfig;
@@ -101,6 +102,8 @@ export class EnvConnections implements vscode.Disposable {
     const composeFound: EnvConnection[] = [];
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       const compose = await readCompose(folder.uri);
+      // Loaded only for a project with a compose file: its YAML parser is slow to start.
+      const composeLib = compose && (await import('./compose'));
       // Docker Compose fills ${VAR} in the compose file from the project's `.env`.
       let composeVars = new Map<string, string>();
       for (const name of envFileNames()) {
@@ -119,7 +122,7 @@ export class EnvConnections implements vscode.Disposable {
           const id = envId(folder.uri, name, d.source);
           // DB_HOST=pgsql (a Compose service) only resolves inside Docker: use its published port here.
           const docker =
-            compose && d.config.host && d.config.port ? publishedPort(compose.text, compose.name, d.config.host, d.config.port, vars) : undefined;
+            composeLib && d.config.host && d.config.port ? composeLib.publishedPort(compose.text, compose.name, d.config.host, d.config.port, vars) : undefined;
           next.push({
             config: {
               ...d.config,
@@ -137,9 +140,9 @@ export class EnvConnections implements vscode.Disposable {
         }
       }
       // Databases in the compose file, also when there's no .env (see below for duplicates).
-      if (compose) {
+      if (compose && composeLib) {
         const file = vscode.Uri.joinPath(folder.uri, compose.name);
-        for (const db of composeDatabases(compose.text, compose.name, composeVars, DB_KINDS)) {
+        for (const db of composeLib.composeDatabases(compose.text, compose.name, composeVars, DB_KINDS)) {
           const id = envId(folder.uri, compose.name, `service:${db.service}`);
           composeFound.push({
             config: { ...db.config, id, source: 'env', ...(readOnly.has(id) ? { readOnly: true } : {}) },

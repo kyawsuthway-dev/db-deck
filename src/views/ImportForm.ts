@@ -7,6 +7,7 @@ import { CsvError } from '../import/csv';
 import { importRowsOf, summarizeCsv, type CsvReadOptions, type CsvSummary } from '../import/csvFile';
 import { autoMap, checkMapping, importTargets } from '../import/mapping';
 import type { Cell, ColumnInfo, TableInfo } from '../types';
+import { tableLabel } from '../tree/ConnectionsTree';
 import { FormPanel, FormTabs } from './FormPanel';
 import type { ScriptConnection } from './RunScriptForm';
 
@@ -303,10 +304,6 @@ class ImportFormPanel extends FormPanel<ImportMessage> {
       this.post({ type: 'running', running: false });
     }
   }
-}
-
-function tableLabel(t: TableInfo): string {
-  return t.schema ? `${t.schema}.${t.name}` : t.name;
 }
 
 function formatSize(size: number): string {

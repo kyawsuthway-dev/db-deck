@@ -5,9 +5,6 @@ import { parse } from 'yaml';
 import type { DbKind } from '../drivers';
 import type { ConnectionConfig } from '../types';
 
-/** Compose file names Docker looks for, in its order of preference. */
-export const COMPOSE_FILES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'];
-
 export interface PublishedPort {
   host: string;
   port: number;
