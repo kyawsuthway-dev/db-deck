@@ -2,7 +2,7 @@
   "name": "db-deck",
   "displayName": "DB Deck",
   "description": "Free, open-source database explorer for VS Code. Browse local and remote databases and run SQL without leaving the editor.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "kyawsuthway-dev",
   "license": "MIT",
   "icon": "media/icon.png",

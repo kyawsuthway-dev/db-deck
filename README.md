@@ -114,7 +114,7 @@ All commands are in the Command Palette under **DB Deck**.
 
 ### General
 
-- Results keep up to 10,000 rows per statement.
+- Results keep up to 10,000 rows per statement. A larger result is still read to the end (the rows past the limit are dropped as they arrive), so it takes as long as the whole query.
 - **SQLite** runs in WebAssembly on an in-memory copy of the file. The file is reloaded when it changes on disk and written back after each run that might change it. A transaction left open at the end of a run is not kept open.
 - **PostgreSQL and MySQL** keep one connection open per saved connection, so `BEGIN` … `COMMIT` across several runs works. **PostgreSQL** objects need PostgreSQL 12 or newer; functions that belong to an extension (such as `pgcrypto`) aren't listed.
 - **Read-only:** PostgreSQL and MySQL start each session read-only, but SQL can turn that off again (`SET`, `BEGIN READ WRITE`, `START TRANSACTION READ WRITE`), and the database decides what functions with side effects may do. SQLite runs with `PRAGMA query_only` and never writes the file back.
