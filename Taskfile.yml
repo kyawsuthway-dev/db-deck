@@ -34,6 +34,11 @@ tasks:
         cmds:
             - docker compose up -d
 
+    up:sqlserver:
+        desc: Start the SQL Server test database too (opt-in, about 2 GB of RAM, x86-64 only)
+        cmds:
+            - docker compose --profile sqlserver up -d sqlserver
+
     down:
         desc: Stop all containers (database volumes are kept)
         cmds:
@@ -109,6 +114,12 @@ tasks:
         interactive: true
         cmds:
             - docker compose exec mysql mysql -uroot -pmysql sample
+
+    mssql:
+        desc: Open sqlcmd on the SQL Server test database (start it with task up:sqlserver)
+        interactive: true
+        cmds:
+            - docker compose exec sqlserver /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P DbDeck-sa-2026 -d sample
 
     db:reset:
         desc: Delete the test database volumes and reseed them from docker/seed/
