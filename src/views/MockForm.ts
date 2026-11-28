@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connectionManager';
 import type { TableDesign } from '../design/model';
 import { errorMessage, ImportCancelled, ImportError } from '../drivers/common';
-import { DB_KINDS } from '../drivers';
+import { DB_KINDS, TABLE_FEATURES } from '../drivers';
 import {
   checkMock,
   generateRows,
@@ -135,7 +135,7 @@ class MockFormPanel extends FormPanel<MockFormMessage> {
       const choices = await driver.columnChoices(this.tableInfo);
       if (load !== this.loads) return;
       this.design = design;
-      this.table = mockTable(design, choices);
+      this.table = mockTable(design, choices, TABLE_FEATURES[config.type].uniqueNullsDistinct);
       this.data = { existing: [], parents: [] };
     } catch (err) {
       this.post({ type: 'status', state: 'error', text: `Couldn’t read ${tableLabel(this.tableInfo)}: ${errorMessage(err)}` });
