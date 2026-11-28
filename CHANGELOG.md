@@ -5,6 +5,7 @@
 ### Fixed
 
 - **Generate SQL → SELECT** on SQL Server writes `SELECT TOP (100)` instead of `LIMIT 100`, which SQL Server doesn't have.
+- **Drop…** on a PostgreSQL materialized view runs `DROP MATERIALIZED VIEW`; it used to try `DROP VIEW`, which PostgreSQL refuses.
 
 ## 0.2.0 — 2026-11-28
 

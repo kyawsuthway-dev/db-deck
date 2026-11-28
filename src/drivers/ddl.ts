@@ -18,6 +18,13 @@ export interface DdlDialect {
    * it the default is a plain `DEFAULT …` and the database names it, if it names it at all.
    */
   defaultName?(table: string, column: string): string;
+  /** `DEFAULT …` goes before `NOT NULL` (Oracle requires it there; the others accept either). */
+  defaultFirst?: boolean;
+  /**
+   * The referential actions after `REFERENCES …` (default: `ON DELETE x ON UPDATE y`). Oracle has no ON UPDATE and
+   * writes "no action" as no clause.
+   */
+  referentialActions?(onDelete: string, onUpdate: string): string;
 }
 
 /**
@@ -29,11 +36,13 @@ export function columnDefinition(c: ColumnDesign, dialect: DdlDialect, inlineKey
   let line = `${q(c.name)} ${c.type.trim()}`;
   if (c.autoIncrement && inlineKey) line += ` PRIMARY KEY ${dialect.autoIncrement.clause}`;
   else if (c.autoIncrement && dialect.autoIncrement.position === 'afterType') line += ` ${dialect.autoIncrement.clause}`;
-  if (!c.nullable && !(c.autoIncrement && inlineKey)) line += ' NOT NULL';
+  const notNull = !c.nullable && !(c.autoIncrement && inlineKey) ? ' NOT NULL' : '';
+  if (!dialect.defaultFirst) line += notNull;
   if (c.default.trim() && !c.autoIncrement) {
     const named = dialect.defaultName && table !== undefined ? `CONSTRAINT ${q(dialect.defaultName(table, c.name.trim()))} ` : '';
     line += ` ${named}DEFAULT ${c.default.trim()}`;
   }
+  if (dialect.defaultFirst) line += notNull;
   if (c.autoIncrement && !inlineKey && dialect.autoIncrement.position === 'afterNotNull') line += ` ${dialect.autoIncrement.clause}`;
   if (dialect.comments === 'inline' && c.comment.trim()) line += ` COMMENT ${dialect.literal(c.comment.trim())}`;
   return line;
@@ -42,7 +51,8 @@ export function columnDefinition(c: ColumnDesign, dialect: DdlDialect, inlineKey
 /** `FOREIGN KEY … REFERENCES …` with its optional constraint name, as in CREATE TABLE and ADD CONSTRAINT. */
 export function foreignKeyClause(f: ForeignKeyDesign, dialect: DdlDialect): string {
   const q = (n: string) => quoteIdent(n.trim(), dialect.quote);
-  return `${f.name.trim() ? `CONSTRAINT ${q(f.name)} ` : ''}FOREIGN KEY (${f.columns.map(q).join(', ')}) REFERENCES ${dialect.table(f.refSchema, f.refTable.trim())} (${f.refColumns.map(q).join(', ')}) ON DELETE ${f.onDelete} ON UPDATE ${f.onUpdate}`;
+  const actions = dialect.referentialActions ? dialect.referentialActions(f.onDelete, f.onUpdate) : ` ON DELETE ${f.onDelete} ON UPDATE ${f.onUpdate}`;
+  return `${f.name.trim() ? `CONSTRAINT ${q(f.name)} ` : ''}FOREIGN KEY (${f.columns.map(q).join(', ')}) REFERENCES ${dialect.table(f.refSchema, f.refTable.trim())} (${f.refColumns.map(q).join(', ')})${actions}`;
 }
 
 export function checkClause(c: CheckDesign, dialect: DdlDialect): string {

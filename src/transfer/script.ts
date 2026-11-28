@@ -1,6 +1,6 @@
 // What a SQL script file contains, before it runs: its statements with line numbers, and whether it
 // manages its own transactions or changes the schema. No `vscode`, no I/O, so it can be tested in plain Node.
-import { splitBatches, splitSqlRanges, stripLeadingComments } from '../query/splitSql';
+import { execAsBlock, splitBatches, splitSqlRanges, sqlPlusCommand, stripLeadingComments } from '../query/splitSql';
 import { codeOnly } from '../tools/plan';
 import type { DbType } from '../types';
 
@@ -19,6 +19,10 @@ export interface ScriptAnalysis {
   schemaChanges: boolean;
   /** A MySQL DELIMITER line: DB Deck's splitter doesn't support it. */
   delimiter: boolean;
+  /** Oracle: SQL*Plus commands left out (they set up SQL*Plus; Oracle refuses them), by name: `SET`, `PROMPT`… */
+  skipped: string[];
+  /** Oracle: `@file` / `START file` runs other files, which DB Deck can't follow. */
+  includes: boolean;
 }
 
 const TRANSACTION_CONTROL = /^(BEGIN|COMMIT|ROLLBACK|END|START\s+TRANSACTION|SAVEPOINT|RELEASE)\b/i;
@@ -26,6 +30,11 @@ const SCHEMA_CHANGE = /^(CREATE|ALTER|DROP|RENAME|TRUNCATE)\b/i;
 /** T-SQL transaction control anywhere in a batch (BEGIN … END and BEGIN TRY blocks aren't). */
 const TSQL_TRANSACTION = /\b(BEGIN\s+(DISTRIBUTED\s+)?TRAN(SACTION)?|COMMIT|ROLLBACK|SAVE\s+TRAN(SACTION)?)\b/i;
 const TSQL_SCHEMA_CHANGE = /\b(CREATE|ALTER|DROP|TRUNCATE)\b|\bsp_rename\b/i;
+/** Oracle transaction control anywhere in a statement's code (a PL/SQL block may COMMIT); BEGIN … END is a block. */
+const ORACLE_TRANSACTION = /\b(COMMIT|ROLLBACK|SAVEPOINT|SET\s+TRANSACTION)\b/i;
+/** Oracle statements that commit on their own. */
+const ORACLE_SCHEMA_CHANGE = /^(CREATE|ALTER|DROP|RENAME|TRUNCATE|COMMENT|GRANT|REVOKE|PURGE|FLASHBACK|ANALYZE|AUDIT|NOAUDIT)\b/i;
+
 
 export function analyzeScript(text: string, dialect: DbType): ScriptAnalysis {
   const lineStarts = [0];
@@ -51,7 +60,26 @@ export function analyzeScript(text: string, dialect: DbType): ScriptAnalysis {
       if (TSQL_SCHEMA_CHANGE.test(code)) schemaChanges = true;
       for (let i = 0; i < batch.repeat; i++) statements.push({ sql: batch.sql, line: lineOf(batch.start) });
     }
-    return { statements, ownTransactions, schemaChanges, delimiter: false };
+    return { statements, ownTransactions, schemaChanges, delimiter: false, skipped: [], includes: false };
+  }
+  if (dialect === 'oracle') {
+    const skipped: string[] = [];
+    let includes = false;
+    for (const range of splitSqlRanges(text, dialect)) {
+      const command = sqlPlusCommand(range.text);
+      const sql = command === 'EXEC' || command === 'EXECUTE' ? execAsBlock(range.text) : command ? undefined : range.text;
+      if (command === '@' || command === '@@' || command === 'START') includes = true;
+      if (!sql) {
+        if (command) skipped.push(command);
+        continue;
+      }
+      const code = codeOnly(sql, dialect);
+      if (!stripLeadingComments(sql).trim()) continue;
+      statements.push({ sql, line: lineOf(range.codeStart) });
+      if (ORACLE_TRANSACTION.test(code)) ownTransactions = true;
+      if (ORACLE_SCHEMA_CHANGE.test(stripLeadingComments(code).trim())) schemaChanges = true;
+    }
+    return { statements, ownTransactions, schemaChanges, delimiter: false, skipped, includes };
   }
   for (const range of splitSqlRanges(text, dialect)) {
     const code = stripLeadingComments(range.text).trim();
@@ -61,5 +89,5 @@ export function analyzeScript(text: string, dialect: DbType): ScriptAnalysis {
     if (TRANSACTION_CONTROL.test(code)) ownTransactions = true;
     if (SCHEMA_CHANGE.test(code)) schemaChanges = true;
   }
-  return { statements, ownTransactions, schemaChanges, delimiter: dialect === 'mysql' && /^[ \t]*DELIMITER[ \t]+\S/im.test(text) };
+  return { statements, ownTransactions, schemaChanges, delimiter: dialect === 'mysql' && /^[ \t]*DELIMITER[ \t]+\S/im.test(text), skipped: [], includes: false };
 }

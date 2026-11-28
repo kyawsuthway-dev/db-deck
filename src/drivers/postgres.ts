@@ -733,7 +733,7 @@ export class PostgresDriver implements Driver {
   }
 
   dropSql(object: TableInfo): string {
-    return `DROP ${object.kind === 'view' ? 'VIEW' : 'TABLE'} ${qualifiedName(object)};`;
+    return `DROP ${object.materialized ? 'MATERIALIZED VIEW' : object.kind === 'view' ? 'VIEW' : 'TABLE'} ${qualifiedName(object)};`;
   }
 
   async explain(sql: string, analyze: boolean): Promise<ExplainResult> {

@@ -119,7 +119,8 @@ export function checkDesign(d: TableDesign, features: TableFeatures, dialect: Db
     if (!f.refTable.trim()) errors[`foreignKeys.${i}.refTable`] = 'Choose the referenced table.';
     if (f.refColumns.length !== f.columns.length) errors[`foreignKeys.${i}.refColumns`] = 'Choose as many referenced columns as columns.';
     for (const [k, v] of [['onDelete', f.onDelete], ['onUpdate', f.onUpdate]] as const) {
-      if (!features.referentialActions.includes(v)) errors[`foreignKeys.${i}.${k}`] = 'Choose an action.';
+      const allowed = k === 'onUpdate' ? (features.updateActions ?? features.referentialActions) : features.referentialActions;
+      if (!allowed.includes(v)) errors[`foreignKeys.${i}.${k}`] = 'Choose an action.';
     }
   });
   d.checks.forEach((c, i) => {

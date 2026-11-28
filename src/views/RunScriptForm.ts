@@ -194,6 +194,15 @@ class RunScriptPanel extends FormPanel<ScriptMessage> {
       notes.push({ tone: 'error', text: 'The file uses DELIMITER, which DB Deck doesn’t support yet. Run it with the mysql command-line client.' });
       blocked = true;
     }
+    if (analysis.includes) {
+      notes.push({ tone: 'error', text: 'The file runs other files (@file or START), which DB Deck can’t follow. Run it with SQL*Plus, or paste those files in.' });
+      blocked = true;
+    }
+    if (analysis.skipped.length) {
+      const names = [...new Set(analysis.skipped)].join(', ');
+      const n = analysis.skipped.length;
+      notes.push({ tone: 'info', text: `${n.toLocaleString()} SQL*Plus command${n === 1 ? '' : 's'} (${names}) will be skipped: they set up SQL*Plus, and the database doesn’t run them. &name substitution variables aren’t replaced.` });
+    }
     const dirty = !!this.openDocument()?.isDirty;
     if (dirty) {
       notes.push({ tone: 'warning', text: 'The file has unsaved changes. Run SQL File runs it as saved on disk: save it first to run your changes.' });

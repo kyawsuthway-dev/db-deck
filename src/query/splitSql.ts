@@ -162,6 +162,17 @@ function scanWithBatches(
         continue;
       }
     }
+    if (ora && codeStart < 0 && (c === '@' || /[A-Za-z]/.test(c))) {
+      // A SQL*Plus command (SET DEFINE OFF, PROMPT …, @file) ends at the end of its line, without a `;`.
+      const lineEnd = sql.indexOf('\n', i);
+      const line = sql.slice(i, lineEnd === -1 ? n : lineEnd);
+      if (sqlPlusCommand(line)) {
+        code(i);
+        push(lineEnd === -1 ? n : lineEnd);
+        i = lineEnd === -1 ? n : lineEnd + 1;
+        continue;
+      }
+    }
     if (ora && /[A-Za-z]/.test(c) && !/[\w$#]/.test(sql[i - 1] ?? '')) {
       ORA_WORD.lastIndex = i;
       const word = ORA_WORD.exec(sql)![0];
@@ -407,6 +418,32 @@ function insideTriggerBody(statementSoFar: string): boolean {
   return (
     /^\s*CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TRIGGER\b/i.test(statementSoFar) && !/\bEND\s*$/i.test(statementSoFar)
   );
+}
+
+/**
+ * SQL*Plus commands: they set up SQL*Plus itself, and Oracle refuses them. SET is one unless it's SQL's SET TRANSACTION,
+ * SET ROLE or SET CONSTRAINT(S). Abbreviations SQL*Plus accepts (`REM`, `PRO`, `SET SERVEROUT`) count too.
+ */
+const SQLPLUS_COMMAND =
+  /^(SET(?!\s+(TRANSACTION|ROLE|CONSTRAINTS?)\b)|PRO(MPT)?|REM(ARK)?|SPO(OL)?|WHENEVER|EXIT|QUIT|SHO(W)?|DEF(INE)?|UNDEF(INE)?|COL(UMN)?|TTITLE|BTITLE|BREAK|COMPUTE|CLEAR|PAUSE|ACCEPT|CONN(ECT)?|DISC(ONNECT)?|VAR(IABLE)?|PRINT|TIMING|HOST|STORE|DESC(RIBE)?|EXEC(UTE)?|START|@@?)(?=[\s;]|$|(?<=@)\S)/i;
+
+/**
+ * Oracle: the SQL*Plus command a statement is (`SET`, `PROMPT`, `@`…), or undefined. EXEC / EXECUTE is SQL*Plus's
+ * short form of `BEGIN … END;`, and `@file` / `START file` run other files. DESCRIBE, CONNECT and VARIABLE
+ * have no SQL equivalent DB Deck runs either.
+ */
+export function sqlPlusCommand(statement: string): string | undefined {
+  const m = SQLPLUS_COMMAND.exec(stripLeadingComments(statement).trimStart());
+  return m ? m[1].toUpperCase() : undefined;
+}
+
+/**
+ * SQL*Plus's `EXEC proc(…)` as the PL/SQL block it stands for, so scripts and editors can use it; undefined when the
+ * statement isn't one.
+ */
+export function execAsBlock(statement: string): string | undefined {
+  const m = /^\s*EXEC(?:UTE)?\s+([\s\S]*?);?\s*$/i.exec(stripLeadingComments(statement));
+  return m && m[1].trim() ? `BEGIN ${m[1].trim()}; END;` : undefined;
 }
 
 /** Strips leading whitespace and comments, e.g. to look at a statement's first keyword. */
