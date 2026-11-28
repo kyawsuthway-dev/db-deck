@@ -31,11 +31,12 @@ export function isApproximateType(type: string): boolean {
 
 /**
  * Column types compared by their text in the conflict check. MySQL never finds a JSON value equal to a
- * string, and PostgreSQL's `json` has no equality operator; the loaded text is the server's own text, so
- * comparing text matches an unchanged row. (`jsonb` compares fine as a value.)
+ * string, PostgreSQL's `json` has no equality operator, and SQL Server's `text`, `ntext` and `xml` can't be
+ * compared with `=` at all; the loaded text is the server's own text, so comparing text matches an unchanged
+ * row. (`jsonb` compares fine as a value; a `text` column elsewhere compares the same either way.)
  */
 export function isTextComparedType(type: string): boolean {
-  return /^json$/i.test(type.trim());
+  return /^(json|text|ntext|xml)$/i.test(type.trim());
 }
 
 export function buildRowChanges(input: unknown, page: EditContext): RowChange[] {

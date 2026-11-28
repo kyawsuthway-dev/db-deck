@@ -252,6 +252,10 @@ export class MysqlDriver implements Driver {
     return note + body;
   }
 
+  databaseName(): string {
+    return this.config.database ?? '';
+  }
+
   async listDatabases(): Promise<string[]> {
     const conn = await this.getConnection();
     const [rows] = await conn.query<mysql.RowDataPacket[]>('SHOW DATABASES');
@@ -888,7 +892,7 @@ function mysqlLiteral(value: string): string {
 const WRITE_DIALECT: WriteDialect = {
   quote: '`',
   placeholder: () => '?',
-  nullSafeEquals: '<=>',
+  nullSafeEquals: (column, value) => `${column} <=> ${value}`,
   allDefaults: '() VALUES ()',
   literal: mysqlLiteral,
   asText: (column) => `CAST(${column} AS CHAR)`,

@@ -3,10 +3,12 @@ import type { DesignChange } from './design/diff';
 import type { TableDesign } from './design/model';
 import type { PlanNode } from './tools/plan';
 
-export type DbType = 'sqlite' | 'postgres' | 'mysql';
+export type DbType = 'sqlite' | 'postgres' | 'mysql' | 'sqlserver';
 
 /** off: plain TCP. require: TLS with certificate checks. no-verify: TLS, accept self-signed certificates. */
 export type SslMode = 'off' | 'require' | 'no-verify';
+
+export type SignIn = 'password' | 'entra-account' | 'entra-default';
 
 /** A saved connection. Stored in globalState, so it must never contain a password. */
 export interface ConnectionConfig {
@@ -20,6 +22,13 @@ export interface ConnectionConfig {
   user?: string;
   database?: string;
   ssl?: SslMode;
+  /** SQL Server: a named instance (`SQLEXPRESS`), found through SQL Browser (UDP 1434); the port is then not used. */
+  instance?: string;
+  /**
+   * How to sign in (SQL Server): a login and password (the default), the Microsoft account signed in to VS Code,
+   * or Azure's default credentials (Azure CLI, environment, managed identity). Microsoft Entra ID for the last two.
+   */
+  signIn?: SignIn;
   /** Reach the database through an SSH host (servers only). Its password or key passphrase is in SecretStorage. */
   ssh?: SshConfig;
   /** One level of grouping in the Connections view. */
@@ -114,6 +123,8 @@ export interface StatementResult {
   affectedRows?: number;
   /** True when the statement returned more rows than we keep. */
   truncated?: boolean;
+  /** Messages the server sent with the result (SQL Server PRINT and informational messages). */
+  messages?: string[];
   durationMs: number;
   error?: string;
 }
@@ -336,6 +347,11 @@ export interface Driver {
   listTriggers(table: TableInfo): Promise<DbObject[]>;
   /** The object's definition as SQL text, for reading (Show DDL). Never run by DB Deck. */
   objectDdl(object: DbObject): Promise<string>;
+  /**
+   * The database the connection is in, for the tree's database node: the setting, or what the server chose when
+   * it's empty (a SQL Server login's default database). Empty for SQLite. Known after `connect()`.
+   */
+  databaseName(): string;
   /** Other databases on the server, for Switch Database; empty when that doesn't apply (SQLite). */
   listDatabases(): Promise<string[]>;
   /** The name of the schema/database that objects without `schema` belong to (PostgreSQL `public`). */

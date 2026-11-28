@@ -351,7 +351,7 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode> {
             case 'schemas':
               return this.schemaNodes(c.id, node);
             case 'database':
-              return [new DatabaseNode(c.id, c.database ?? '', `${node.treeId}/db`, node)];
+              return [new DatabaseNode(c.id, driver.databaseName(), `${node.treeId}/db`, node)];
           }
         }
         case 'database':

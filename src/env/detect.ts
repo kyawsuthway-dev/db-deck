@@ -69,7 +69,7 @@ export function detectConnections(env: Map<string, string>, opts: DetectOptions)
           port: port ?? 0,
           user,
           database,
-          ssl: sslFrom(get('DB_SSLMODE')) ?? 'off',
+          ssl: sslFrom(get('DB_SSLMODE')) ?? encryptFrom(get('DB_ENCRYPT'), get('DB_TRUST_SERVER_CERTIFICATE')) ?? laravelKind.defaultSsl ?? 'off',
         },
         password: get('DB_PASSWORD'),
       });
@@ -113,7 +113,9 @@ function fromConnectionString(url: string, source: EnvSource, opts: DetectOption
       port,
       user,
       ...(parsed.database ? { database: parsed.database } : {}),
-      ssl: parsed.ssl ?? 'off',
+      ssl: parsed.ssl ?? kind.defaultSsl ?? 'off',
+      ...(parsed.instance ? { instance: parsed.instance } : {}),
+      ...(parsed.signIn && parsed.signIn !== 'password' ? { signIn: parsed.signIn } : {}),
     },
     password: parsed.password,
   };
@@ -136,6 +138,17 @@ function portOf(text: string | undefined): number | undefined {
 }
 
 /** Laravel's DB_SSLMODE (libpq values). `prefer`/`allow` have no DB Deck equivalent: off. */
+/**
+ * Laravel's sqlsrv settings (config/database.php reads DB_ENCRYPT, default yes, and DB_TRUST_SERVER_CERTIFICATE,
+ * default false). Undefined when .env sets neither, so the kind's default applies.
+ */
+function encryptFrom(encrypt: string | undefined, trust: string | undefined): SslMode | undefined {
+  if (encrypt === undefined && trust === undefined) return undefined;
+  if (/^(no|false|0|optional)$/i.test(encrypt ?? '')) return 'off';
+  if (/^(true|yes|1)$/i.test(trust ?? '')) return 'no-verify';
+  return 'require';
+}
+
 function sslFrom(mode: string | undefined): SslMode | undefined {
   switch (mode?.toLowerCase()) {
     case 'require':

@@ -100,7 +100,7 @@ export function checkConstraints(sql: string): { name: string; expression: strin
 const WRITE_DIALECT: WriteDialect = {
   quote: '"',
   placeholder: () => '?',
-  nullSafeEquals: 'IS',
+  nullSafeEquals: (column, value) => `${column} IS ${value}`,
   allDefaults: 'DEFAULT VALUES',
   literal: standardLiteral,
   // SQLite stores JSON as text already.
@@ -221,6 +221,10 @@ export class SqliteDriver implements Driver {
         : `-- No definition found for ${object.name}.\n`;
     }
     return `${sql.trim().replace(/;$/, '')};\n`;
+  }
+
+  databaseName(): string {
+    return '';
   }
 
   async listDatabases(): Promise<string[]> {

@@ -206,7 +206,7 @@ export class ConnectionManager implements vscode.Disposable {
   /** Connects with an unsaved config and lists tables, so the wizard can report problems before saving. */
   async test(config: ConnectionConfig, secrets: ConnectionSecrets): Promise<void> {
     const tunnel = this.tunnelFor(config, secrets.sshSecret);
-    const driver = createDriver(config, secrets.password, tunnel && opener(tunnel));
+    const driver = createDriver(config, secrets.password, tunnel && opener(tunnel), entraToken(config));
     try {
       await driver.connect();
       await driver.listTables();
@@ -231,7 +231,7 @@ export class ConnectionManager implements vscode.Disposable {
       this.tunnels.get(id)?.close();
       this.tunnels.set(id, tunnel);
     }
-    const driver = createDriver(config, password, tunnel && opener(tunnel));
+    const driver = createDriver(config, password, tunnel && opener(tunnel), entraToken(config));
     try {
       await driver.connect();
     } catch (err) {
@@ -324,4 +324,19 @@ function withoutSource(config: ConnectionConfig): ConnectionConfig {
 function withFolder(config: ConnectionConfig, folder: string | undefined): ConnectionConfig {
   const { folder: _old, ...rest } = config;
   return folder ? { ...rest, folder } : rest;
+}
+
+/** The scope Azure SQL access tokens are issued for (the double slash is part of it). */
+const AZURE_SQL_SCOPE = 'https://database.windows.net//.default';
+
+/**
+ * Microsoft Entra ID sign-in through the Microsoft account signed in to VS Code (SQL Server's `entra-account`):
+ * asked for on every new connection, so an expired token is never reused. VS Code asks to sign in the first time.
+ */
+function entraToken(config: ConnectionConfig): (() => Promise<string>) | undefined {
+  if (config.signIn !== 'entra-account') return undefined;
+  return async () => {
+    const session = await vscode.authentication.getSession('microsoft', [AZURE_SQL_SCOPE], { createIfNone: true });
+    return session.accessToken;
+  };
 }

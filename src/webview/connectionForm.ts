@@ -41,6 +41,14 @@ const SSL_OPTIONS = [
   { value: 'require', label: 'SSL, verify the certificate' },
   { value: 'no-verify', label: 'SSL, allow self-signed' },
 ];
+/** Every sign-in method; each kind offers some of them (KindInfo.signIns). */
+const SIGN_IN_OPTIONS = [
+  { value: 'password', label: 'User and password' },
+  { value: 'entra-account', label: 'Microsoft Entra ID (VS Code account)' },
+  { value: 'entra-default', label: 'Microsoft Entra ID (Azure CLI, environment, managed identity)' },
+];
+const READ_ONLY_NOTE =
+  'The database session is read-only and table editing is off. A guard against mistakes, not a security boundary: for a real guarantee, connect as a user that can’t write.';
 /** Which tab shows each field, so an error can bring its tab forward. */
 const FIELD_TAB: Partial<Record<keyof FormValues, Tab>> = {
   sshEnabled: 'ssh',
@@ -75,7 +83,7 @@ window.addEventListener('message', (event: MessageEvent<FormMessage>) => {
       break;
     case 'status':
       busy = msg.state === 'busy';
-      showStatus(msg.state, msg.text, msg.saveAnyway);
+      showStatus(msg.state, msg.text, msg.saveAnyway, msg.trustCertificate);
       update();
       break;
     case 'path':
@@ -191,13 +199,17 @@ function build(msg: Init) {
   const divider = el('div', 'divider span-6');
   const host = textField('host', 'Host', { icon: 'globe', required: true, span: 4 });
   const port = textField('port', 'Port', { icon: 'hash', required: true, inputMode: 'numeric', span: 2 });
+  const instance = textField('instance', 'Instance', { icon: 'database', placeholder: 'Optional — like SQLEXPRESS', span: 3 });
+  // The port is found through SQL Browser while an instance is set.
+  instance.input.addEventListener('input', () => update());
+  const signIn = selectField('signIn', 'Sign in with', SIGN_IN_OPTIONS, { icon: 'user', span: 3 });
   const user = textField('user', 'User', { icon: 'user', required: true, span: 3 });
   const password = textField('password', 'Password', { icon: 'key', type: 'password', span: 3 });
   const database = textField('database', 'Database', { icon: 'database', span: 3 });
   const ssl = selectField('ssl', 'Encryption', SSL_OPTIONS, { icon: 'lock', span: 3 });
   const tunnelNote = note('tunnel', 'SSH tunnel on: enter the host and port as seen from the SSH host (often localhost).');
   tunnelNote.classList.add('span-6');
-  server.append(urlField, divider, host.field, port.field, user.field, password.field, database.field, ssl.field, tunnelNote);
+  server.append(urlField, divider, host.field, port.field, instance.field, signIn.field, user.field, password.field, database.field, ssl.field, tunnelNote);
   tabs.panels.main.append(sqlite, server);
 
   // SSH tunnel.
@@ -223,11 +235,7 @@ function build(msg: Init) {
   tabs.panels.ssh.append(sshToggle.row, sshFields);
 
   // Options.
-  const readOnly = switchField(
-    'readOnly',
-    'Read-only connection',
-    'The database session is read-only and table editing is off. A guard against mistakes, not a security boundary: for a real guarantee, connect as a user that can’t write.',
-  );
+  const readOnly = switchField('readOnly', 'Read-only connection', READ_ONLY_NOTE);
   tabs.panels.options.append(readOnly.row);
 
   // Action bar.
@@ -249,6 +257,11 @@ function build(msg: Init) {
     secret,
     password,
     database,
+    instance,
+    signIn,
+    user,
+    port,
+    readOnly,
     auth,
     scope,
     scopeHint,
@@ -344,7 +357,18 @@ function update(): void {
   ui.sqlite.hidden = !isFile;
   ui.server.hidden = isFile;
   ui.tunnelNote.hidden = isFile || !values.sshEnabled;
-  ui.url.placeholder = k.type === 'mysql' ? `${k.label.toLowerCase()}://user@host:3306/database` : 'postgres://user@host:5432/database';
+  ui.url.placeholder = k.urlExample ?? '';
+  // SQL Server: named instances, and sign-in without a password (Microsoft Entra ID).
+  ui.instance.field.hidden = !k.instances;
+  ui.signIn.field.hidden = k.signIns.length < 2;
+  const select = inputs.get('signIn') as HTMLSelectElement;
+  for (const option of Array.from(select.options)) option.hidden = option.disabled = !k.signIns.includes(option.value as never);
+  const withPassword = values.signIn === 'password';
+  ui.user.field.hidden = ui.password.field.hidden = !withPassword;
+  // A named instance's port comes from SQL Browser.
+  ui.port.input.disabled = !!values.instance.trim() && k.instances;
+  const readOnlyNote = document.getElementById('d-f-readOnly');
+  if (readOnlyNote) readOnlyNote.textContent = k.readOnlyNote ?? READ_ONLY_NOTE;
 
   const editing = init.mode === 'edit';
   ui.password.input.placeholder = init.fromEnv
@@ -390,6 +414,9 @@ function changeKind(next: KindInfo): void {
   swap('port', String(prev.defaultPort ?? ''), String(next.defaultPort ?? ''));
   swap('user', prev.defaultUser ?? '', next.defaultUser ?? '');
   swap('database', prev.defaultDatabase ?? '', next.defaultDatabase ?? '');
+  if (values.ssl === prev.defaultSsl) setValue('ssl', next.defaultSsl);
+  if (!next.signIns.includes(values.signIn as never)) setValue('signIn', next.signIns[0] ?? 'password');
+  if (!next.instances) setValue('instance', '');
   if (next.network && !values.host) setValue('host', 'localhost');
   values.kind = next.label;
   showErrors({});
@@ -411,8 +438,8 @@ function applyConnectionString(input: HTMLInputElement, hint: HTMLElement, expli
     hint.className = 'hint';
     return;
   }
-  // Wait for a complete URL while typing; Enter always tries.
-  if (!explicit && !/^[a-z]+:\/\/.+/i.test(text)) return;
+  // Wait for a complete URL (or a SQL Server `Server=…;` string) while typing; Enter always tries.
+  if (!explicit && !/^[a-z]+:\/\/.+/i.test(text) && !/(^|;)\s*(server|data source)\s*=[^;]+;/i.test(text)) return;
   const parsed = parseConnectionString(text);
   if (typeof parsed === 'string') {
     if (explicit) {
@@ -438,6 +465,8 @@ function applyConnectionString(input: HTMLInputElement, hint: HTMLElement, expli
   if (parsed.password) setValue('password', parsed.password);
   setValue('database', parsed.database ?? '');
   if (parsed.ssl) setValue('ssl', parsed.ssl);
+  setValue('instance', parsed.instance ?? '');
+  if (parsed.signIn && target.signIns.includes(parsed.signIn)) setValue('signIn', parsed.signIn);
   // The URL may hold a password: clear it once the fields have it.
   input.value = '';
   hint.textContent = parsed.password ? 'Filled in, including the password.' : 'Filled in.';
@@ -458,8 +487,12 @@ function browse(target: PathTarget): void {
   vscode.postMessage({ type: 'browse', target });
 }
 
+/** What the last Save / Test click asked for, so Trust Server Certificate can do it again. */
+let lastSend: 'save' | 'test' = 'save';
+
 function send(type: 'save' | 'test', force = false): void {
   if (busy) return;
+  lastSend = type;
   vscode.postMessage(type === 'save' ? { type, values: { ...values }, force } : { type, values: { ...values } });
 }
 
@@ -494,7 +527,18 @@ function clearError(key: keyof FormValues): void {
   }
 }
 
-function showStatus(state: StatusState, text: string, saveAnyway?: boolean): void {
+function showStatus(state: StatusState, text: string, saveAnyway?: boolean, trustCertificate?: boolean): void {
   if (!ui) return;
-  renderStatus(ui.status, state, text, ...(saveAnyway ? [button('Save Anyway', 'check', () => send('save', true))] : []));
+  const extra: HTMLElement[] = [];
+  // The server's certificate didn't verify (a local server's self-signed one): trust it and try again.
+  if (trustCertificate) {
+    extra.push(
+      button('Trust Server Certificate', 'shield', () => {
+        setValue('ssl', 'no-verify');
+        send(lastSend);
+      }),
+    );
+  }
+  if (saveAnyway) extra.push(button('Save Anyway', 'check', () => send('save', true)));
+  renderStatus(ui.status, state, text, ...extra);
 }

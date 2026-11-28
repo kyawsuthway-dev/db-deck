@@ -32,6 +32,23 @@ const copySqlWasmPlugin = {
   },
 };
 
+/**
+ * Database libraries bundled as their own files next to dist/extension.js, read only on the first connection of
+ * that type: users who never connect to it never load or parse it (drivers.md). Source module → output name.
+ */
+const DRIVER_BUNDLES = { './sqlserverLib': 'sqlserver' };
+
+/** In the extension bundle, `import('./sqlserverLib')` becomes `require('./sqlserver.js')` of the separate file. */
+const separateDriversPlugin = {
+  name: 'separate-drivers',
+  setup(build) {
+    for (const [module, name] of Object.entries(DRIVER_BUNDLES)) {
+      const filter = new RegExp(`^${module.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`);
+      build.onResolve({ filter }, () => ({ path: `./${name}.js`, external: true }));
+    }
+  },
+};
+
 const shared = {
   bundle: true,
   minify: production,
@@ -39,6 +56,11 @@ const shared = {
   logLevel: 'silent',
   ...(metafile ? { metafile: true, write: false } : {}),
 };
+
+// pg-native is an optional native addon pg only loads if asked; cloudflare:sockets is for Workers only.
+// ssh2 tries its optional native crypto (sshcrypto.node) and cpu-features inside try/catch: left out of the
+// bundle, those requires fail and ssh2 uses its pure-JavaScript crypto, on every platform (core.md rule 1).
+const NODE_EXTERNALS = ['vscode', 'pg-native', 'cloudflare:sockets', 'cpu-features', '*.node'];
 
 // The extension itself, run by VS Code's Node.
 const extension = await esbuild.context({
@@ -48,11 +70,20 @@ const extension = await esbuild.context({
   platform: 'node',
   target: 'node20',
   outfile: 'dist/extension.js',
-  // pg-native is an optional native addon pg only loads if asked; cloudflare:sockets is for Workers only.
-  // ssh2 tries its optional native crypto (sshcrypto.node) and cpu-features inside try/catch: left out of the
-  // bundle, those requires fail and ssh2 uses its pure-JavaScript crypto, on every platform (core.md rule 1).
-  external: ['vscode', 'pg-native', 'cloudflare:sockets', 'cpu-features', '*.node'],
-  plugins: metafile ? [] : [copySqlWasmPlugin, problemMatcherPlugin],
+  external: NODE_EXTERNALS,
+  plugins: metafile ? [separateDriversPlugin] : [separateDriversPlugin, copySqlWasmPlugin, problemMatcherPlugin],
+});
+
+// Database libraries in their own files (DRIVER_BUNDLES): dist/sqlserver.js (tedious).
+const drivers = await esbuild.context({
+  ...shared,
+  entryPoints: Object.fromEntries(Object.entries(DRIVER_BUNDLES).map(([module, name]) => [name, `src/drivers/${module.slice(2)}.ts`])),
+  format: 'cjs',
+  platform: 'node',
+  target: 'node20',
+  outdir: 'dist',
+  external: NODE_EXTERNALS,
+  plugins: metafile ? [] : [problemMatcherPlugin],
 });
 
 // The webview scripts, run inside webviews (a browser): the results grid and the forms (connection, dump, run file).
@@ -67,7 +98,7 @@ const webview = await esbuild.context({
   plugins: metafile ? [] : [problemMatcherPlugin],
 });
 
-const contexts = [extension, webview];
+const contexts = [extension, drivers, webview];
 if (watch) {
   await Promise.all(contexts.map((ctx) => ctx.watch()));
 } else {

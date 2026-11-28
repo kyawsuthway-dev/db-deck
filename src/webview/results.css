@@ -117,6 +117,10 @@ pre {
 .error-text {
   color: var(--vscode-errorForeground);
 }
+.messages {
+  color: var(--vscode-descriptionForeground);
+  border-left: 3px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
 
 .table-wrap {
   overflow: auto;

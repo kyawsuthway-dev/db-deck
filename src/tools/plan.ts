@@ -153,9 +153,11 @@ function codeOnly(sql: string, dialect: DbType): string {
     } else if (two === '/*') {
       const end = sql.indexOf('*/', i + 2);
       i = end === -1 ? sql.length : end + 2;
-    } else if (c === "'" || c === '"' || c === '`') {
+    } else if (c === "'" || c === '"' || c === '`' || (c === '[' && dialect === 'sqlserver')) {
+      // SQL Server's [name] closes with ] (]] is an escaped one).
+      const close = c === '[' ? ']' : c;
       let j = i + 1;
-      while (j < sql.length && !(sql[j] === c && sql[j + 1] !== c)) j += sql[j] === c || (sql[j] === '\\' && dialect === 'mysql') ? 2 : 1;
+      while (j < sql.length && !(sql[j] === close && sql[j + 1] !== close)) j += sql[j] === close || (sql[j] === '\\' && dialect === 'mysql') ? 2 : 1;
       i = j + 1;
       out += ' ';
     } else if (c === '$' && dialect === 'postgres' && /^\$[A-Za-z_]*\$/.test(sql.slice(i))) {
@@ -176,14 +178,39 @@ function codeOnly(sql: string, dialect: DbType): string {
  * changes nothing; SELECT … INTO (creates a table) isn't. Returns the reason when not.
  */
 export function readOnlyStatement(sql: string, dialect: DbType): { ok: true } | { ok: false; reason: string } {
+  const problem = writes(sql, dialect, ['SELECT', 'VALUES', 'TABLE', 'WITH']);
+  if (!problem) return { ok: true };
+  const reason = {
+    first: `Explain Analyze runs the statement, so it’s only offered for reading statements (SELECT, WITH, VALUES, TABLE), not ${problem.word ?? 'this'}.`,
+    keyword: 'Explain Analyze runs the statement, and this one changes data (it contains INSERT, UPDATE, DELETE or similar).',
+    into: 'Explain Analyze runs the statement, and SELECT … INTO writes.',
+  }[problem.kind];
+  return { ok: false, reason };
+}
+
+/**
+ * Whether a read-only SQL Server connection may run a statement: SQL Server has no read-only session setting, so
+ * DB Deck checks each statement itself, like the one above. T-SQL's DECLARE, SET, PRINT and IF / WHILE / BEGIN
+ * blocks are allowed as long as nothing in them writes; EXEC isn't (a procedure can write).
+ */
+export function readingStatement(sql: string, dialect: DbType): { ok: true } | { ok: false; reason: string } {
+  const problem = writes(sql, dialect, ['SELECT', 'WITH', 'DECLARE', 'SET', 'PRINT', 'IF', 'WHILE', 'BEGIN']);
+  if (!problem) return { ok: true };
+  const what = problem.word ? ` (${problem.word})` : '';
+  return { ok: false, reason: `This connection is read-only, so DB Deck only runs reading statements on it (SELECT, WITH, DECLARE, SET, PRINT), and this one may change something${what}.` };
+}
+
+/** Why a statement may write: its first word isn't one of `allowed`, it contains a writing keyword, or SELECT … INTO. */
+function writes(sql: string, dialect: DbType, allowed: string[]): { kind: 'first' | 'keyword' | 'into'; word?: string } | undefined {
   const code = codeOnly(sql, dialect).trim().replace(/;\s*$/, '');
   const first = /^\(*\s*([A-Za-z]+)/.exec(code)?.[1]?.toUpperCase();
-  if (!first || !['SELECT', 'VALUES', 'TABLE', 'WITH'].includes(first)) {
-    return { ok: false, reason: `Explain Analyze runs the statement, so it’s only offered for reading statements (SELECT, WITH, VALUES, TABLE), not ${first ?? 'this'}.` };
-  }
-  if (/\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|DROP|ALTER)\b/i.test(code)) {
-    return { ok: false, reason: 'Explain Analyze runs the statement, and this one changes data (it contains INSERT, UPDATE, DELETE or similar).' };
-  }
-  if (first !== 'WITH' && /\bINTO\b/i.test(code)) return { ok: false, reason: 'Explain Analyze runs the statement, and SELECT … INTO writes.' };
-  return { ok: true };
+  if (!first || !allowed.includes(first)) return { kind: 'first', word: first };
+  const keyword = WRITING.exec(code)?.[1]?.toUpperCase();
+  if (keyword) return { kind: 'keyword', word: keyword };
+  if (first !== 'WITH' && /\bINTO\b/i.test(code)) return { kind: 'into', word: 'INTO' };
+  return undefined;
 }
+
+/** Keywords that change data, schema, permissions or the server, anywhere in a statement (strings and comments excluded). */
+const WRITING =
+  /\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|DROP|ALTER|EXEC|EXECUTE|GRANT|DENY|REVOKE|BACKUP|RESTORE|DBCC|BULK|KILL|SHUTDOWN|RECONFIGURE|USE|OPENROWSET|OPENQUERY|OPENDATASOURCE)\b/i;
