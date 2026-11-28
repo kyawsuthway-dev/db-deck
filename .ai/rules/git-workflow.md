@@ -57,7 +57,7 @@ Version bumps (`package.json` `version`, `CHANGELOG.md` heading) follow semver a
 Before a release:
 
 - `task notices` if dependencies changed since the last release, and commit `THIRD_PARTY_NOTICES.md`.
-- `npx vsce ls` (in the container) lists only runtime files: `package.json`, `README.md`, `CHANGELOG.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md`, `dist/**` without maps, `media/icon.png`, `media/database.svg`, `media/logos/*.svg`. If `vsce` fails with a missing module, reinstall with `task npm -- ci`.
+- `npx vsce ls` (in the container) lists only runtime files: `package.json`, `README.md`, `CHANGELOG.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md`, `dist/**` without maps, `media/icon.png`, `media/database.svg`, `media/logos/*.svg`, `media/icons/*.svg`. If `vsce` fails with a missing module, reinstall with `task npm -- ci`.
 - `task package` builds the `.vsix` without warnings, and it's installed and tried in a normal VS Code window (connect, browse, run a query, open a form and the ER diagram).
 - README images are PNG in `media/screenshots/` (the Marketplace rejects SVG in READMEs; `vsce` rewrites relative links to the GitHub repository).
 
